@@ -63,17 +63,6 @@ docker compose restart
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
-Data persists in `./git-store` and `./pack-store`.
-
-### Without Docker
-
-```bash
-opam install . --deps-only && dune build
-dune exec beingdb-import -- --input ./my-facts --git ./store
-dune exec beingdb-compile -- --git ./store --pack ./pack
-dune exec beingdb-serve -- --pack ./pack --port 8080
-```
-
 ## Query Language
 
 **Facts** (examples/sample_predicates.pl):
