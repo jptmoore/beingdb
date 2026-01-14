@@ -34,3 +34,15 @@ setup.log
 
 # Local OPAM switch
 _opam/
+
+# BeingDB data directories (runtime stores)
+data/
+git-store/
+pack-store/
+pack/
+test_data/
+
+# Example relations (if you want to track examples, remove this line)
+relations/
+
+*.opam
