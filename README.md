@@ -17,32 +17,22 @@ Perfect for chatbots, research archives, and applications where you need structu
 
 ### With Docker
 
-**Option 1: Import from local files**
-
-Assuming you have predicates in individual files:
-```
-my-facts/
-  created
-  shown_in
-  held_at
-  keyword
-```
+Clone a Git repository with predicates:
 
 ```bash
 docker compose build
-docker compose run --rm -v ./my-facts:/data/facts:ro beingdb \
-  beingdb-import --input /data/facts --git /data/git-store
-docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/pack-store
-docker compose up -d
-```
 
-**Option 2: Clone from Git**
-
-```bash
-docker compose build
+# Clone facts from GitHub
 docker compose run --rm beingdb beingdb-clone https://github.com/org/facts.git --git /data/git-store
+
+# Compile to pack
 docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/pack-store
+
+# Start server
 docker compose up -d
+
+# Query
+curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
 **Update & deploy:**
@@ -58,9 +48,13 @@ ln -sfn ./snapshots/v2 ./current
 docker compose restart
 ```
 
-**Query:**
+### Without Docker
+
 ```bash
-curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
+opam install . --deps-only && dune build
+beingdb-clone https://github.com/org/facts.git --git ./store
+beingdb-compile --git ./store --pack ./pack
+beingdb-serve --pack ./pack --port 8080
 ```
 
 ## Query Language
