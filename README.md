@@ -15,8 +15,6 @@ Perfect for chatbots, research archives, and applications where you need structu
 
 ## Quick Start
 
-### With Docker
-
 Clone a Git repository with predicates:
 
 ```bash
@@ -46,15 +44,6 @@ docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /da
 # Zero-downtime swap
 ln -sfn ./snapshots/v2 ./current
 docker compose restart
-```
-
-### Without Docker
-
-```bash
-opam install . --deps-only && dune build
-beingdb-clone https://github.com/org/facts.git --git ./store
-beingdb-compile --git ./store --pack ./pack
-beingdb-serve --pack ./pack --port 8080
 ```
 
 ## Query Language
