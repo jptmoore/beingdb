@@ -1,17 +1,28 @@
 # BeingDB
 
-**Structured facts for RAG, versioned like Git.**
+Modern RAG systems are great at retrieving unstructured text, but they struggle with structured facts. Vector search can tell you which documents are similar, but it can’t reliably answer questions like:
+- Who created this artwork?
+- Where was this shown?
+- Which entities are connected?
+- What metadata belongs to this item?
 
-BeingDB is a lightweight fact store for RAG applications. Store predicates (entities, relationships, metadata) and query them with joins. Simple atoms and quoted strings - your LLM handles the reasoning.
+Forcing a graph database into your pipeline is not always the best solution: graph databases, while powerful, are often not simple, reproducible, or easy to maintain.
+**BeingDB fills this gap.**
 
-**Why BeingDB:**
-- **Fast queries** - Optimized read-only snapshots
-- **Git workflow** - Version control, branching, merging for knowledge
-- **Join support** - Connect entities across predicates  
-- **RAG-ready** - Pairs with semantic search
+It gives you a tiny, predictable, Git‑versioned layer for explicit facts — entities, relationships, metadata, keywords, labels — all expressed as simple Prolog‑style predicates.
+The runtime stays deliberately minimal. No schema, no inference, just atoms and strings. Your LLM handles the reasoning; BeingDB just provides the clean, structured substrate it needs.
 
-Perfect for chatbots, research archives, and applications where you need structured metadata alongside vector search.
+**The result:**  
+A retrieval stack where vector search finds the right documents, and BeingDB provides the factual backbone the LLM can trust.
 
+**This combination is powerful for:**
+- Chatbots that need reliable metadata
+- Research archives and cultural collections
+- Digital humanities projects
+- Knowledge‑rich assistants
+- Any RAG system that needs structure and semantics
+
+BeingDB is small by design, but it unlocks a capability most RAG systems are missing: **fast, explicit, joinable facts — versioned like code, served like a database.**
 
 ## Quick Start
 
@@ -34,6 +45,7 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
 **Update & deploy:**
+
 ```bash
 # Pull updates
 docker compose run --rm beingdb beingdb-pull --git /data/git-store
@@ -47,6 +59,7 @@ docker compose restart
 ```
 
 **Production data safety:**
+
 - `beingdb-serve` - Read-only, never modifies pack store
 - `beingdb-compile` - Always creates fresh pack (overwrites target directory)
 - ⚠️ Always compile to NEW directories to preserve previous versions
@@ -54,6 +67,7 @@ docker compose restart
 ## Query Language
 
 **Facts** (examples/sample_predicates.pl):
+
 ```prolog
 created(tina_keane, she).
 shown_in(she, rewind_exhibition_1995).
@@ -62,12 +76,14 @@ keyword(doc_456, "neural networks").
 ```
 
 **Terms:**
+
 - `Work`, `Artist` - Variables (uppercase)
 - `tina_keane`, `1979` - Atoms (lowercase)
 - `"neural networks"` - Strings (quoted)
 - `_` - Wildcard
 
 **Query Examples:**
+
 ```bash
 # Pattern matching
 curl -X POST http://localhost:8080/query \
@@ -93,15 +109,19 @@ Response: `{"variables": [...], "results": [...], "count": N}`
 ## Testing
 
 **Integration tests** (Docker, no OCaml required):
+
 ```bash
 make test
 ```
+
 Tests the full workflow: import → compile → serve → HTTP queries
 
 **Unit tests** (requires OCaml):
+
 ```bash
 make test-unit
 ```
+
 Tests individual components (Git backend, Pack backend, parsing)
 
 ## License
