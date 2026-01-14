@@ -3,7 +3,7 @@
 open Lwt.Infix
 
 let test_parse_fact () =
-  let open Beingdb.Sync in
+  let open Beingdb.Parse_predicate in
   
   (* Test simple fact *)
   let fact1 = "created(tina_keane, she)." in

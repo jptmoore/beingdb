@@ -11,39 +11,12 @@
 
 open Lwt.Infix
 
-(** Parse a single fact into predicate name and arguments
-    Example: "created(tina_keane, she)." -> ("created", ["tina_keane"; "she"])
-*)
-let parse_fact fact =
-  let fact = String.trim fact in
-  let fact = 
-    if String.ends_with ~suffix:"." fact then
-      String.sub fact 0 (String.length fact - 1)
-    else fact
-  in
-  
-  match String.index_opt fact '(' with
-  | None -> None
-  | Some idx ->
-      let predicate = String.sub fact 0 idx in
-      let rest = String.sub fact (idx + 1) (String.length fact - idx - 1) in
-      let rest = 
-        if String.ends_with ~suffix:")" rest then
-          String.sub rest 0 (String.length rest - 1)
-        else rest
-      in
-      let args = 
-        String.split_on_char ',' rest
-        |> List.map String.trim
-      in
-      Some (predicate, args)
-
 (** Encode predicate into Pack store as path-based nodes *)
 let encode_to_pack pack_store predicate_name facts =
   let open Lwt_list in
   
   let write_fact fact =
-    match parse_fact fact with
+    match Parse_predicate.parse_fact fact with
     | None -> Lwt.return_unit
     | Some (_pred, args) ->
         Pack_backend.write_fact pack_store predicate_name args

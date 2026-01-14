@@ -24,11 +24,11 @@ beingdb-serve
 
 **Key insight:** Runtime never touches Git (remote or local). Only reads compiled Pack snapshots.
 
-## Quick Start (Development Mode)
+## Quick Start with Examples
 
-For development/testing, you can work with flat files directly:
+Try BeingDB with the included art history dataset:
 
-### 1. Install
+### 1. Install and Build
 
 ```bash
 # Install OCaml dependencies (requires OCaml 4.14+)
@@ -38,53 +38,86 @@ opam install . --deps-only
 dune build
 ```
 
-### 2. Create Test Predicates
+### 2. Setup Example Data
+
+The example data comes from `examples/sample_predicates.pl` - an art history dataset with facts about artworks, artists, exhibitions, and venues.
 
 ```bash
-mkdir -p test_data
-
-# Create sample facts
-cat > test_data/created <<'EOF'
-created(tina_keane, she).
-created(bruce_nauman, mapping_the_studio).
-EOF
+# Extract predicates into separate files (emulates a Git repository structure)
+cd examples && bash setup_examples.sh && cd ..
+# Creates examples/data/ with 5 predicate files:
+#   created (3 facts) - artist/artwork relationships
+#   shown_in (3 facts) - artwork/exhibition relationships
+#   held_at (2 facts) - exhibition/venue relationships
+#   created_in_year (3 facts) - artwork creation dates
+#   uses_medium (3 facts) - artwork mediums
+# 
+# This structure mimics what would be in a remote Git repository
+# that you'd clone with: beingdb-clone https://github.com/org/facts.git
 ```
 
-### 3. Import to Irmin Git
+### 3. Import and Compile
 
 ```bash
-# Import flat files into Irmin Git store
-beingdb-import --input ./test_data --git ./git-store
+# Import from examples/data/ to Git store (development equivalent of beingdb-clone)
+dune exec beingdb-import -- --input examples/data --git ./git-store
+
+# Compile to Pack store
+dune exec beingdb-compile -- --git ./git-store --pack ./pack-store
 ```
 
-### 4. Compile to Pack
-
+**Note:** If you get a lock error, stop the running server first:
 ```bash
-# Compile from Irmin Git to Pack
-beingdb-compile --git ./git-store --pack ./pack-store
+# Find and kill running server
+pkill -f beingdb-serve
 ```
 
-### 5. Serve Queries
+### 4. Start Server
 
 ```bash
-# Start query server (Pack only, no Git dependency)
-beingdb-serve --pack ./pack-store --port 8080
+# Start query server
+dune exec beingdb-serve -- --pack ./pack-store --port 8080
 ```
 
-### 5. Query Data
+### 5. Query the Database
+
+BeingDB uses a Prolog-style query language with pattern matching and joins:
 
 ```bash
-# List predicates
+# List all predicates
 curl http://localhost:8080/predicates
-# {"predicates":["created","shown_in"]}
 
-# Get all facts
-curl http://localhost:8080/query/created
-# {"predicate":"created","facts":[["tina_keane","she"],...]
+# Simple pattern: Find all works by tina_keane
+curl -X POST http://localhost:8080/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "created(tina_keane, Work)"}'
 
-# Pattern matching (use _ as wildcard)
-curl 'http://localhost:8080/query/created?args=tina_keane,_'
-# {"predicate":"created","pattern":["tina_keane","_"],"facts":[["tina_keane","she"],["tina_keane","faded_wallpaper"]]}
+# Use wildcards: Find what medium "she" uses
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "uses_medium(she, _)"}'
+
+# Two-predicate join: Where were tina_keane's works exhibited?
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(tina_keane, Work), shown_in(Work, Exhibition)"}'
+
+# Three-way join: Which venues showed tina_keane's works?
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(tina_keane, Work), shown_in(Work, Exhibition), held_at(Exhibition, Venue)"}'
+
+# Multiple attributes: Find all video works with their creation years
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "uses_medium(Work, video), created_in_year(Work, Year)"}'
+```
+
+**Query Language Syntax:**
+- **Variables** start with uppercase: `Work`, `Artist`, `Exhibition`
+- **Atoms** start with lowercase: `tina_keane`, `she`, `video`  
+- **Wildcard**: `_` matches anything
+- **Joins**: Comma-separated predicates with shared variables
+
+**Run all example queries:**
+```bash
+bash examples/test_queries.sh
 ```
 
 ## Operational Workflow
@@ -207,19 +240,55 @@ Get all facts for a predicate.
 curl http://localhost:8080/query/created
 ```
 
-### `GET /query/:predicate?args=pattern`
-Query with pattern matching. Use `_` as wildcard.
+**Response:**
+```json
+{
+  "predicate": "created",
+  "facts": [["tina_keane", "she"], ["tina_keane", "faded_wallpaper"]]
+}
+```
+
+### `POST /query`
+Execute queries with pattern matching and joins.
+
+**Request:**
+```json
+{
+  "query": "created(Artist, Work), shown_in(Work, Exhibition)"
+}
+```
+
+**Response:**
+```json
+{
+  "variables": ["Artist", "Work", "Exhibition"],
+  "results": [
+    {"Artist": "tina_keane", "Work": "she", "Exhibition": "rewind_exhibition_1995"}
+  ],
+  "count": 1
+}
+```
+
+**Query Syntax:**
+- **Variables**: Uppercase (`Work`, `Artist`) - bind to values
+- **Atoms**: Lowercase (`tina_keane`, `video`) - match exactly
+- **Wildcard**: `_` - match anything (unbound)
+- **Joins**: Comma-separated predicates with shared variables
 
 **Examples:**
 ```bash
-# All works by tina_keane
-curl 'http://localhost:8080/query/created?args=tina_keane,_'
+# Pattern matching with wildcard
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(tina_keane, _)"}'
 
-# Where was "she" shown?
-curl 'http://localhost:8080/query/shown_in?args=she,_'
+# Pattern matching with variable
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(tina_keane, Work)"}'
+
+# Join across multiple predicates
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition), held_at(Exhibition, Venue)"}'
 ```
-
-**Note:** No POST /sync endpoint. Compilation happens offline via `beingdb-compile`.
 
 ## CLI Commands
 
@@ -366,21 +435,28 @@ GitHub → beingdb-clone → Irmin Git (HEAD only)
 ```
 beingdb/
 ├── lib/
-│   ├── git_backend.ml    # Irmin Git (intermediate layer)
-│   ├── pack_backend.ml   # Irmin Pack (runtime queries)
-│   ├── sync.ml           # Fact parsing
-│   ├── api.ml            # REST API
-│   └── beingdb.ml        # Public interface
+│   ├── git_backend.ml       # Irmin Git (intermediate layer)
+│   ├── pack_backend.ml      # Irmin Pack (runtime queries)
+│   ├── parse_predicate.ml   # Predicate fact parsing
+│   ├── query_parser.ml      # Query language parser
+│   ├── query_engine.ml      # Join execution engine
+│   ├── sync.ml              # Git → Pack sync
+│   ├── api.ml               # REST API
+│   └── beingdb.ml           # Public interface
 ├── bin/
-│   ├── clone.ml          # Clone remote → Irmin Git
-│   ├── pull.ml           # Pull and merge
-│   ├── compile.ml        # Git HEAD → Pack
-│   ├── serve.ml          # Pack → HTTP
-│   ├── import.ml         # Flat files → Git (dev)
-│   └── main.ml           # Command dispatcher
+│   ├── clone.ml             # Clone remote → Irmin Git
+│   ├── pull.ml              # Pull and merge
+│   ├── compile.ml           # Git HEAD → Pack
+│   ├── serve.ml             # Pack → HTTP
+│   ├── import.ml            # Flat files → Git (dev)
+│   └── main.ml              # Command dispatcher
+├── examples/
+│   ├── sample_predicates.pl # Example art history data
+│   ├── setup_examples.sh    # Setup script
+│   └── test_queries.sh      # Query test script
 └── test/
-    ├── test_beingdb.ml   # Unit tests
-    └── *.sh              # Test scripts
+    ├── test_beingdb.ml      # Unit tests
+    └── *.sh                 # Test scripts
 ```
 
 ## Testing
@@ -389,13 +465,12 @@ beingdb/
 # Run unit tests
 dune test
 
-# Quick development test
-mkdir -p test_data
-echo "created(artist, work)." > test_data/created
-dune exec beingdb-import -- --input test_data --git git-store
+# Run example queries
+bash examples/setup_examples.sh
+dune exec beingdb-import -- --input examples/data --git git-store
 dune exec beingdb-compile -- --git git-store --pack pack-store
-dune exec beingdb-serve -- --pack pack-store --port 8080
-curl http://localhost:8080/predicates
+dune exec beingdb-serve -- --pack pack-store --port 8080 &
+bash examples/test_queries.sh
 ```
 
 ## Contributing

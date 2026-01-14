@@ -24,7 +24,7 @@ let compile_predicate pack_store git_store predicate_name =
       
       (* Parse and write each fact to Pack *)
       let* () = Lwt_list.iter_s (fun fact ->
-        match Beingdb.Sync.parse_fact fact with
+        match Beingdb.Parse_predicate.parse_fact fact with
         | None -> 
             Logs_lwt.warn (fun m -> m "  Skipping invalid fact: %s" fact)
         | Some (_pred, args) ->

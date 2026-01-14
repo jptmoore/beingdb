@@ -2,8 +2,8 @@
     
     Endpoints:
     - GET /predicates - List all predicates
-    - GET /query/:predicate - Query all facts for a predicate
-    - GET /query/:predicate?args=a,b,_ - Query with pattern matching
+    - GET /query/:predicate - Get all facts for a predicate
+    - POST /query - Execute queries with pattern matching and joins
     - POST /sync - Trigger Git → Pack sync (authorized only)
     
     All reads go to Pack (fast).
@@ -32,38 +32,45 @@ let handle_list_predicates pack_store _req =
   ] in
   json_response json
 
-(** Query a predicate with optional pattern *)
-let handle_query pack_store predicate req =
-  let args_param = Dream.query req "args" in
-  
-  match args_param with
-  | None ->
-      (* Query all facts *)
-      Pack_backend.query_all pack_store predicate
-      >>= fun results ->
-      let json = `Assoc [
-        "predicate", `String predicate;
-        "facts", `List (List.map fact_to_json results)
-      ] in
-      json_response json
-  
-  | Some args_str ->
-      (* Query with pattern *)
-      let pattern = String.split_on_char ',' args_str |> List.map String.trim in
-      Pack_backend.query_predicate pack_store predicate pattern
-      >>= fun results ->
-      let json = `Assoc [
-        "predicate", `String predicate;
-        "pattern", `List (List.map (fun s -> `String s) pattern);
-        "facts", `List (List.map fact_to_json results)
-      ] in
-      json_response json
+(** Get all facts for a predicate *)
+let handle_query pack_store predicate _req =
+  Pack_backend.query_all pack_store predicate
+  >>= fun results ->
+  let json = `Assoc [
+    "predicate", `String predicate;
+    "facts", `List (List.map fact_to_json results)
+  ] in
+  json_response json
 
 (** Trigger sync (should be authorized in production) *)
 let handle_sync git_store pack_store _req =
   Sync.sync git_store pack_store
   >>= fun () ->
   json_response (`Assoc ["status", `String "sync completed"])
+
+(** Execute a query with joins *)
+let handle_query_language pack_store req =
+  Dream.body req
+  >>= fun body ->
+  
+  (* Parse JSON request *)
+  match Yojson.Safe.from_string body with
+  | exception _ -> error_response "Invalid JSON"
+  | json ->
+      match json with
+      | `Assoc fields ->
+          (match List.assoc_opt "query" fields with
+          | Some (`String query_str) ->
+              (* Parse query *)
+              (match Query_parser.parse_query query_str with
+              | None -> error_response "Invalid query syntax"
+              | Some query ->
+                  (* Execute query *)
+                  Query_engine.execute pack_store query
+                  >>= fun result ->
+                  json_response (Query_engine.result_to_json result))
+          | _ -> error_response "Missing 'query' field")
+      | _ -> error_response "Expected JSON object"
 
 (** Build Dream router *)
 let router git_store pack_store =
@@ -75,6 +82,9 @@ let router git_store pack_store =
       (fun req ->
         let predicate = Dream.param req "predicate" in
         handle_query pack_store predicate req);
+    
+    Dream.post "/query"
+      (handle_query_language pack_store);
     
     Dream.post "/sync"
       (handle_sync git_store pack_store);
@@ -97,6 +107,9 @@ let serve_pack_only pack_store port =
       (fun req ->
         let predicate = Dream.param req "predicate" in
         handle_query pack_store predicate req);
+    
+    Dream.post "/query"
+      (handle_query_language pack_store);
   ] in
   
   Dream.run ~port (Dream.logger @@ router)
