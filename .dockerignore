@@ -1,0 +1,13 @@
+# opam local switch
+_opam/
+
+# Dune build environment
+_build/
+
+git-store/
+pack-store/
+*.swp
+*.swo
+*~
+.git/
+.gitignore
