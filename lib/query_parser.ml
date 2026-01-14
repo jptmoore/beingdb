@@ -3,16 +3,18 @@
     Query syntax:
     - Variables start with uppercase: Work, Artist, Venue
     - Atoms start with lowercase: tina_keane, she, video
+    - Strings in quotes: "machine learning", "text with spaces"
     - Wildcard: _
     - Multiple predicates separated by comma
     
-    Example: "created(tina_keane, Work), shown_in(Work, Exhibition)"
+    Example: "created(tina_keane, Work), keyword(Work, \"machine learning\")"
 *)
 
 (** Term in a query predicate *)
 type term =
   | Atom of string      (* lowercase atom: she, video *)
   | Var of string       (* Uppercase variable: Work, Artist *)
+  | String of string    (* quoted string: "machine learning" *)
   | Wildcard            (* underscore: _ *)
 
 (** Single predicate pattern in a query *)
@@ -27,10 +29,46 @@ type query = {
   variables: string list;  (* unique variables in query *)
 }
 
+(** Parse a quoted string with escape sequences *)
+let parse_quoted_string s =
+  let len = String.length s in
+  if len < 2 || s.[0] <> '"' then
+    None
+  else
+    (* Find closing quote, handling escapes *)
+    let rec find_close i acc =
+      if i >= len then
+        None  (* unclosed string *)
+      else if s.[i] = '\\' && i + 1 < len then
+        (* escaped character *)
+        let escaped = match s.[i + 1] with
+          | 'n' -> '\n'
+          | 't' -> '\t'
+          | 'r' -> '\r'
+          | '\\' -> '\\'
+          | '"' -> '"'
+          | c -> c
+        in
+        find_close (i + 2) (acc ^ String.make 1 escaped)
+      else if s.[i] = '"' then
+        (* found closing quote *)
+        Some (acc, i + 1)
+      else
+        find_close (i + 1) (acc ^ String.make 1 s.[i])
+    in
+    match find_close 1 "" with
+    | Some (content, end_pos) -> Some (content, end_pos)
+    | None -> None
+
 (** Parse a single term *)
 let parse_term s =
   let s = String.trim s in
-  if s = "_" then
+  (* Check for quoted string first *)
+  if s <> "" && s.[0] = '"' then
+    match parse_quoted_string s with
+    | Some (content, _) -> String content
+    | None -> Atom s  (* malformed string, treat as atom *)
+  else if s = "_" then
     Wildcard
   else if s <> "" && Char.uppercase_ascii s.[0] = s.[0] then
     Var s
@@ -54,11 +92,28 @@ let parse_predicate_pattern s =
         else rest
       in
       
-      (* Parse arguments *)
-      let args = 
-        String.split_on_char ',' rest
-        |> List.map parse_term
+      (* Parse arguments, respecting quoted strings *)
+      let rec split_args acc current in_string escaped i =
+        if i >= String.length rest then
+          let final = String.trim current in
+          if final = "" then List.rev acc else List.rev (final :: acc)
+        else
+          let c = rest.[i] in
+          if escaped then
+            split_args acc (current ^ String.make 1 c) in_string false (i + 1)
+          else if c = '\\' && in_string then
+            split_args acc (current ^ String.make 1 c) in_string true (i + 1)
+          else if c = '"' then
+            split_args acc (current ^ String.make 1 c) (not in_string) false (i + 1)
+          else if c = ',' && not in_string then
+            let trimmed = String.trim current in
+            split_args (trimmed :: acc) "" false false (i + 1)
+          else
+            split_args acc (current ^ String.make 1 c) in_string false (i + 1)
       in
+      
+      let arg_strings = split_args [] "" false false 0 in
+      let args = List.map parse_term arg_strings in
       
       Some { name; args }
 
@@ -66,7 +121,7 @@ let parse_predicate_pattern s =
 let extract_variables patterns =
   let extract_from_term = function
     | Var v -> [v]
-    | Atom _ | Wildcard -> []
+    | Atom _ | String _ | Wildcard -> []
   in
   
   let extract_from_pattern pattern =
@@ -128,6 +183,7 @@ let parse_query s =
 let term_to_string = function
   | Atom s -> s
   | Var v -> v
+  | String s -> "\"" ^ s ^ "\""
   | Wildcard -> "_"
 
 (** Convert pattern to string for debugging *)

@@ -24,3 +24,4 @@ created_in_year(mapping_the_studio, 2001).
 uses_medium(she, video).
 uses_medium(faded_wallpaper, video).
 uses_medium(mapping_the_studio, video_installation).
+description(she, "A pioneering video work").

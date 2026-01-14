@@ -25,6 +25,7 @@ type result = {
 (** Convert term to concrete value using bindings *)
 let resolve_term bindings = function
   | Atom a -> Some a
+  | String s -> Some s
   | Wildcard -> Some "_"
   | Var v -> 
       (* If variable not in bindings, treat as wildcard for first pattern *)

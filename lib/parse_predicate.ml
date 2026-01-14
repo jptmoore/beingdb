@@ -4,15 +4,45 @@
     It's used by both the sync pipeline and the query engine.
 *)
 
+(** Parse a quoted string, returning (content, end_position) *)
+let parse_quoted_string s start_pos =
+  let len = String.length s in
+  if start_pos >= len || s.[start_pos] <> '"' then
+    None
+  else
+    let rec find_close i acc =
+      if i >= len then
+        None  (* unclosed string *)
+      else if s.[i] = '\\' && i + 1 < len then
+        (* escaped character *)
+        let escaped = match s.[i + 1] with
+          | 'n' -> '\n'
+          | 't' -> '\t'
+          | 'r' -> '\r'
+          | '\\' -> '\\'
+          | '"' -> '"'
+          | c -> c
+        in
+        find_close (i + 2) (acc ^ String.make 1 escaped)
+      else if s.[i] = '"' then
+        (* found closing quote *)
+        Some (acc, i + 1)
+      else
+        find_close (i + 1) (acc ^ String.make 1 s.[i])
+    in
+    find_close (start_pos + 1) ""
+
 (** Parse a single fact into predicate name and arguments
     
     Examples:
     - "created(tina_keane, she)." -> Some ("created", ["tina_keane"; "she"])
+    - "keyword(doc_123, \"machine learning\")." -> Some ("keyword", ["doc_123"; "machine learning"])
     - "shown_in(she, exhibition)" -> Some ("shown_in", ["she"; "exhibition"])
     - "created( tina_keane , she )." -> Some ("created", ["tina_keane"; "she"])
     - "not_a_fact" -> None
     
     Handles:
+    - Quoted strings with spaces and escapes
     - Optional trailing period
     - Whitespace around arguments
     - Comments (returns None)
@@ -47,10 +77,37 @@ let parse_fact fact =
           else rest
         in
         
-        (* Parse arguments *)
-        let args = 
-          String.split_on_char ',' rest
-          |> List.map String.trim
+        (* Parse arguments, respecting quoted strings *)
+        let rec split_args acc current in_string escaped i =
+          if i >= String.length rest then
+            let final = String.trim current in
+            if final = "" then List.rev acc else List.rev (final :: acc)
+          else
+            let c = rest.[i] in
+            if escaped then
+              split_args acc (current ^ String.make 1 c) in_string false (i + 1)
+            else if c = '\\' && in_string then
+              split_args acc (current ^ String.make 1 c) in_string true (i + 1)
+            else if c = '"' then
+              split_args acc (current ^ String.make 1 c) (not in_string) false (i + 1)
+            else if c = ',' && not in_string then
+              let trimmed = String.trim current in
+              split_args (trimmed :: acc) "" false false (i + 1)
+            else
+              split_args acc (current ^ String.make 1 c) in_string false (i + 1)
         in
+        
+        let arg_strings = split_args [] "" false false 0 in
+        
+        (* Unquote string arguments *)
+        let args = List.map (fun arg ->
+          let arg = String.trim arg in
+          if String.length arg >= 2 && arg.[0] = '"' then
+            match parse_quoted_string arg 0 with
+            | Some (content, _) -> content
+            | None -> arg  (* malformed, keep as-is *)
+          else
+            arg
+        ) arg_strings in
         
         Some (predicate, args)
