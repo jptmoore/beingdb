@@ -91,7 +91,7 @@ let test_pack_backend () =
     Unix.unlink test_dir;
     Unix.mkdir test_dir 0o755;
     
-    Beingdb.Pack_backend.init test_dir
+    Beingdb.Pack_backend.init ~fresh:true test_dir
     >>= fun store ->
     
     (* Write some facts *)

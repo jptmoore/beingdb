@@ -38,13 +38,18 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 # Pull updates
 docker compose run --rm beingdb beingdb-pull --git /data/git-store
 
-# Compile new version
+# IMPORTANT: Compile to NEW directory (never overwrite existing pack-store)
 docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/v2
 
 # Zero-downtime swap
 ln -sfn ./snapshots/v2 ./current
 docker compose restart
 ```
+
+**Production data safety:**
+- `beingdb-serve` - Read-only, never modifies pack store
+- `beingdb-compile` - Always creates fresh pack (overwrites target directory)
+- ⚠️ Always compile to NEW directories to preserve previous versions
 
 ## Query Language
 
@@ -84,6 +89,20 @@ curl -X POST http://localhost:8080/query \
 - `POST /query` - Execute query with joins
 
 Response: `{"variables": [...], "results": [...], "count": N}`
+
+## Testing
+
+**Integration tests** (Docker, no OCaml required):
+```bash
+make test
+```
+Tests the full workflow: import → compile → serve → HTTP queries
+
+**Unit tests** (requires OCaml):
+```bash
+make test-unit
+```
+Tests individual components (Git backend, Pack backend, parsing)
 
 ## License
 

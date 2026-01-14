@@ -1,4 +1,4 @@
-(executable
+(test
  (name test_beingdb)
  (libraries beingdb alcotest lwt lwt.unix)
  (modes native))

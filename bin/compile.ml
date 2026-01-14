@@ -41,12 +41,11 @@ let compile_all git_path pack_path =
     let* () = Logs_lwt.info (fun m -> m "Target: Pack (%s)" pack_path) in
     let* () = Logs_lwt.info (fun m -> m "") in
     
-    (* Initialize stores *)
+    (* Initialize stores - pack with fresh=true to overwrite existing *)
     let* git = Beingdb.Git_backend.init git_path in
-    let* pack = Beingdb.Pack_backend.init pack_path in
+    let* pack = Beingdb.Pack_backend.init ~fresh:true pack_path in
     
-    let* () = Logs_lwt.info (fun m -> m "Clearing existing Pack store...") in
-    let* () = Beingdb.Pack_backend.clear pack in
+    let* () = Logs_lwt.info (fun m -> m "Initialized fresh Pack store") in
     
     (* List all predicates from Irmin Git *)
     let* predicates = Beingdb.Git_backend.list_predicates git in

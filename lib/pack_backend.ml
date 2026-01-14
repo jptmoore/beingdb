@@ -39,8 +39,8 @@ let create ~fname =
     Store.main repo
   )
 
-let init path =
-  let config = pack_config path in
+let init ?(fresh=false) path =
+  let config = pack_config ~fresh path in
   let* repo = Store.Repo.v config in
   Store.main repo
 

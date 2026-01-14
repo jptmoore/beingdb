@@ -23,7 +23,7 @@ RUN opam install . --deps-only -y
 # Copy source code
 COPY --chown=opam:opam . .
 
-# Build BeingDB
+# Build BeingDB (tests run separately via docker compose)
 RUN eval $(opam env) && dune build --release
 
 # Install to a known location
