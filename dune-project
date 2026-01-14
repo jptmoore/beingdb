@@ -3,16 +3,16 @@
 
 (generate_opam_files true)
 
-(source (github john/beingdb))
+(source (github jptmoore/beingdb))
 (license MIT)
-(authors "John")
-(maintainers "John")
+(authors "John Moore <john.moore@zedstar.org>")
+(maintainers "John Moore <jmoore@zedstar.org>")
 
 (package
  (name beingdb)
  (allow_empty)
- (synopsis "Logic-based knowledge store with Git and Pack backends")
- (description "A dual-backend knowledge store using Irmin: Git for canonical predicates, Pack for runtime queries")
+ (synopsis "Being DB — facts with history")
+ (description "A lightweight knowledge store that tracks your facts in Git and serves fast queries from an optimised backend. Edit your data like code, compile snapshots, and query them at high speed.")
  (depends
   (ocaml (>= 4.14.0))
   dune
