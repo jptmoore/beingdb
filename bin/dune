@@ -1,0 +1,29 @@
+(executable
+ (name main)
+ (public_name beingdb)
+ (libraries beingdb dream lwt lwt.unix logs logs.lwt logs.fmt logs.cli fmt fmt.cli fmt.tty cmdliner))
+
+(executable
+ (name clone)
+ (public_name beingdb-clone)
+ (libraries beingdb lwt lwt.unix cmdliner logs logs.fmt logs.lwt fmt fmt.tty))
+
+(executable
+ (name pull)
+ (public_name beingdb-pull)
+ (libraries beingdb lwt lwt.unix cmdliner logs logs.fmt logs.lwt fmt fmt.tty))
+
+(executable
+ (name import)
+ (public_name beingdb-import)
+ (libraries beingdb lwt lwt.unix cmdliner logs logs.fmt logs.lwt fmt fmt.tty))
+
+(executable
+ (name compile)
+ (public_name beingdb-compile)
+ (libraries beingdb lwt lwt.unix cmdliner logs logs.fmt logs.lwt fmt fmt.tty))
+
+(executable
+ (name serve)
+ (public_name beingdb-serve)
+ (libraries beingdb dream lwt lwt.unix cmdliner logs logs.fmt logs.lwt fmt fmt.tty))
