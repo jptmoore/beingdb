@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  beingdb:
+    build: .
+    container_name: beingdb
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persist stores
+      - ./git-store:/data/git-store
+      - ./pack-store:/data/pack-store
+      # Mount your facts directory
+      - ./examples/data:/data/facts:ro
+    environment:
+      - BEINGDB_PORT=8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/predicates"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
