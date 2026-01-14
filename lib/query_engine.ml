@@ -57,7 +57,12 @@ let merge_bindings b1 b2 =
   ) b1 in
   
   if conflicts then None
-  else Some (b1 @ b2)
+  else 
+    (* Only add bindings from b2 that aren't already in b1 *)
+    let new_bindings = List.filter (fun (var, _) ->
+      not (List.mem_assoc var b1)
+    ) b2 in
+    Some (b1 @ new_bindings)
 
 (** Execute a single predicate pattern *)
 let execute_pattern store bindings pattern =
