@@ -73,14 +73,27 @@ let handle_query_language pack_store req =
       | `Assoc fields ->
           (match List.assoc_opt "query" fields with
           | Some (`String query_str) ->
+              (* Extract optional offset and limit *)
+              let offset = 
+                match List.assoc_opt "offset" fields with
+                | Some (`Int n) -> Some n
+                | _ -> None
+              in
+              let limit = 
+                match List.assoc_opt "limit" fields with
+                | Some (`Int n) -> Some n
+                | _ -> None
+              in
+              
               (* Parse query *)
               (match Query_parser.parse_query query_str with
               | None -> error_response "Invalid query syntax"
               | Some query ->
-                  (* Execute query *)
+                  (* Execute query (returns all results) *)
                   Query_engine.execute pack_store query
                   >>= fun result ->
-                  json_response (Query_engine.result_to_json result))
+                  (* Apply pagination in result_to_json *)
+                  json_response (Query_engine.result_to_json ?offset ?limit result))
           | _ -> error_response "Missing 'query' field")
       | _ -> error_response "Expected JSON object"
 

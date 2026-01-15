@@ -63,10 +63,42 @@ let rec collect_paths store prefix =
       Lwt.return (sub_paths @ acc)
   ) [] entries
 
-(** Query facts matching pattern (use "_" for wildcards) *)
-let query_predicate store predicate_name pattern =
+(** Recursively collect all paths under a tree with optional pagination *)
+let rec collect_paths_from_tree ?offset ?length tree prefix =
+  let* entries = Store.Tree.list tree [] ?offset ?length in
+  Lwt_list.fold_left_s (fun acc (step, subtree) ->
+    let step_str = Irmin.Type.to_string Store.Tree.step_t step in
+    let new_path = prefix @ [step_str] in
+    let* kind = Store.Tree.kind subtree [] in
+    match kind with
+    | Some `Contents -> Lwt.return (new_path :: acc)
+    | Some `Node ->
+        let* sub_paths = collect_paths_from_tree subtree new_path in
+        Lwt.return (sub_paths @ acc)
+    | None -> Lwt.return acc
+  ) [] entries
+
+(** Query facts matching pattern (use "_" for wildcards) 
+    Uses native offset/limit for single-predicate queries without wildcards *)
+let query_predicate ?offset ?limit store predicate_name pattern =
   let prefix = [ predicate_name ] in
-  let* all_paths = collect_paths store prefix in
+  
+  (* Check if pattern has wildcards *)
+  let has_wildcards = List.exists (fun p -> p = "_") pattern in
+  
+  let* all_paths = 
+    if has_wildcards then
+      (* Pattern has wildcards - need to collect all then filter *)
+      collect_paths store prefix
+    else
+      (* No wildcards and single predicate - can use native pagination *)
+      let length = limit in
+      let* tree_opt = Store.find_tree store prefix in
+      match tree_opt with
+      | None -> Lwt.return []
+      | Some tree ->
+          collect_paths_from_tree ?offset ?length tree prefix
+  in
   
   let matches_pattern path =
     match path with
@@ -79,10 +111,26 @@ let query_predicate store predicate_name pattern =
           ) args pattern
   in
   
-  all_paths
-  |> List.filter matches_pattern
-  |> List.map (function _pred :: args -> args | [] -> [])
-  |> Lwt.return
+  let results = all_paths
+    |> List.filter matches_pattern
+    |> List.map (function _pred :: args -> args | [] -> [])
+  in
+  
+  (* Apply offset/limit manually if we couldn't use native pagination *)
+  let results = 
+    if has_wildcards then
+      let results = match offset with
+        | None -> results
+        | Some off -> List.filteri (fun i _ -> i >= off) results
+      in
+      match limit with
+      | None -> results
+      | Some lim -> List.filteri (fun i _ -> i < lim) results
+    else
+      results  (* Already paginated by native offset/length *)
+  in
+  
+  Lwt.return results
 
 (** Query all facts for a predicate *)
 let query_all store predicate_name =

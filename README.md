@@ -135,9 +135,17 @@ keyword(doc_456, "neural networks").
 curl -X POST http://localhost:8080/query \
   -d '{"query": "created(tina_keane, Work)"}'
 
+# With pagination
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(Artist, Work)", "offset": 0, "limit": 10}'
+
 # Joins
 curl -X POST http://localhost:8080/query \
   -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition), held_at(Exhibition, Venue)"}'
+
+# Joins with pagination
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)", "offset": 5, "limit": 3}'
 
 # Strings
 curl -X POST http://localhost:8080/query \
@@ -149,8 +157,9 @@ curl -X POST http://localhost:8080/query \
 - `GET /predicates` - List predicates
 - `GET /query/:predicate` - Get all facts for predicate
 - `POST /query` - Execute query with joins
+  - Body: `{"query": "...", "offset": 0, "limit": 10}` (offset/limit optional)
 
-Response: `{"variables": [...], "results": [...], "count": N}`
+Response: `{"variables": [...], "results": [...], "count": N, "total": M, "offset": 0, "limit": 10}`
 
 ## Development
 

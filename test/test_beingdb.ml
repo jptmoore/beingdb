@@ -407,6 +407,92 @@ let test_query_engine () =
     Lwt.return ()
   end
 
+let test_pagination () =
+  Lwt_main.run begin
+    let open Lwt.Infix in
+    let test_dir = Filename.temp_file "beingdb_test_pagination_" ".pack" in
+    Unix.unlink test_dir;
+    
+    Beingdb.Pack_backend.init ~fresh:true test_dir
+    >>= fun store ->
+    
+    (* Insert 5 test facts *)
+    Beingdb.Pack_backend.write_fact store "created" ["artist_1"; "work_1"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "created" ["artist_2"; "work_2"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "created" ["artist_3"; "work_3"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "created" ["artist_4"; "work_4"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "created" ["artist_5"; "work_5"]
+    >>= fun () ->
+    
+    (* Test offset without limit *)
+    Beingdb.Pack_backend.query_predicate ~offset:2 store "created" ["_"; "_"]
+    >>= fun offset_results ->
+    
+    Alcotest.(check int)
+      "pagination: offset 2 returns 3 results"
+      3
+      (List.length offset_results);
+    
+    (* Test limit without offset *)
+    Beingdb.Pack_backend.query_predicate ~limit:2 store "created" ["_"; "_"]
+    >>= fun limit_results ->
+    
+    Alcotest.(check int)
+      "pagination: limit 2 returns 2 results"
+      2
+      (List.length limit_results);
+    
+    (* Test offset and limit together *)
+    Beingdb.Pack_backend.query_predicate ~offset:1 ~limit:2 store "created" ["_"; "_"]
+    >>= fun paginated_results ->
+    
+    Alcotest.(check int)
+      "pagination: offset 1 limit 2 returns 2 results"
+      2
+      (List.length paginated_results);
+    
+    (* Test pagination with result_to_json *)
+    (match Beingdb.Query_parser.parse_query "created(Artist, Work)" with
+    | None -> Lwt.fail_with "Failed to parse query"
+    | Some query ->
+        Beingdb.Query_engine.execute store query
+        >>= fun result ->
+        
+        (* Check total count *)
+        Alcotest.(check int)
+          "pagination: total results is 5"
+          5
+          (List.length result.bindings);
+        
+        (* Format with pagination *)
+        let json = Beingdb.Query_engine.result_to_json ~offset:1 ~limit:2 result in
+        
+        (* Extract fields from JSON *)
+        let open Yojson.Safe.Util in
+        let count = json |> member "count" |> to_int in
+        let total = json |> member "total" |> to_int in
+        let offset = json |> member "offset" |> to_int in
+        let limit = json |> member "limit" |> to_int in
+        
+        Alcotest.(check int) "pagination: JSON count is 2" 2 count;
+        Alcotest.(check int) "pagination: JSON total is 5" 5 total;
+        Alcotest.(check int) "pagination: JSON offset is 1" 1 offset;
+        Alcotest.(check int) "pagination: JSON limit is 2" 2 limit;
+        
+        Lwt.return ())
+    >>= fun () ->
+    
+    (* Cleanup *)
+    let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+    let _ = Unix.system cmd in
+    
+    Lwt.return ()
+  end
+
 (* Test suite *)
 let () =
   Alcotest.run "BeingDB" [
@@ -421,5 +507,8 @@ let () =
     ];
     "Query Engine", [
       Alcotest.test_case "joins and patterns" `Quick test_query_engine;
+    ];
+    "Pagination", [
+      Alcotest.test_case "offset and limit" `Quick test_pagination;
     ];
   ]

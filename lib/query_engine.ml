@@ -77,38 +77,79 @@ let execute_pattern store bindings pattern =
         bind_variables pattern.args result
       ) results
 
-(** Execute query with join strategy *)
+(** Execute query: returns all results, pagination handled by result_to_json *)
 let execute store query =
-  let rec execute_patterns bindings patterns =
-    match patterns with
-    | [] -> Lwt.return [bindings]
-    | pattern :: rest ->
-        execute_pattern store bindings pattern
-        >>= fun new_bindings_list ->
-        (* For each new binding, try to execute remaining patterns *)
-        Lwt_list.map_s (fun new_bindings ->
-          match merge_bindings bindings new_bindings with
-          | None -> Lwt.return []
-          | Some merged -> execute_patterns merged rest
-        ) new_bindings_list
-        >|= List.concat
+  (* Single predicate: optimize by avoiding join logic *)
+  if List.length query.patterns = 1 then
+    let pattern = List.hd query.patterns in
+    Pack_backend.query_predicate store pattern.name 
+      (List.map (function 
+        | Atom a -> a 
+        | String s -> s 
+        | Wildcard -> "_" 
+        | Var _ -> "_") pattern.args)
+    >|= fun results ->
+    let bindings = List.map (fun result ->
+      bind_variables pattern.args result
+    ) results in
+    { bindings; variables = query.variables }
+  else
+    (* Multi-predicate query (join) - compute ALL results *)
+    let rec execute_patterns bindings patterns =
+      match patterns with
+      | [] -> Lwt.return [bindings]
+      | pattern :: rest ->
+          execute_pattern store bindings pattern
+          >>= fun new_bindings_list ->
+          Lwt_list.map_s (fun new_bindings ->
+            match merge_bindings bindings new_bindings with
+            | None -> Lwt.return []
+            | Some merged -> execute_patterns merged rest
+          ) new_bindings_list
+          >|= List.concat
+    in
+    
+    execute_patterns [] query.patterns
+    >|= fun all_bindings ->
+    { bindings = all_bindings; variables = query.variables }
+
+(** Format result as JSON with optional pagination *)
+let result_to_json ?offset ?limit result =
+  let total_count = List.length result.bindings in
+  
+  (* Apply pagination *)
+  let offset_val = Option.value offset ~default:0 in
+  let limit_val = Option.value limit ~default:total_count in
+  
+  let paginated_bindings = 
+    result.bindings
+    |> (fun l -> List.filteri (fun i _ -> i >= offset_val) l)
+    |> (fun l -> List.filteri (fun i _ -> i < limit_val) l)
   in
   
-  execute_patterns [] query.patterns
-  >|= fun all_bindings ->
-  { bindings = all_bindings; variables = query.variables }
-
-(** Format result as JSON *)
-let result_to_json result =
   let bindings_json = List.map (fun binding ->
     let pairs = List.map (fun (var, value) ->
       (var, `String value)
     ) binding in
     `Assoc pairs
-  ) result.bindings in
+  ) paginated_bindings in
   
-  `Assoc [
+  let response = [
     "variables", `List (List.map (fun v -> `String v) result.variables);
     "results", `List bindings_json;
-    "count", `Int (List.length result.bindings);
-  ]
+    "count", `Int (List.length paginated_bindings);
+    "total", `Int total_count;
+  ] in
+  
+  (* Add pagination metadata if used *)
+  let response = 
+    if offset <> None || limit <> None then
+      response @ [
+        "offset", `Int offset_val;
+        "limit", `Int limit_val;
+      ]
+    else
+      response
+  in
+  
+  `Assoc response

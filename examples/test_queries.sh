@@ -54,4 +54,16 @@ curl -s -X POST $BASE_URL/query \
   -d '{"query": "created(Artist, she), shown_in(she, Exhibition), created_in_year(she, Year), uses_medium(she, Medium)"}' | jq .
 
 echo
+echo -e "${YELLOW}8. Pagination: First 2 works${NC}"
+curl -s -X POST $BASE_URL/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "created(Artist, Work)", "offset": 0, "limit": 2}' | jq .
+
+echo
+echo -e "${YELLOW}9. Pagination: Next 2 works (offset=2)${NC}"
+curl -s -X POST $BASE_URL/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "created(Artist, Work)", "offset": 2, "limit": 2}' | jq .
+
+echo
 echo -e "${GREEN}All tests complete!${NC}"
