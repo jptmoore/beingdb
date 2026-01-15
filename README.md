@@ -66,20 +66,31 @@ docker compose run --rm -d -p 8080:8080 --name beingdb-server \
 **Or for zero-downtime with blue-green:**
 
 ```bash
-# Compile to new snapshot
-docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-new
+# Pull latest changes
+docker compose run --rm beingdb beingdb-pull --git /data/git-store
+
+# Compile to NEW timestamped snapshot
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-$TIMESTAMP
 
 # Start new server on different port
 docker compose run --rm -d -p 8081:8080 --name beingdb-green \
-  beingdb beingdb-serve --pack /data/snapshots/pack-new --port 8080
+  beingdb beingdb-serve --pack /data/snapshots/pack-$TIMESTAMP --port 8080
 
 # Test it
 curl http://localhost:8081/predicates
 
-# Switch load balancer/proxy from 8080 → 8081, then:
+# Switch load balancer/proxy to point to :8081, verify traffic works, then:
 docker stop beingdb-server
 docker rm beingdb-server
-docker rename beingdb-green beingdb-server
+
+# Start new server on :8080 with updated snapshot
+docker compose run --rm -d -p 8080:8080 --name beingdb-server \
+  beingdb beingdb-serve --pack /data/snapshots/pack-$TIMESTAMP --port 8080
+
+# Clean up green
+docker stop beingdb-green
+docker rm beingdb-green
 ```
 
 **Production data safety:**
