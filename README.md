@@ -51,15 +51,16 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 # Pull latest changes from remote Git
 docker compose run --rm beingdb beingdb-pull --git /data/git-store
 
-# Compile to NEW timestamped snapshot
-docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-$(date +%Y%m%d-%H%M%S)
+# Compile to NEW timestamped snapshot (capture timestamp)
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-$TIMESTAMP
 
 # Stop old server
 docker stop beingdb-server
 
-# Start new server with updated snapshot (use the timestamp from above)
+# Start new server with updated snapshot
 docker compose run --rm -d -p 8080:8080 --name beingdb-server \
-  beingdb beingdb-serve --pack /data/snapshots/pack-20260115-120000 --port 8080
+  beingdb beingdb-serve --pack /data/snapshots/pack-$TIMESTAMP --port 8080
 ```
 
 **Or for zero-downtime with blue-green:**
