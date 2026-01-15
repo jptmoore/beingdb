@@ -26,43 +26,67 @@ BeingDB is small by design, but it unlocks a capability most RAG systems are mis
 
 ## Quick Start
 
-Clone a Git repository with predicates:
+**Production workflow** (Git repository with predicates):
 
 ```bash
+# Build the image
 docker compose build
 
-# Clone facts from GitHub
+# One-time: Clone facts from remote Git repository
 docker compose run --rm beingdb beingdb-clone https://github.com/org/facts.git --git /data/git-store
 
-# Compile to pack
+# Compile to pack snapshot
 docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/pack-store
 
 # Start server
-docker compose up -d
+docker compose run --rm -d -p 8080:8080 beingdb beingdb-serve --pack /data/pack-store --port 8080
 
 # Query
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
-**Update & deploy:**
+**Update workflow:**
 
 ```bash
-# Pull updates
+# Pull latest changes from remote Git
 docker compose run --rm beingdb beingdb-pull --git /data/git-store
 
-# IMPORTANT: Compile to NEW directory (never overwrite existing pack-store)
-docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/v2
+# Compile to NEW timestamped snapshot
+docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-$(date +%Y%m%d-%H%M%S)
 
-# Zero-downtime swap
-ln -sfn ./snapshots/v2 ./current
-docker compose restart
+# Stop old server
+docker stop beingdb-server
+
+# Start new server with updated snapshot (use the timestamp from above)
+docker compose run --rm -d -p 8080:8080 --name beingdb-server \
+  beingdb beingdb-serve --pack /data/snapshots/pack-20260115-120000 --port 8080
+```
+
+**Or for zero-downtime with blue-green:**
+
+```bash
+# Compile to new snapshot
+docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-new
+
+# Start new server on different port
+docker compose run --rm -d -p 8081:8080 --name beingdb-green \
+  beingdb beingdb-serve --pack /data/snapshots/pack-new --port 8080
+
+# Test it
+curl http://localhost:8081/predicates
+
+# Switch load balancer/proxy from 8080 → 8081, then:
+docker stop beingdb-server
+docker rm beingdb-server
+docker rename beingdb-green beingdb-server
 ```
 
 **Production data safety:**
 
 - `beingdb-serve` - Read-only, never modifies pack store
 - `beingdb-compile` - Always creates fresh pack (overwrites target directory)
-- ⚠️ Always compile to NEW directories to preserve previous versions
+- `beingdb-pull` - Updates Git store in-place (use Git for versioning)
+- ⚠️ Always compile to NEW directories to preserve previous snapshots
 
 ## Query Language
 
