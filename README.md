@@ -57,7 +57,7 @@ BeingDB is **not** a graph database, **not** a reasoning engine, and **not** a v
 
 It's a simple, immutable fact store designed to complement your RAG stack. Think of it as:
 - **Git** handles versioning and collaboration
-- **Vector stores** (Pinecone, Weaviate) handle semantic search over documents
+- **Vector stores** handle semantic search over documents
 - **LLMs** handle reasoning and natural language understanding
 - **BeingDB** handles structured facts with reliable joins
 
