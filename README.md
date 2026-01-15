@@ -110,6 +110,27 @@ For production systems, use blue-green deployment:
 
 This ensures no downtime during updates, and allows instant rollback if issues arise. The timestamped snapshots are preserved on disk, so you can quickly restart an old server with a previous snapshot if needed.
 
+## Configuration
+
+The `beingdb-serve` command accepts a `--max-results` argument to set a hard limit on query result sizes:
+
+```bash
+beingdb-serve --pack /var/beingdb/pack-store --port 8080 --max-results 5000
+```
+
+This limit (default: 1000) cannot be exceeded, even if a query specifies a higher `limit` value. It prevents out-of-memory errors when querying large datasets.
+
+**Example:**
+```bash
+# Start server with 5000 result limit
+beingdb-serve --pack ./pack-store --port 8080 --max-results 5000
+
+# Query requesting 10,000 results will be capped at 5000
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(Artist, Work)", "limit": 10000}'
+# Returns at most 5000 results (min of 10000 and max-results)
+```
+
 ## Query Language
 
 **Facts** (examples/sample_predicates.pl):

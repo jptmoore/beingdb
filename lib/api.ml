@@ -61,7 +61,7 @@ let handle_sync git_store pack_store _req =
   json_response (`Assoc ["status", `String "sync completed"])
 
 (** Execute a query with joins *)
-let handle_query_language pack_store req =
+let handle_query_language max_results pack_store req =
   Dream.body req
   >>= fun body ->
   
@@ -89,19 +89,27 @@ let handle_query_language pack_store req =
               (match Query_parser.parse_query query_str with
               | None -> error_response "Invalid query syntax"
               | Some query ->
-                  (* Use streaming for large joins when pagination is provided *)
+                  (* Enforce max results limit as ceiling to prevent OOM *)
+                  let is_join = List.length query.patterns > 1 in
+                  let limit_to_use = 
+                    match limit with
+                    | Some user_limit -> Some (min user_limit max_results)
+                    | None -> Some max_results
+                  in
+                  
+                  (* Use streaming for joins with pagination *)
                   let use_streaming = 
-                    List.length query.patterns > 1 && 
+                    is_join && 
                     Option.is_some offset && 
-                    Option.is_some limit
+                    Option.is_some limit_to_use
                   in
                   
                   if use_streaming then
                     (* Two-pass streaming approach for large joins:
                        Pass 1: Stream through join counting results (no materialization)
                        Pass 2: Stream to collect just the requested page *)
-                    let offset_val = Option.get offset in
-                    let limit_val = Option.get limit in
+                    let offset_val = Option.value offset ~default:0 in
+                    let limit_val = Option.get limit_to_use in
                     
                     (* Pass 1: Count total by streaming (constant memory) *)
                     Query_engine.count_streaming pack_store query
@@ -121,12 +129,12 @@ let handle_query_language pack_store req =
                     (* Single predicate or unpaginated: full materialization is fine *)
                     Query_engine.execute pack_store query
                     >>= fun result ->
-                    json_response (Query_engine.result_to_json ?offset ?limit result))
+                    json_response (Query_engine.result_to_json ?offset ?limit:limit_to_use result))
           | _ -> error_response "Missing 'query' field")
       | _ -> error_response "Expected JSON object"
 
 (** Build Dream router *)
-let router git_store pack_store =
+let router max_results git_store pack_store =
   Dream.router [
     Dream.get "/" handle_root;
     
@@ -141,21 +149,21 @@ let router git_store pack_store =
         handle_query pack_store predicate req);
     
     Dream.post "/query"
-      (handle_query_language pack_store);
+      (handle_query_language max_results pack_store);
     
     Dream.post "/sync"
       (handle_sync git_store pack_store);
   ]
 
 (** Start the API server *)
-let serve ~port ~git_store ~pack_store =
+let serve ~max_results ~port ~git_store ~pack_store =
   Logs.info (fun m -> m "Starting API server on port %d" port);
   Dream.run ~port
     (Dream.logger
-    @@ router git_store pack_store)
+    @@ router max_results git_store pack_store)
 
 (** Pack-only server (no Git backend, no sync endpoint) *)
-let serve_pack_only pack_store port =
+let serve_pack_only max_results pack_store port =
   let router = Dream.router [
     Dream.get "/" handle_root;
     
@@ -170,7 +178,7 @@ let serve_pack_only pack_store port =
         handle_query pack_store predicate req);
     
     Dream.post "/query"
-      (handle_query_language pack_store);
+      (handle_query_language max_results pack_store);
   ] in
   
   Dream.run ~port (Dream.logger @@ router)
