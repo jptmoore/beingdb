@@ -1,3 +1,9 @@
 (library
  (name beingdb)
  (libraries irmin.unix irmin-git.unix irmin-pack.unix dream lwt lwt.unix logs logs.lwt logs.fmt fmt yojson))
+
+(rule
+ (target version.ml)
+ (action
+  (with-stdout-to %{target}
+   (echo "let version = \"%{version:beingdb}\""))))

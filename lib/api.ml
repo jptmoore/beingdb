@@ -19,6 +19,18 @@ let error_response msg =
   Dream.json ~status:`Bad_Request 
     (Yojson.Safe.to_string (`Assoc ["error", `String msg]))
 
+(** Health check endpoint *)
+let handle_root _req =
+  Dream.respond "OK"
+
+(** Version endpoint *)
+let handle_version _req =
+  let json = `Assoc [
+    "version", `String Version.version;
+    "name", `String "BeingDB"
+  ] in
+  json_response json
+
 (** Convert fact arguments to JSON *)
 let fact_to_json args =
   `List (List.map (fun s -> `String s) args)
@@ -75,6 +87,10 @@ let handle_query_language pack_store req =
 (** Build Dream router *)
 let router git_store pack_store =
   Dream.router [
+    Dream.get "/" handle_root;
+    
+    Dream.get "/version" handle_version;
+    
     Dream.get "/predicates" 
       (handle_list_predicates pack_store);
     
@@ -100,6 +116,10 @@ let serve ~port ~git_store ~pack_store =
 (** Pack-only server (no Git backend, no sync endpoint) *)
 let serve_pack_only pack_store port =
   let router = Dream.router [
+    Dream.get "/" handle_root;
+    
+    Dream.get "/version" handle_version;
+    
     Dream.get "/predicates" 
       (handle_list_predicates pack_store);
     
