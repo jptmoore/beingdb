@@ -28,7 +28,7 @@ Your knowledge base evolves like a codebase. Subject matter experts who already 
 
 ## Simple Query Language
 
-Facts are Prolog-style predicates—one fact per file:
+Facts are Prolog-style predicates—one fact per line:
 ```prolog
 created(tina_keane, she).
 shown_in(she, rewind_exhibition_1995).
@@ -50,6 +50,27 @@ No schema, no complex rules. Your LLM handles reasoning; BeingDB provides the re
 - Any system where facts should be reviewed and versioned like code
 
 BeingDB is small by design, but unlocks something most RAG systems lack: **collaborative, versioned, queryable facts.**
+
+## What BeingDB is NOT
+
+BeingDB is **not** a graph database, **not** a reasoning engine, and **not** a vector store.
+
+It's a simple, immutable fact store designed to complement your RAG stack. Think of it as:
+- **Git** handles versioning and collaboration
+- **Vector stores** (Pinecone, Weaviate) handle semantic search over documents
+- **LLMs** handle reasoning and natural language understanding
+- **BeingDB** handles structured facts with reliable joins
+
+Use BeingDB when you need facts that can be reviewed, versioned, and queried with certainty—not when you need fuzzy semantic search or complex inference.
+
+## Who is this for?
+
+- **Cultural heritage institutions** managing collections metadata
+- **Research archives** with evolving datasets requiring provenance
+- **Digital humanities projects** where facts need peer review
+- **RAG systems** needing structured metadata alongside vector search
+- **Multi-curator knowledge bases** requiring Git-based collaboration
+- **Any project** where facts should be versioned, reviewed, and queryable like code
 
 ## Repository Structure
 
@@ -73,50 +94,33 @@ your-facts-repo/
 - File name becomes the predicate name (`created.pl` → `created` predicate)
 - Files without `.pl` extension work too (`created` file → `created` predicate)
 
-**Example repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
+**Example `predicates/created.pl`:**
+```prolog
+created(tina_keane, she).
+created(tina_keane, faded_wallpaper).
+created(tina_keane, shadow_of_a_journey).
+```
+
+**Example `predicates/shown_in.pl`:**
+```prolog
+shown_in(she, rewind_exhibition_1995).
+shown_in(faded_wallpaper, ica_london_2010).
+```
+
+**Complete example repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
 
 ## Installation
 
-**Linux (Ubuntu/Debian):**
+Requires OCaml 5.1+ and opam. See [docs/installation.md](docs/installation.md) for detailed instructions.
 
+**Quick install (Linux/macOS):**
 ```bash
-# Install OCaml and opam
-sudo apt-get update
-sudo apt-get install -y opam libgmp-dev libev-dev libssl-dev pkg-config
-
-# Initialize opam (if not already done)
-opam init -y
-eval $(opam env)
-
-# Install OCaml 5.1 (or later)
-opam switch create 5.1.0
-eval $(opam env)
-
-# Clone and build BeingDB
 git clone https://github.com/jptmoore/beingdb.git
 cd beingdb
 opam install . --deps-only -y
 dune build --release
-
-# Install binaries to ~/.local/bin or /usr/local/bin
 dune install
 ```
-
-**macOS:**
-
-```bash
-# Install dependencies via Homebrew
-brew install opam gmp libev openssl pkg-config
-
-# Then follow the same opam/dune steps as Linux above
-```
-
-After installation, the following binaries will be available:
-- `beingdb-clone` - Clone a Git repository of facts
-- `beingdb-pull` - Pull updates from remote Git
-- `beingdb-import` - Import local predicate files (dev/testing)
-- `beingdb-compile` - Compile Git store to optimized Pack format
-- `beingdb-serve` - Start HTTP query server
 
 ## Quick Start
 

@@ -1,0 +1,69 @@
+# Installation
+
+## Linux (Ubuntu/Debian)
+
+```bash
+# Install OCaml and opam
+sudo apt-get update
+sudo apt-get install -y opam libgmp-dev libev-dev libssl-dev pkg-config
+
+# Initialize opam (if not already done)
+opam init -y
+eval $(opam env)
+
+# Install OCaml 5.1 (or later)
+opam switch create 5.1.0
+eval $(opam env)
+
+# Clone and build BeingDB
+git clone https://github.com/jptmoore/beingdb.git
+cd beingdb
+opam install . --deps-only -y
+dune build --release
+
+# Install binaries to ~/.local/bin or /usr/local/bin
+dune install
+```
+
+## macOS
+
+```bash
+# Install dependencies via Homebrew
+brew install opam gmp libev openssl pkg-config
+
+# Then follow the same opam/dune steps as Linux above
+opam init -y
+eval $(opam env)
+opam switch create 5.1.0
+eval $(opam env)
+
+# Clone and build BeingDB
+git clone https://github.com/jptmoore/beingdb.git
+cd beingdb
+opam install . --deps-only -y
+dune build --release
+
+# Install binaries
+dune install
+```
+
+## Available Binaries
+
+After installation, the following binaries will be available:
+- `beingdb-clone` - Clone a Git repository of facts
+- `beingdb-pull` - Pull updates from remote Git
+- `beingdb-import` - Import local predicate files (dev/testing)
+- `beingdb-compile` - Compile Git store to optimized Pack format
+- `beingdb-serve` - Start HTTP query server
+
+## Troubleshooting
+
+**opam not found:**
+- Make sure you've run `eval $(opam env)` after installing opam
+
+**Build fails with missing dependencies:**
+- Ensure all system dependencies are installed: `libgmp-dev libev-dev libssl-dev pkg-config`
+
+**Permission errors during install:**
+- Use `dune install --prefix ~/.local` to install to your home directory
+- Or use `sudo dune install` to install system-wide
