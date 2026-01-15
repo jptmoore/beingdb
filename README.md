@@ -52,27 +52,6 @@ No schema, no complex rules. Your LLM handles reasoning; BeingDB provides the re
 BeingDB is small by design, but unlocks something most RAG systems lack: **collaborative, versioned, queryable facts.**
 
 ## Installation
-- Who created this artwork?
-- Where was this shown?
-- Which entities are connected?
-- What metadata belongs to this item?
-
-Forcing a graph database into your pipeline is not always the best solution: graph databases, while powerful, are often not simple, reproducible, or easy to maintain.
-
-BeingDB gives you a tiny, predictable, Git‑versioned layer for explicit facts — entities, relationships, metadata, keywords, labels — all expressed as simple Prolog‑style predicates.
-The runtime stays deliberately minimal. No schema, no inference, just atoms and strings. Your LLM handles the reasoning; BeingDB just provides the clean, structured substrate it needs.
-
-
-**This combination is powerful for:**
-- Chatbots that need reliable metadata
-- Research archives and cultural collections
-- Digital humanities projects
-- Knowledge‑rich assistants
-- Any RAG system that needs structure and semantics
-
-BeingDB is small by design, but it unlocks a capability most RAG systems are missing: **fast, explicit, joinable facts — versioned like code, served like a database.**
-
-## Installation
 
 **Linux (Ubuntu/Debian):**
 
