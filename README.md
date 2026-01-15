@@ -1,6 +1,57 @@
 # BeingDB
 
-Modern RAG systems are great at retrieving unstructured text, but they struggle with structured facts. Vector search can tell you which documents are similar, but it can’t reliably answer questions like:
+**Facts versioned like code, queried like a database.**
+
+Modern RAG systems retrieve unstructured text well, but struggle with structured facts. Vector search finds similar documents, but can't reliably answer:
+- Who created this artwork?
+- Where was this shown?
+- Which entities are connected through relationships?
+
+BeingDB solves this by treating facts like source code: **store them in Git, query them from an optimized runtime**.
+
+## Why Git for Facts?
+
+**Traditional knowledge bases require:**
+- SQL databases: Manual migrations, DBA gatekeeping, no native versioning
+- Graph databases: CSV imports, no collaboration workflow
+- JSON files: No review process or provenance
+
+**BeingDB's Git workflow gives you:**
+- **Pull requests for knowledge** - Domain experts propose facts, get peer review
+- **Version history** - Full audit trail of who added what when
+- **Branching & testing** - Test new facts in branches before production merge
+- **CI/CD integration** - Validate facts in PR checks, auto-deploy on merge
+- **Team collaboration** - Multiple curators using familiar Git tools
+- **Instant rollback** - Revert to any known-good fact set
+
+Your knowledge base evolves like a codebase. Subject matter experts who already use Git for documentation can contribute facts using the same workflow.
+
+## Simple Query Language
+
+Facts are Prolog-style predicates—one fact per file:
+```prolog
+created(tina_keane, she).
+shown_in(she, rewind_exhibition_1995).
+held_at(rewind_exhibition_1995, ica_london).
+```
+
+Query with pattern matching and joins:
+```
+created(Artist, Work), shown_in(Work, Exhibition)
+```
+
+No schema, no complex rules. Your LLM handles reasoning; BeingDB provides the reliable, joinable facts.
+
+**Perfect for:**
+- RAG chatbots needing structured metadata alongside vectors
+- Research archives with multiple curators
+- Digital humanities projects requiring provenance
+- Knowledge bases that evolve through team collaboration
+- Any system where facts should be reviewed and versioned like code
+
+BeingDB is small by design, but unlocks something most RAG systems lack: **collaborative, versioned, queryable facts.**
+
+## Installation
 - Who created this artwork?
 - Where was this shown?
 - Which entities are connected?
