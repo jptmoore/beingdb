@@ -111,7 +111,7 @@ shown_in(faded_wallpaper, ica_london_2010).
 
 ## Installation
 
-Requires OCaml 5.1+ and opam. See [docs/installation.md](docs/installation.md) for detailed instructions.
+See [docs/installation.md](docs/installation.md) for detailed instructions.
 
 **Quick install (Linux/macOS):**
 ```bash
