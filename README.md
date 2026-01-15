@@ -85,8 +85,8 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 **Update workflow:**
 
 ```bash
-# Pull latest changes from remote Git
-beingdb-pull --git /var/beingdb/git-store
+# Pull latest changes from remote Git repository
+beingdb-pull https://github.com/org/facts.git --git /var/beingdb/git-store
 
 # Compile to NEW timestamped snapshot (capture timestamp)
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
@@ -183,23 +183,6 @@ curl -X POST http://localhost:8080/query \
 Response: `{"variables": [...], "results": [...], "count": N, "total": M, "offset": 0, "limit": 10}`
 
 ## Development
-
-**Local testing:**
-
-```bash
-# Import example predicates
-beingdb-import --input ./examples --git ./git-store
-
-# Compile to pack
-beingdb-compile --git ./git-store --pack ./pack-store
-
-# Start server
-beingdb-serve --pack ./pack-store --port 8080
-
-# Query
-curl http://localhost:8080/predicates
-curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
-```
 
 **Unit tests:**
 
