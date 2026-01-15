@@ -12,7 +12,7 @@ let compile_predicate pack_store git_store predicate_name =
   match content_opt with
   | None ->
       let* () = Logs_lwt.warn (fun m -> m "  Predicate not found: %s" predicate_name) in
-      Lwt.return 0
+      Lwt.return (0, false)
   | Some content ->
       let facts = String.split_on_char '\n' content
         |> List.map String.trim
@@ -22,17 +22,68 @@ let compile_predicate pack_store git_store predicate_name =
             not (String.starts_with ~prefix:"#" line))
       in
       
-      (* Parse and write each fact to Pack *)
-      let* () = Lwt_list.iter_s (fun fact ->
+      (* Parse facts (synchronously) *)
+      let parse_results = List.map (fun fact ->
         match Beingdb.Parse_predicate.parse_fact fact with
-        | None -> 
-            Logs_lwt.warn (fun m -> m "  Skipping invalid fact: %s" fact)
-        | Some (_pred, args) ->
-            Beingdb.Pack_backend.write_fact pack_store predicate_name args
+        | None -> `Invalid fact
+        | Some (parsed_pred, args) -> `Valid (parsed_pred, args, fact)
       ) facts in
       
-      let* () = Logs_lwt.info (fun m -> m "  ✓ %d facts" (List.length facts)) in
-      Lwt.return (List.length facts)
+      (* Log warnings for invalid facts *)
+      let* () = Lwt_list.iter_s (function
+        | `Invalid fact -> Logs_lwt.warn (fun m -> m "  Skipping invalid fact: %s" fact)
+        | `Valid _ -> Lwt.return_unit
+      ) parse_results in
+      
+      (* Extract valid parsed facts *)
+      let parsed_facts = List.filter_map (function
+        | `Invalid _ -> None
+        | `Valid data -> Some data
+      ) parse_results in
+      
+      (* Check arity consistency *)
+      let arities = List.map (fun (_, args, _) -> List.length args) parsed_facts in
+      let unique_arities = List.sort_uniq compare arities in
+      
+      let* () = 
+        if List.length unique_arities > 1 then
+          let arity_examples = List.map (fun (_, args, fact) ->
+            Printf.sprintf "%s/%d: %s" predicate_name (List.length args) fact
+          ) parsed_facts in
+          let examples_to_show = 
+            if List.length arity_examples <= 5 then arity_examples 
+            else List.filteri (fun i _ -> i < 5) arity_examples 
+          in
+          let* () = Logs_lwt.err (fun m -> m "  ERROR: Mixed arities in %s" predicate_name) in
+          let* () = Lwt_list.iter_s (fun ex ->
+            Logs_lwt.err (fun m -> m "    %s" ex)
+          ) examples_to_show in
+          Logs_lwt.err (fun m -> m "  Each predicate file must contain facts with consistent arity")
+        else
+          Lwt.return_unit
+      in
+      
+      (* Only write if arity is consistent *)
+      let* () = 
+        if List.length unique_arities > 1 then
+          Lwt.return_unit
+        else
+          Lwt_list.iter_s (fun (_, args, _) ->
+            Beingdb.Pack_backend.write_fact pack_store predicate_name args
+          ) parsed_facts
+      in
+      
+      let fact_count = if List.length unique_arities > 1 then 0 else List.length parsed_facts in
+      let has_error = List.length unique_arities > 1 in
+      let* () = 
+        if fact_count > 0 then
+          Logs_lwt.info (fun m -> m "  ✓ %d facts" fact_count)
+        else if has_error then
+          Logs_lwt.info (fun m -> m "  ✗ 0 facts (arity mismatch)")
+        else
+          Logs_lwt.info (fun m -> m "  ✓ 0 facts")
+      in
+      Lwt.return (fact_count, has_error)
 
 let compile_all git_path pack_path =
   Lwt_main.run (
@@ -53,18 +104,28 @@ let compile_all git_path pack_path =
     let* () = Logs_lwt.info (fun m -> m "") in
     
     (* Compile each predicate *)
-    let* fact_counts = Lwt_list.map_s (fun predicate_name ->
-      let* count = compile_predicate pack git predicate_name in
-      Lwt.return (predicate_name, count)
+    let* results = Lwt_list.map_s (fun predicate_name ->
+      let* (count, has_error) = compile_predicate pack git predicate_name in
+      Lwt.return (predicate_name, count, has_error)
     ) predicates in
     
-    let total_facts = List.fold_left (fun acc (_name, count) -> acc + count) 0 fact_counts in
+    let total_facts = List.fold_left (fun acc (_name, count, _) -> acc + count) 0 results in
+    let error_count = List.fold_left (fun acc (_name, _, has_error) -> if has_error then acc + 1 else acc) 0 results in
     
     let* () = Logs_lwt.info (fun m -> m "") in
-    let* () = Logs_lwt.info (fun m -> m "Compilation complete!") in
+    let* () = 
+      if error_count > 0 then
+        Logs_lwt.err (fun m -> m "Compilation failed with %d error(s)!" error_count)
+      else
+        Logs_lwt.info (fun m -> m "Compilation complete!")
+    in
     let* () = Logs_lwt.info (fun m -> m "  Predicates: %d" (List.length predicates)) in
     let* () = Logs_lwt.info (fun m -> m "  Total facts: %d" total_facts) in
     
+    if error_count > 0 then
+      exit 1
+    else
+      
     Lwt.return_unit
   )
 

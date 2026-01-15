@@ -69,6 +69,7 @@ your-facts-repo/
 - All predicate files must be under `predicates/` directory
 - Use `.pl` extension for syntax highlighting and clarity (automatically stripped by BeingDB)
 - One predicate type per file (e.g., all `created(...)` facts in `created.pl`)
+- **Each predicate must have consistent arity** - mixing `created(a, b)` and `created(a, b, c)` in the same file will cause compile errors
 - File name becomes the predicate name (`created.pl` → `created` predicate)
 - Files without `.pl` extension work too (`created` file → `created` predicate)
 

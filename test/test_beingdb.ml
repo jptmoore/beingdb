@@ -493,7 +493,123 @@ let test_pagination () =
     Lwt.return ()
   end
 
-(* Test suite *)
+let test_arity_validation () =
+  Lwt_main.run begin
+    let test_dir_git = Filename.temp_file "beingdb_arity_git_" "" in
+    Unix.unlink test_dir_git;
+    Unix.mkdir test_dir_git 0o755;
+    
+    (* Initialize Git store *)
+    Beingdb.Git_backend.init test_dir_git
+    >>= fun git_store ->
+    
+    (* Write predicate with consistent arity (2 arguments) *)
+    let consistent_facts = [
+      "created(artist_a, work_1).";
+      "created(artist_b, work_2).";
+      "created(artist_c, work_3).";
+    ] in
+    Beingdb.Git_backend.write_predicate git_store "created" (String.concat "\n" consistent_facts)
+    >>= fun () ->
+    
+    (* Write predicate with mixed arities (2 and 3 arguments) *)
+    let mixed_facts = [
+      "made(artist_a, work_1).";           (* 2 args *)
+      "made(artist_b, work_2, 1995).";      (* 3 args *)
+      "made(artist_c, work_3).";            (* 2 args *)
+      "made(artist_d, work_4, 2000).";      (* 3 args *)
+    ] in
+    Beingdb.Git_backend.write_predicate git_store "made" (String.concat "\n" mixed_facts)
+    >>= fun () ->
+    
+    (* Simulate compile for consistent predicate *)
+    Beingdb.Git_backend.read_predicate git_store "created"
+    >>= fun content_opt ->
+    
+    let consistent_content = match content_opt with
+      | Some c -> c
+      | None -> Alcotest.fail "Should have content for 'created'"
+    in
+    
+    let facts = String.split_on_char '\n' consistent_content
+      |> List.map String.trim
+      |> List.filter (fun s -> s <> "")
+    in
+    
+    let parse_results = List.map (fun fact ->
+      match Beingdb.Parse_predicate.parse_fact fact with
+      | None -> `Invalid fact
+      | Some (pred, args) -> `Valid (pred, args, fact)
+    ) facts in
+    
+    let parsed_facts = List.filter_map (function
+      | `Invalid _ -> None
+      | `Valid data -> Some data
+    ) parse_results in
+    
+    let arities = List.map (fun (_, args, _) -> List.length args) parsed_facts in
+    let unique_arities = List.sort_uniq compare arities in
+    
+    Alcotest.(check int)
+      "consistent predicate has single arity"
+      1
+      (List.length unique_arities);
+    
+    Alcotest.(check int)
+      "consistent predicate arity is 2"
+      2
+      (List.hd arities);
+    
+    (* Simulate compile for mixed-arity predicate *)
+    Beingdb.Git_backend.read_predicate git_store "made"
+    >>= fun mixed_content_opt ->
+    
+    let mixed_content = match mixed_content_opt with
+      | Some c -> c
+      | None -> Alcotest.fail "Should have content for 'made'"
+    in
+    
+    let mixed_facts_parsed = String.split_on_char '\n' mixed_content
+      |> List.map String.trim
+      |> List.filter (fun s -> s <> "")
+      |> List.map (fun fact ->
+          match Beingdb.Parse_predicate.parse_fact fact with
+          | None -> `Invalid fact
+          | Some (pred, args) -> `Valid (pred, args, fact))
+      |> List.filter_map (function
+          | `Invalid _ -> None
+          | `Valid data -> Some data)
+    in
+    
+    let mixed_arities = List.map (fun (_, args, _) -> List.length args) mixed_facts_parsed in
+    let unique_mixed_arities = List.sort_uniq compare mixed_arities in
+    
+    Alcotest.(check int)
+      "mixed predicate has multiple arities"
+      2
+      (List.length unique_mixed_arities);
+    
+    Alcotest.(check (list int))
+      "mixed predicate has arities 2 and 3"
+      [2; 3]
+      unique_mixed_arities;
+    
+    (* Verify that facts with mixed arity would be rejected during compile *)
+    (* In real compile.ml, this would result in 0 facts written *)
+    let should_write = List.length unique_mixed_arities = 1 in
+    
+    Alcotest.(check bool)
+      "mixed arity predicate should be rejected"
+      false
+      should_write;
+    
+    (* Cleanup *)
+    let cmd_git = Printf.sprintf "rm -rf %s" (Filename.quote test_dir_git) in
+    let _ = Unix.system cmd_git in
+    
+    Lwt.return ()
+  end
+
 let () =
   Alcotest.run "BeingDB" [
     "Parse", [
@@ -510,5 +626,8 @@ let () =
     ];
     "Pagination", [
       Alcotest.test_case "offset and limit" `Quick test_pagination;
+    ];
+    "Arity Validation", [
+      Alcotest.test_case "detect mixed arities" `Quick test_arity_validation;
     ];
   ]
