@@ -7,13 +7,10 @@ Modern RAG systems are great at retrieving unstructured text, but they struggle 
 - What metadata belongs to this item?
 
 Forcing a graph database into your pipeline is not always the best solution: graph databases, while powerful, are often not simple, reproducible, or easy to maintain.
-**BeingDB fills this gap.**
 
-It gives you a tiny, predictable, Git‑versioned layer for explicit facts — entities, relationships, metadata, keywords, labels — all expressed as simple Prolog‑style predicates.
+BeingDB gives you a tiny, predictable, Git‑versioned layer for explicit facts — entities, relationships, metadata, keywords, labels — all expressed as simple Prolog‑style predicates.
 The runtime stays deliberately minimal. No schema, no inference, just atoms and strings. Your LLM handles the reasoning; BeingDB just provides the clean, structured substrate it needs.
 
-**The result:**  
-A retrieval stack where vector search finds the right documents, and BeingDB provides the factual backbone the LLM can trust.
 
 **This combination is powerful for:**
 - Chatbots that need reliable metadata
@@ -24,22 +21,62 @@ A retrieval stack where vector search finds the right documents, and BeingDB pro
 
 BeingDB is small by design, but it unlocks a capability most RAG systems are missing: **fast, explicit, joinable facts — versioned like code, served like a database.**
 
+## Installation
+
+**Linux (Ubuntu/Debian):**
+
+```bash
+# Install OCaml and opam
+sudo apt-get update
+sudo apt-get install -y opam libgmp-dev libev-dev libssl-dev pkg-config
+
+# Initialize opam (if not already done)
+opam init -y
+eval $(opam env)
+
+# Install OCaml 5.1 (or later)
+opam switch create 5.1.0
+eval $(opam env)
+
+# Clone and build BeingDB
+git clone https://github.com/jptmoore/beingdb.git
+cd beingdb
+opam install . --deps-only -y
+dune build --release
+
+# Install binaries to ~/.local/bin or /usr/local/bin
+dune install
+```
+
+**macOS:**
+
+```bash
+# Install dependencies via Homebrew
+brew install opam gmp libev openssl pkg-config
+
+# Then follow the same opam/dune steps as Linux above
+```
+
+After installation, the following binaries will be available:
+- `beingdb-clone` - Clone a Git repository of facts
+- `beingdb-pull` - Pull updates from remote Git
+- `beingdb-import` - Import local predicate files (dev/testing)
+- `beingdb-compile` - Compile Git store to optimized Pack format
+- `beingdb-serve` - Start HTTP query server
+
 ## Quick Start
 
 **Production workflow** (Git repository with predicates):
 
 ```bash
-# Build the image
-docker compose build
-
 # One-time: Clone facts from remote Git repository
-docker compose run --rm beingdb beingdb-clone https://github.com/org/facts.git --git /data/git-store
+beingdb-clone https://github.com/org/facts.git --git /var/beingdb/git-store
 
 # Compile to pack snapshot
-docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/pack-store
+beingdb-compile --git /var/beingdb/git-store --pack /var/beingdb/pack-store
 
 # Start server
-docker compose run --rm -d -p 8080:8080 beingdb beingdb-serve --pack /data/pack-store --port 8080
+beingdb-serve --pack /var/beingdb/pack-store --port 8080 &
 
 # Query
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
@@ -49,56 +86,29 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 
 ```bash
 # Pull latest changes from remote Git
-docker compose run --rm beingdb beingdb-pull --git /data/git-store
+beingdb-pull --git /var/beingdb/git-store
 
 # Compile to NEW timestamped snapshot (capture timestamp)
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-$TIMESTAMP
+beingdb-compile --git /var/beingdb/git-store --pack /var/beingdb/snapshots/pack-$TIMESTAMP
 
 # Stop old server
-docker stop beingdb-server
+pkill beingdb-serve
 
 # Start new server with updated snapshot
-docker compose run --rm -d -p 8080:8080 --name beingdb-server \
-  beingdb beingdb-serve --pack /data/snapshots/pack-$TIMESTAMP --port 8080
+beingdb-serve --pack /var/beingdb/snapshots/pack-$TIMESTAMP --port 8080 &
 ```
 
-**Or for zero-downtime with blue-green:**
+**Zero-downtime deployments:**
 
-```bash
-# Pull latest changes
-docker compose run --rm beingdb beingdb-pull --git /data/git-store
+For production systems, use blue-green deployment:
+1. Compile the new snapshot with a timestamp
+2. Start the new server on a different port (e.g., 8081)
+3. Update your load balancer/reverse proxy to route traffic to the new port
+4. Verify the new server is working correctly
+5. Stop the old server (running on port 8080)
 
-# Compile to NEW timestamped snapshot
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-docker compose run --rm beingdb beingdb-compile --git /data/git-store --pack /data/snapshots/pack-$TIMESTAMP
-
-# Start new server on different port
-docker compose run --rm -d -p 8081:8080 --name beingdb-green \
-  beingdb beingdb-serve --pack /data/snapshots/pack-$TIMESTAMP --port 8080
-
-# Test it
-curl http://localhost:8081/predicates
-
-# Switch load balancer/proxy to point to :8081, verify traffic works, then:
-docker stop beingdb-server
-docker rm beingdb-server
-
-# Start new server on :8080 with updated snapshot
-docker compose run --rm -d -p 8080:8080 --name beingdb-server \
-  beingdb beingdb-serve --pack /data/snapshots/pack-$TIMESTAMP --port 8080
-
-# Clean up green
-docker stop beingdb-green
-docker rm beingdb-green
-```
-
-**Production data safety:**
-
-- `beingdb-serve` - Read-only, never modifies pack store
-- `beingdb-compile` - Always creates fresh pack (overwrites target directory)
-- `beingdb-pull` - Updates Git store in-place (use Git for versioning)
-- ⚠️ Always compile to NEW directories to preserve previous snapshots
+This ensures no downtime during updates, and allows instant rollback if issues arise. The timestamped snapshots are preserved on disk, so you can quickly restart an old server with a previous snapshot if needed.
 
 ## Query Language
 
@@ -142,20 +152,29 @@ curl -X POST http://localhost:8080/query \
 
 Response: `{"variables": [...], "results": [...], "count": N}`
 
-## Testing
+## Development
 
-**Integration tests** (Docker, no OCaml required):
+**Local testing:**
 
 ```bash
-make test
+# Import example predicates
+beingdb-import --input ./examples --git ./git-store
+
+# Compile to pack
+beingdb-compile --git ./git-store --pack ./pack-store
+
+# Start server
+beingdb-serve --pack ./pack-store --port 8080
+
+# Query
+curl http://localhost:8080/predicates
+curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
-Tests the full workflow: import → compile → serve → HTTP queries
-
-**Unit tests** (requires OCaml):
+**Unit tests:**
 
 ```bash
-make test-unit
+dune test
 ```
 
 Tests individual components (Git backend, Pack backend, parsing)
