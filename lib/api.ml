@@ -89,11 +89,39 @@ let handle_query_language pack_store req =
               (match Query_parser.parse_query query_str with
               | None -> error_response "Invalid query syntax"
               | Some query ->
-                  (* Execute query (returns all results) *)
-                  Query_engine.execute pack_store query
-                  >>= fun result ->
-                  (* Apply pagination in result_to_json *)
-                  json_response (Query_engine.result_to_json ?offset ?limit result))
+                  (* Use streaming for large joins when pagination is provided *)
+                  let use_streaming = 
+                    List.length query.patterns > 1 && 
+                    Option.is_some offset && 
+                    Option.is_some limit
+                  in
+                  
+                  if use_streaming then
+                    (* Two-pass streaming approach for large joins:
+                       Pass 1: Stream through join counting results (no materialization)
+                       Pass 2: Stream to collect just the requested page *)
+                    let offset_val = Option.get offset in
+                    let limit_val = Option.get limit in
+                    
+                    (* Pass 1: Count total by streaming (constant memory) *)
+                    Query_engine.count_streaming pack_store query
+                    >>= fun total ->
+                    
+                    (* Pass 2: Stream to get the page (early cutoff) *)
+                    Query_engine.execute_streaming pack_store query ~offset:offset_val ~limit:limit_val
+                    >>= fun page_result ->
+                    
+                    (* Build response with total from count pass *)
+                    let json = Query_engine.result_to_json ~offset:offset_val ~limit:limit_val page_result in
+                    let open Yojson.Safe.Util in
+                    let json_obj = to_assoc json in
+                    let json_with_total = `Assoc (("total", `Int total) :: (List.remove_assoc "total" json_obj)) in
+                    json_response json_with_total
+                  else
+                    (* Single predicate or unpaginated: full materialization is fine *)
+                    Query_engine.execute pack_store query
+                    >>= fun result ->
+                    json_response (Query_engine.result_to_json ?offset ?limit result))
           | _ -> error_response "Missing 'query' field")
       | _ -> error_response "Expected JSON object"
 

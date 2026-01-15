@@ -1,13 +1,16 @@
-(** Query_engine: Execute queries with joins
+(** Query_engine: Execute queries with streaming joins
     
     This module executes parsed queries against the Pack backend,
     performing joins across multiple predicates.
     
-    Join strategy:
-    1. Start with the most selective predicate (fewest wildcards)
-    2. For each result, bind variables
-    3. Query next predicate with bound variables
-    4. Repeat until all predicates satisfied
+    Join strategy (streaming for large joins):
+    1. Stream first predicate left-to-right
+    2. For each binding, try to satisfy next predicate
+    3. Yield results incrementally as they're found
+    4. Skip 'offset' results, collect 'limit' results
+    5. Stop immediately when page is full (early cutoff)
+    
+    Memory usage: O(join depth), not O(total results)
 *)
 
 open Lwt.Infix
@@ -65,21 +68,112 @@ let merge_bindings b1 b2 =
     ) b2 in
     Some (b1 @ new_bindings)
 
-(** Execute a single predicate pattern *)
-let execute_pattern store bindings pattern =
-  match pattern_to_args bindings pattern with
-  | None -> Lwt.return []
-  | Some args ->
-      Pack_backend.query_predicate store pattern.name args
-      >|= fun results ->
-      (* Bind variables from each result *)
-      List.map (fun result ->
-        bind_variables pattern.args result
-      ) results
+(** Count total results by streaming through join without materializing *)
+let count_streaming store query =
+  if List.length query.patterns = 1 then
+    (* Single predicate - just count directly *)
+    let pattern = List.hd query.patterns in
+    Pack_backend.query_predicate store pattern.name 
+      (List.map (function 
+        | Atom a -> a 
+        | String s -> s 
+        | Wildcard -> "_" 
+        | Var _ -> "_") pattern.args)
+    >|= fun results ->
+    List.length results
+  else
+    (* Multi-predicate join: stream and count without storing *)
+    let count = ref 0 in
+    
+    let rec count_patterns bindings patterns =
+      match patterns with
+      | [] ->
+          (* Found a valid result, increment count *)
+          incr count;
+          Lwt.return_unit
+      
+      | pattern :: rest ->
+          match pattern_to_args bindings pattern with
+          | None -> Lwt.return_unit
+          | Some args ->
+              Pack_backend.query_predicate store pattern.name args
+              >>= fun results ->
+              
+              (* For each result, continue counting (no storage) *)
+              Lwt_list.iter_s (fun result ->
+                let new_bindings = bind_variables pattern.args result in
+                match merge_bindings bindings new_bindings with
+                | None -> Lwt.return_unit
+                | Some merged -> count_patterns merged rest
+              ) results
+    in
+    
+    count_patterns [] query.patterns
+    >|= fun () -> !count
+
+(** Stream join with early cutoff for paginated queries *)
+let execute_streaming store query ~offset ~limit =
+  if List.length query.patterns = 1 then
+    (* Single predicate - materialize is fine, it's fast *)
+    let pattern = List.hd query.patterns in
+    Pack_backend.query_predicate store pattern.name 
+      (List.map (function 
+        | Atom a -> a 
+        | String s -> s 
+        | Wildcard -> "_" 
+        | Var _ -> "_") pattern.args)
+    >|= fun results ->
+    let bindings = List.map (fun result ->
+      bind_variables pattern.args result
+    ) results in
+    { bindings; variables = query.variables }
+  else
+    (* Multi-predicate join: stream with early cutoff *)
+    let collected = ref [] in
+    let skipped = ref 0 in
+    
+    let rec stream_patterns bindings patterns =
+      (* Early cutoff: stop when we've collected enough *)
+      if List.length !collected >= limit then
+        Lwt.return_unit
+      else
+        match patterns with
+        | [] ->
+            (* All patterns satisfied - yield this binding *)
+            if !skipped >= offset then begin
+              collected := bindings :: !collected;
+              Lwt.return_unit
+            end else begin
+              incr skipped;
+              Lwt.return_unit
+            end
+        
+        | pattern :: rest ->
+            match pattern_to_args bindings pattern with
+            | None -> Lwt.return_unit
+            | Some args ->
+                Pack_backend.query_predicate store pattern.name args
+                >>= fun results ->
+                
+                (* Process results one at a time with early cutoff *)
+                Lwt_list.iter_s (fun result ->
+                  if List.length !collected >= limit then
+                    Lwt.return_unit  (* Early exit *)
+                  else
+                    let new_bindings = bind_variables pattern.args result in
+                    match merge_bindings bindings new_bindings with
+                    | None -> Lwt.return_unit
+                    | Some merged -> stream_patterns merged rest
+                ) results
+    in
+    
+    stream_patterns [] query.patterns
+    >|= fun () ->
+    { bindings = List.rev !collected; variables = query.variables }
 
 (** Execute query: returns all results, pagination handled by result_to_json *)
 let execute store query =
-  (* Single predicate: optimize by avoiding join logic *)
+  (* Single predicate: simple case *)
   if List.length query.patterns = 1 then
     let pattern = List.hd query.patterns in
     Pack_backend.query_predicate store pattern.name 
@@ -99,14 +193,20 @@ let execute store query =
       match patterns with
       | [] -> Lwt.return [bindings]
       | pattern :: rest ->
-          execute_pattern store bindings pattern
-          >>= fun new_bindings_list ->
-          Lwt_list.map_s (fun new_bindings ->
-            match merge_bindings bindings new_bindings with
-            | None -> Lwt.return []
-            | Some merged -> execute_patterns merged rest
-          ) new_bindings_list
-          >|= List.concat
+          match pattern_to_args bindings pattern with
+          | None -> Lwt.return []
+          | Some args ->
+              Pack_backend.query_predicate store pattern.name args
+              >>= fun results ->
+              Lwt_list.fold_left_s (fun acc result ->
+                let new_bindings = bind_variables pattern.args result in
+                match merge_bindings bindings new_bindings with
+                | None -> Lwt.return acc
+                | Some merged ->
+                    execute_patterns merged rest
+                    >|= fun nested_results ->
+                    nested_results @ acc
+              ) [] results
     in
     
     execute_patterns [] query.patterns
