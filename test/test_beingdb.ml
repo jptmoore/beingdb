@@ -29,13 +29,52 @@ let test_parse_fact () =
     (Some ("created", ["tina_keane"; "she"]))
     result3;
   
-  (* Test invalid fact *)
-  let fact4 = "not_a_fact" in
+  (* Test three-argument fact *)
+  let fact4 = "relationship(subject, predicate, object)." in
   let result4 = parse_fact fact4 in
   Alcotest.(check (option (pair string (list string))))
-    "parse invalid fact"
+    "parse three-argument fact"
+    (Some ("relationship", ["subject"; "predicate"; "object"]))
+    result4;
+  
+  (* Test single-argument fact *)
+  let fact5 = "active(user123)." in
+  let result5 = parse_fact fact5 in
+  Alcotest.(check (option (pair string (list string))))
+    "parse single-argument fact"
+    (Some ("active", ["user123"]))
+    result5;
+  
+  (* Test fact with quoted strings *)
+  let fact6 = "keyword(doc_456, \"neural networks\")." in
+  let result6 = parse_fact fact6 in
+  Alcotest.(check (option (pair string (list string))))
+    "parse fact with quoted string"
+    (Some ("keyword", ["doc_456"; "neural networks"]))
+    result6;
+  
+  (* Test invalid facts *)
+  let fact7 = "not_a_fact" in
+  let result7 = parse_fact fact7 in
+  Alcotest.(check (option (pair string (list string))))
+    "parse invalid fact (no parens)"
     None
-    result4
+    result7;
+  
+  (* Parser is lenient with unclosed parens - it just treats content as args *)
+  let fact8 = "invalid(" in
+  let result8 = parse_fact fact8 in
+  Alcotest.(check (option (pair string (list string))))
+    "parse fact with unclosed parens (lenient parser)"
+    (Some ("invalid", []))
+    result8;
+  
+  let fact9 = "" in
+  let result9 = parse_fact fact9 in
+  Alcotest.(check (option (pair string (list string))))
+    "parse empty string"
+    None
+    result9
 
 let test_git_backend () =
   Lwt_main.run begin
@@ -46,16 +85,26 @@ let test_git_backend () =
     Beingdb.Git_backend.init test_dir
     >>= fun store ->
     
-    (* Write some facts *)
-    let facts = [
+    (* Write some facts to 'created' predicate *)
+    let created_facts = [
       "created(artist_a, work_1).";
       "created(artist_b, work_2).";
+      "created(artist_a, work_3).";
     ] in
-    let content = String.concat "\n" facts in
-    Beingdb.Git_backend.write_predicate store "created" content
+    let created_content = String.concat "\n" created_facts in
+    Beingdb.Git_backend.write_predicate store "created" created_content
     >>= fun () ->
     
-    (* Read them back *)
+    (* Write facts to another predicate *)
+    let shown_facts = [
+      "shown_in(work_1, exhibition_a).";
+      "shown_in(work_2, exhibition_b).";
+    ] in
+    let shown_content = String.concat "\n" shown_facts in
+    Beingdb.Git_backend.write_predicate store "shown_in" shown_content
+    >>= fun () ->
+    
+    (* Read 'created' facts back *)
     Beingdb.Git_backend.read_predicate store "created"
     >>= fun read_content ->
     
@@ -65,18 +114,61 @@ let test_git_backend () =
     in
     
     Alcotest.(check (list string))
-      "git backend read/write"
-      facts
+      "git backend read/write 'created'"
+      created_facts
       read_facts;
+    
+    (* Read 'shown_in' facts back *)
+    Beingdb.Git_backend.read_predicate store "shown_in"
+    >>= fun shown_read ->
+    
+    let shown_read_facts = match shown_read with
+      | Some content -> String.split_on_char '\n' content |> List.filter (fun s -> String.trim s <> "")
+      | None -> []
+    in
+    
+    Alcotest.(check (list string))
+      "git backend read/write 'shown_in'"
+      shown_facts
+      shown_read_facts;
     
     (* List predicates *)
     Beingdb.Git_backend.list_predicates store
     >>= fun predicates ->
     
+    let sorted_predicates = List.sort String.compare predicates in
     Alcotest.(check (list string))
       "git backend list predicates"
-      ["created"]
-      predicates;
+      ["created"; "shown_in"]
+      sorted_predicates;
+    
+    (* Test reading non-existent predicate *)
+    Beingdb.Git_backend.read_predicate store "nonexistent"
+    >>= fun missing ->
+    
+    Alcotest.(check (option string))
+      "git backend read missing predicate"
+      None
+      missing;
+    
+    (* Test overwriting a predicate *)
+    let updated_facts = ["created(artist_c, work_4)."] in
+    let updated_content = String.concat "\n" updated_facts in
+    Beingdb.Git_backend.write_predicate store "created" updated_content
+    >>= fun () ->
+    
+    Beingdb.Git_backend.read_predicate store "created"
+    >>= fun updated_read ->
+    
+    let updated_read_facts = match updated_read with
+      | Some content -> String.split_on_char '\n' content |> List.filter (fun s -> String.trim s <> "")
+      | None -> []
+    in
+    
+    Alcotest.(check (list string))
+      "git backend overwrite predicate"
+      updated_facts
+      updated_read_facts;
     
     (* Cleanup *)
     let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
@@ -94,40 +186,219 @@ let test_pack_backend () =
     Beingdb.Pack_backend.init ~fresh:true test_dir
     >>= fun store ->
     
-    (* Write some facts *)
+    (* Write facts to 'created' predicate *)
     Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_1"]
     >>= fun () ->
     Beingdb.Pack_backend.write_fact store "created" ["artist_b"; "work_2"]
     >>= fun () ->
     Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_3"]
     >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "created" ["artist_c"; "work_4"]
+    >>= fun () ->
     
-    (* Query all facts *)
+    (* Write facts to 'shown_in' predicate *)
+    Beingdb.Pack_backend.write_fact store "shown_in" ["work_1"; "exhibition_a"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "shown_in" ["work_2"; "exhibition_b"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "shown_in" ["work_3"; "exhibition_a"]
+    >>= fun () ->
+    
+    (* Query all 'created' facts *)
     Beingdb.Pack_backend.query_all store "created"
-    >>= fun all_facts ->
+    >>= fun all_created ->
     
     Alcotest.(check int)
-      "pack backend stores 3 facts"
+      "pack backend stores 4 'created' facts"
+      4
+      (List.length all_created);
+    
+    (* Query all 'shown_in' facts *)
+    Beingdb.Pack_backend.query_all store "shown_in"
+    >>= fun all_shown ->
+    
+    Alcotest.(check int)
+      "pack backend stores 3 'shown_in' facts"
       3
-      (List.length all_facts);
+      (List.length all_shown);
     
     (* Query with pattern - all works by artist_a *)
     Beingdb.Pack_backend.query_predicate store "created" ["artist_a"; "_"]
-    >>= fun filtered_facts ->
+    >>= fun artist_a_works ->
     
     Alcotest.(check int)
-      "pack backend pattern match finds 2 facts"
+      "pack backend pattern match finds 2 works by artist_a"
       2
-      (List.length filtered_facts);
+      (List.length artist_a_works);
+    
+    (* Query with pattern - find specific work *)
+    Beingdb.Pack_backend.query_predicate store "created" ["_"; "work_2"]
+    >>= fun work_2_facts ->
+    
+    Alcotest.(check int)
+      "pack backend pattern match finds work_2"
+      1
+      (List.length work_2_facts);
+    
+    Alcotest.(check (list (list string)))
+      "pack backend work_2 created by artist_b"
+      [["artist_b"; "work_2"]]
+      work_2_facts;
+    
+    (* Query with pattern - works shown at exhibition_a *)
+    Beingdb.Pack_backend.query_predicate store "shown_in" ["_"; "exhibition_a"]
+    >>= fun exhibition_a_works ->
+    
+    Alcotest.(check int)
+      "pack backend finds 2 works at exhibition_a"
+      2
+      (List.length exhibition_a_works);
+    
+    (* Query with wildcards in both positions *)
+    Beingdb.Pack_backend.query_predicate store "created" ["_"; "_"]
+    >>= fun all_wildcards ->
+    
+    Alcotest.(check int)
+      "pack backend wildcard query returns all facts"
+      4
+      (List.length all_wildcards);
+    
+    (* Query non-existent predicate *)
+    Beingdb.Pack_backend.query_all store "nonexistent"
+    >>= fun empty_result ->
+    
+    Alcotest.(check int)
+      "pack backend returns empty for non-existent predicate"
+      0
+      (List.length empty_result);
     
     (* List predicates *)
     Beingdb.Pack_backend.list_predicates store
     >>= fun predicates ->
     
+    let sorted_predicates = List.sort String.compare predicates in
     Alcotest.(check (list string))
       "pack backend list predicates"
-      ["created"]
-      predicates;
+      ["created"; "shown_in"]
+      sorted_predicates;
+    
+    (* Cleanup *)
+    let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+    let _ = Unix.system cmd in
+    
+    Lwt.return ()
+  end
+
+let test_query_engine () =
+  Lwt_main.run begin
+    let test_dir = Filename.temp_file "beingdb_test_query_" "" in
+    Unix.unlink test_dir;
+    Unix.mkdir test_dir 0o755;
+    
+    Beingdb.Pack_backend.init ~fresh:true test_dir
+    >>= fun store ->
+    
+    (* Setup test data - artist creates works, works shown in exhibitions *)
+    Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_1"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_2"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "created" ["artist_b"; "work_3"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "shown_in" ["work_1"; "exhibition_x"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "shown_in" ["work_2"; "exhibition_y"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "shown_in" ["work_3"; "exhibition_x"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "held_at" ["exhibition_x"; "venue_london"]
+    >>= fun () ->
+    Beingdb.Pack_backend.write_fact store "held_at" ["exhibition_y"; "venue_paris"]
+    >>= fun () ->
+    
+    (* Test simple pattern query *)
+    (match Beingdb.Query_parser.parse_query "created(artist_a, Work)" with
+    | None -> Lwt.fail_with "Failed to parse simple query"
+    | Some query ->
+        Beingdb.Query_engine.execute store query
+        >>= fun result ->
+        
+        Alcotest.(check int)
+          "query engine simple pattern returns 2 results"
+          2
+          (List.length result.bindings);
+        
+        Lwt.return ())
+    >>= fun () ->
+    
+    (* Test join query: artist -> work -> exhibition *)
+    (match Beingdb.Query_parser.parse_query "created(Artist, Work), shown_in(Work, Exhibition)" with
+    | None -> Lwt.fail_with "Failed to parse join query"
+    | Some query ->
+        Beingdb.Query_engine.execute store query
+        >>= fun result ->
+        
+        Alcotest.(check int)
+          "query engine join returns 3 results"
+          3
+          (List.length result.bindings);
+        
+        (* Variables are extracted in order of appearance, deduplicated *)
+        let sorted_expected = List.sort String.compare ["Artist"; "Work"; "Exhibition"] in
+        let sorted_actual = List.sort String.compare result.variables in
+        Alcotest.(check (list string))
+          "query engine join has correct variables (order may vary)"
+          sorted_expected
+          sorted_actual;
+        
+        Lwt.return ())
+    >>= fun () ->
+    
+    (* Test three-way join: artist -> work -> exhibition -> venue *)
+    (match Beingdb.Query_parser.parse_query "created(Artist, Work), shown_in(Work, Exhibition), held_at(Exhibition, Venue)" with
+    | None -> Lwt.fail_with "Failed to parse three-way join"
+    | Some query ->
+        Beingdb.Query_engine.execute store query
+        >>= fun result ->
+        
+        Alcotest.(check int)
+          "query engine three-way join returns 3 results"
+          3
+          (List.length result.bindings);
+        
+        let sorted_expected = List.sort String.compare ["Artist"; "Work"; "Exhibition"; "Venue"] in
+        let sorted_actual = List.sort String.compare result.variables in
+        Alcotest.(check (list string))
+          "query engine three-way join has correct variables (order may vary)"
+          sorted_expected
+          sorted_actual;
+        
+        Lwt.return ())
+    >>= fun () ->
+    
+    (* Test query with constants *)
+    (match Beingdb.Query_parser.parse_query "created(artist_a, Work), shown_in(Work, exhibition_x)" with
+    | None -> Lwt.fail_with "Failed to parse constant query"
+    | Some query ->
+        Beingdb.Query_engine.execute store query
+        >>= fun result ->
+        
+        Alcotest.(check int)
+          "query engine constant filter returns 1 result"
+          1
+          (List.length result.bindings);
+        
+        (* Should be work_1 *)
+        (match result.bindings with
+        | [binding] ->
+            let work = List.assoc "Work" binding in
+            Alcotest.(check string)
+              "query engine constant filter returns work_1"
+              "work_1"
+              work;
+            Lwt.return ()
+        | _ -> Lwt.fail_with "Expected exactly one result"))
+    >>= fun () ->
     
     (* Cleanup *)
     let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
@@ -139,7 +410,7 @@ let test_pack_backend () =
 (* Test suite *)
 let () =
   Alcotest.run "BeingDB" [
-    "Sync", [
+    "Parse", [
       Alcotest.test_case "parse_fact" `Quick test_parse_fact;
     ];
     "Git Backend", [
@@ -147,5 +418,8 @@ let () =
     ];
     "Pack Backend", [
       Alcotest.test_case "query" `Quick test_pack_backend;
+    ];
+    "Query Engine", [
+      Alcotest.test_case "joins and patterns" `Quick test_query_engine;
     ];
   ]
