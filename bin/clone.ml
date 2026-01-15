@@ -26,7 +26,9 @@ let clone_repo repo_url git_path =
       let* result = Sync.fetch store remote in
       
       match result with
-      | Ok (`Head _) ->
+      | Ok (`Head head_ref) ->
+          (* Set HEAD to point to the fetched branch *)
+          let* () = Store.Head.set store head_ref in
           let* () = Logs_lwt.info (fun m -> m "Successfully cloned repository") in
           let* () = Logs_lwt.info (fun m -> m "Git store ready at: %s" git_path) in
           Lwt.return_unit
@@ -96,4 +98,6 @@ let () =
   Fmt_tty.setup_std_outputs ();
   Logs.set_reporter (Logs_fmt.reporter ());
   Logs.set_level (Some Logs.Info);
+  (* Initialize RNG for git-paf/mirage-crypto *)
+  Mirage_crypto_rng_unix.use_default ();
   exit (Cmd.eval cmd)

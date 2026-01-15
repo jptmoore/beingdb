@@ -15,8 +15,13 @@ let init path =
   Store.main repo
 
 let read_predicate store name =
-  let key = [ "predicates"; name ] in
-  Store.find store key
+  (* Try with .pl extension first, then without *)
+  let key_with_ext = [ "predicates"; name ^ ".pl" ] in
+  let key_without_ext = [ "predicates"; name ] in
+  let* result = Store.find store key_with_ext in
+  match result with
+  | Some _ -> Lwt.return result
+  | None -> Store.find store key_without_ext
 
 let write_predicate store name content =
   let key = [ "predicates"; name ] in
@@ -27,5 +32,10 @@ let list_predicates store =
   let* entries = Store.list store prefix in
   entries
   |> List.map (fun (step, _tree) -> 
-      Irmin.Type.to_string Store.Path.step_t step)
+      let name = Irmin.Type.to_string Store.Path.step_t step in
+      (* Strip .pl extension if present *)
+      if String.ends_with ~suffix:".pl" name then
+        String.sub name 0 (String.length name - 3)
+      else
+        name)
   |> Lwt.return

@@ -39,6 +39,8 @@ _opam/
 data/
 git-store/
 pack-store/
+git_store/
+pack_store/
 pack/
 test_data/
 

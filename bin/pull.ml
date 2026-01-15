@@ -106,4 +106,6 @@ let () =
   Fmt_tty.setup_std_outputs ();
   Logs.set_reporter (Logs_fmt.reporter ());
   Logs.set_level (Some Logs.Info);
+  (* Initialize RNG for git-paf/mirage-crypto *)
+  Mirage_crypto_rng_unix.use_default ();
   exit (Cmd.eval cmd)

@@ -51,6 +51,29 @@ No schema, no complex rules. Your LLM handles reasoning; BeingDB provides the re
 
 BeingDB is small by design, but unlocks something most RAG systems lack: **collaborative, versioned, queryable facts.**
 
+## Repository Structure
+
+Your facts repository must follow this structure:
+
+```
+your-facts-repo/
+├── predicates/           # Required directory
+│   ├── created.pl       # One predicate per file
+│   ├── shown_in.pl      # .pl extension recommended
+│   ├── held_at.pl
+│   └── description.pl
+└── README.md            # Optional documentation
+```
+
+**Best practices:**
+- All predicate files must be under `predicates/` directory
+- Use `.pl` extension for syntax highlighting and clarity (automatically stripped by BeingDB)
+- One predicate type per file (e.g., all `created(...)` facts in `created.pl`)
+- File name becomes the predicate name (`created.pl` → `created` predicate)
+- Files without `.pl` extension work too (`created` file → `created` predicate)
+
+**Example repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
+
 ## Installation
 
 **Linux (Ubuntu/Debian):**
@@ -100,13 +123,13 @@ After installation, the following binaries will be available:
 
 ```bash
 # One-time: Clone facts from remote Git repository
-beingdb-clone https://github.com/org/facts.git --git /var/beingdb/git-store
+beingdb-clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
 
 # Compile to pack snapshot
-beingdb-compile --git /var/beingdb/git-store --pack /var/beingdb/pack-store
+beingdb-compile --git ./git_store --pack ./pack_store
 
 # Start server
-beingdb-serve --pack /var/beingdb/pack-store --port 8080 --max-results 5000 &
+beingdb-serve --pack ./pack_store --port 8080 --max-results 5000 &
 
 # Query
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
@@ -116,17 +139,17 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 
 ```bash
 # Pull latest changes from remote Git repository
-beingdb-pull https://github.com/org/facts.git --git /var/beingdb/git-store
+beingdb-pull --git ./git_store --remote https://github.com/jptmoore/beingdb-sample-facts.git
 
 # Compile to NEW timestamped snapshot (capture timestamp)
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-beingdb-compile --git /var/beingdb/git-store --pack /var/beingdb/snapshots/pack-$TIMESTAMP
+beingdb-compile --git ./git_store --pack ./snapshots/pack_$TIMESTAMP
 
 # Stop old server
 pkill beingdb-serve
 
 # Start new server with updated snapshot
-beingdb-serve --pack /var/beingdb/snapshots/pack-$TIMESTAMP --port 8080 --max-results 5000 &
+beingdb-serve --pack ./snapshots/pack_$TIMESTAMP --port 8080 --max-results 5000 &
 ```
 
 **Zero-downtime deployments:**
