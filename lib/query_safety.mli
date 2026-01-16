@@ -19,6 +19,7 @@ type validation_error =
   | InvalidLimit of int        (** Limit was zero or negative *)
   | CartesianProduct          (** Same predicate appears multiple times *)
   | InvalidSyntax             (** Query syntax is invalid *)
+  | InvalidPredicateName of string  (** Predicate name contains invalid characters *)
 
 (** Get user-friendly error message for a validation error *)
 val error_message : validation_error -> string

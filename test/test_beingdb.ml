@@ -704,7 +704,122 @@ let test_query_safety_errors () =
   Alcotest.(check bool) "CartesianProduct message exists" true (String.length msg3 > 0);
   
   let msg4 = error_message InvalidSyntax in
-  Alcotest.(check bool) "InvalidSyntax message exists" true (String.length msg4 > 0)
+  Alcotest.(check bool) "InvalidSyntax message exists" true (String.length msg4 > 0);
+  
+  let msg5 = error_message (InvalidPredicateName "bad-name") in
+  Alcotest.(check bool) "InvalidPredicateName message exists" true (String.length msg5 > 0);
+  
+  let msg6 = error_message (InvalidPredicateName "") in
+  Alcotest.(check bool) "InvalidPredicateName empty message exists" true (String.length msg6 > 0)
+
+let test_predicate_name_validation () =
+  let open Beingdb.Query_safety in
+  
+  (* Valid predicate names *)
+  let valid_query_simple = {
+    Beingdb.Query_parser.patterns = [
+      { name = "artist"; args = [Var "A"] };
+    ];
+    variables = ["A"];
+  } in
+  (match validate_query valid_query_simple (Some 0) (Some 10) with
+  | Ok _ -> Alcotest.(check bool) "simple name valid" true true
+  | _ -> Alcotest.fail "Expected Ok for simple predicate name");
+  
+  (* Valid with numbers *)
+  let valid_query_numbers = {
+    Beingdb.Query_parser.patterns = [
+      { name = "work_2024"; args = [Var "W"] };
+    ];
+    variables = ["W"];
+  } in
+  (match validate_query valid_query_numbers (Some 0) (Some 10) with
+  | Ok _ -> Alcotest.(check bool) "name with numbers valid" true true
+  | _ -> Alcotest.fail "Expected Ok for predicate name with numbers");
+  
+  (* Valid with underscores *)
+  let valid_query_underscores = {
+    Beingdb.Query_parser.patterns = [
+      { name = "associated_with_location"; args = [Var "A"; Var "L"] };
+    ];
+    variables = ["A"; "L"];
+  } in
+  (match validate_query valid_query_underscores (Some 0) (Some 10) with
+  | Ok _ -> Alcotest.(check bool) "name with underscores valid" true true
+  | _ -> Alcotest.fail "Expected Ok for predicate name with underscores");
+  
+  (* Invalid: uppercase letters *)
+  let invalid_query_uppercase = {
+    Beingdb.Query_parser.patterns = [
+      { name = "Artist"; args = [Var "A"] };
+    ];
+    variables = ["A"];
+  } in
+  (match validate_query invalid_query_uppercase (Some 0) (Some 10) with
+  | Error (InvalidPredicateName name) ->
+      Alcotest.(check string) "uppercase rejected" "Artist" name
+  | _ -> Alcotest.fail "Expected InvalidPredicateName for uppercase");
+  
+  (* Invalid: special characters (dash) *)
+  let invalid_query_dash = {
+    Beingdb.Query_parser.patterns = [
+      { name = "created-by"; args = [Var "A"; Var "W"] };
+    ];
+    variables = ["A"; "W"];
+  } in
+  (match validate_query invalid_query_dash (Some 0) (Some 10) with
+  | Error (InvalidPredicateName name) ->
+      Alcotest.(check string) "dash rejected" "created-by" name
+  | _ -> Alcotest.fail "Expected InvalidPredicateName for dash");
+  
+  (* Invalid: parentheses (OR attempt) *)
+  let invalid_query_parens = {
+    Beingdb.Query_parser.patterns = [
+      { name = "(L = paris; L = france)"; args = [] };
+    ];
+    variables = ["L"];
+  } in
+  (match validate_query invalid_query_parens (Some 0) (Some 10) with
+  | Error (InvalidPredicateName _) ->
+      Alcotest.(check bool) "parentheses rejected" true true
+  | _ -> Alcotest.fail "Expected InvalidPredicateName for parentheses");
+  
+  (* Invalid: empty name *)
+  let invalid_query_empty = {
+    Beingdb.Query_parser.patterns = [
+      { name = ""; args = [Var "X"] };
+    ];
+    variables = ["X"];
+  } in
+  (match validate_query invalid_query_empty (Some 0) (Some 10) with
+  | Error (InvalidPredicateName name) ->
+      Alcotest.(check string) "empty name rejected" "" name
+  | _ -> Alcotest.fail "Expected InvalidPredicateName for empty name");
+  
+  (* Invalid: pipe character (OR attempt) *)
+  let invalid_query_pipe = {
+    Beingdb.Query_parser.patterns = [
+      { name = "location|venue"; args = [Var "L"] };
+    ];
+    variables = ["L"];
+  } in
+  (match validate_query invalid_query_pipe (Some 0) (Some 10) with
+  | Error (InvalidPredicateName name) ->
+      Alcotest.(check string) "pipe rejected" "location|venue" name
+  | _ -> Alcotest.fail "Expected InvalidPredicateName for pipe");
+  
+  (* Valid predicates, one invalid - should fail *)
+  let invalid_query_mixed = {
+    Beingdb.Query_parser.patterns = [
+      { name = "artist"; args = [Var "A"] };
+      { name = "bad-name"; args = [Var "W"] };
+    ];
+    variables = ["A"; "W"];
+  } in
+  (match validate_query invalid_query_mixed (Some 0) (Some 10) with
+  | Error (InvalidPredicateName name) ->
+      Alcotest.(check string) "mixed query fails on bad predicate" "bad-name" name
+  | _ -> Alcotest.fail "Expected InvalidPredicateName for mixed query")
 
 let () =
   Alcotest.run "BeingDB" [
@@ -730,5 +845,6 @@ let () =
       Alcotest.test_case "validation" `Quick test_query_safety_validation;
       Alcotest.test_case "configuration values" `Quick test_query_safety_config;
       Alcotest.test_case "error messages" `Quick test_query_safety_errors;
+      Alcotest.test_case "predicate name validation" `Quick test_predicate_name_validation;
     ];
   ]
