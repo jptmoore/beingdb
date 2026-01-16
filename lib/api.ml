@@ -60,6 +60,50 @@ let handle_sync git_store pack_store _req =
   >>= fun () ->
   json_response (`Assoc ["status", `String "sync completed"])
 
+(** Execute query with timeout wrapper - extracted to avoid duplication *)
+let execute_query_with_protection pack_store query offset limit_to_use =
+  let is_join = List.length query.Query_parser.patterns > 1 in
+  let use_streaming = 
+    is_join && 
+    Option.is_some offset && 
+    Option.is_some limit_to_use
+  in
+  
+  Lwt.catch
+    (fun () ->
+      Lwt_unix.with_timeout Query_safety.Config.query_timeout (fun () ->
+        if use_streaming then
+          let offset_val = Option.value offset ~default:0 in
+          let limit_val = Option.get limit_to_use in
+          
+          (* Pass 1: Count total by streaming (constant memory) *)
+          Query_engine.count_streaming pack_store query
+          >>= fun total ->
+          
+          (* Pass 2: Stream to get the page (early cutoff) *)
+          Query_engine.execute_streaming pack_store query ~offset:offset_val ~limit:limit_val
+          >>= fun page_result ->
+          
+          (* Build response with total from count pass *)
+          let json = Query_engine.result_to_json ~offset:offset_val ~limit:limit_val page_result in
+          let open Yojson.Safe.Util in
+          let json_obj = to_assoc json in
+          let json_with_total = `Assoc (("total", `Int total) :: (List.remove_assoc "total" json_obj)) in
+          json_response json_with_total
+        else
+          (* Single predicate or unpaginated: full materialization is fine *)
+          Query_engine.execute pack_store query
+          >>= fun result ->
+          json_response (Query_engine.result_to_json ?offset ?limit:limit_to_use result)
+      )
+    )
+    (function
+      | Lwt_unix.Timeout ->
+          error_response (Printf.sprintf "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints." Query_safety.Config.query_timeout)
+      | exn ->
+          error_response (Printf.sprintf "Query error: %s" (Printexc.to_string exn))
+    )
+
 (** Execute a query with joins *)
 let handle_query_language max_results pack_store req =
   Dream.body req
@@ -87,49 +131,22 @@ let handle_query_language max_results pack_store req =
               
               (* Parse query *)
               (match Query_parser.parse_query query_str with
-              | None -> error_response "Invalid query syntax"
+              | None -> error_response (Query_safety.error_message Query_safety.InvalidSyntax)
               | Some query ->
-                  (* Enforce max results limit as ceiling to prevent OOM *)
-                  let is_join = List.length query.patterns > 1 in
-                  let limit_to_use = 
-                    match limit with
-                    | Some user_limit -> Some (min user_limit max_results)
-                    | None -> Some max_results
-                  in
-                  
-                  (* Use streaming for joins with pagination *)
-                  let use_streaming = 
-                    is_join && 
-                    Option.is_some offset && 
-                    Option.is_some limit_to_use
-                  in
-                  
-                  if use_streaming then
-                    (* Two-pass streaming approach for large joins:
-                       Pass 1: Stream through join counting results (no materialization)
-                       Pass 2: Stream to collect just the requested page *)
-                    let offset_val = Option.value offset ~default:0 in
-                    let limit_val = Option.get limit_to_use in
-                    
-                    (* Pass 1: Count total by streaming (constant memory) *)
-                    Query_engine.count_streaming pack_store query
-                    >>= fun total ->
-                    
-                    (* Pass 2: Stream to get the page (early cutoff) *)
-                    Query_engine.execute_streaming pack_store query ~offset:offset_val ~limit:limit_val
-                    >>= fun page_result ->
-                    
-                    (* Build response with total from count pass *)
-                    let json = Query_engine.result_to_json ~offset:offset_val ~limit:limit_val page_result in
-                    let open Yojson.Safe.Util in
-                    let json_obj = to_assoc json in
-                    let json_with_total = `Assoc (("total", `Int total) :: (List.remove_assoc "total" json_obj)) in
-                    json_response json_with_total
-                  else
-                    (* Single predicate or unpaginated: full materialization is fine *)
-                    Query_engine.execute pack_store query
-                    >>= fun result ->
-                    json_response (Query_engine.result_to_json ?offset ?limit:limit_to_use result))
+                  (* Validate query structure and parameters *)
+                  (match Query_safety.validate_query query offset limit with
+                  | Error err -> error_response (Query_safety.error_message err)
+                  | Ok (valid_offset, valid_limit) ->
+                      (* Enforce max results limit as ceiling to prevent OOM *)
+                      let limit_to_use = 
+                        match valid_limit with
+                        | Some user_limit -> Some (min user_limit max_results)
+                        | None -> Some max_results
+                      in
+                      
+                      (* Execute query with protection *)
+                      execute_query_with_protection pack_store query valid_offset limit_to_use
+                  ))
           | _ -> error_response "Missing 'query' field")
       | _ -> error_response "Expected JSON object"
 

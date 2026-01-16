@@ -5,5 +5,6 @@ module Pack_backend = Pack_backend
 module Parse_predicate = Parse_predicate
 module Query_parser = Query_parser
 module Query_engine = Query_engine
+module Query_safety = Query_safety
 module Sync = Sync
 module Api = Api

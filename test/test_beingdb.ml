@@ -610,6 +610,102 @@ let test_arity_validation () =
     Lwt.return ()
   end
 
+(** Test Query_safety validation *)
+let test_query_safety_validation () =
+  let open Beingdb.Query_safety in
+  
+  let query = {
+    Beingdb.Query_parser.patterns = [
+      { name = "created"; args = [Var "A"; Var "W"] };
+    ];
+    variables = ["A"; "W"];
+  } in
+  
+  (* Valid: all parameters valid *)
+  (match validate_query query (Some 0) (Some 10) with
+  | Ok (offset, limit) ->
+      Alcotest.(check (option int)) "valid offset" (Some 0) offset;
+      Alcotest.(check (option int)) "valid limit" (Some 10) limit
+  | _ -> Alcotest.fail "Expected Ok for valid query");
+  
+  (* Valid: None offset and limit *)
+  (match validate_query query None None with
+  | Ok (offset, limit) ->
+      Alcotest.(check (option int)) "none offset" None offset;
+      Alcotest.(check (option int)) "none limit" None limit
+  | _ -> Alcotest.fail "Expected Ok for None values");
+  
+  (* Invalid: negative offset *)
+  (match validate_query query (Some (-5)) (Some 10) with
+  | Error (InvalidOffset n) ->
+      Alcotest.(check int) "negative offset caught" (-5) n
+  | _ -> Alcotest.fail "Expected InvalidOffset");
+  
+  (* Invalid: zero limit *)
+  (match validate_query query (Some 0) (Some 0) with
+  | Error (InvalidLimit n) ->
+      Alcotest.(check int) "zero limit caught" 0 n
+  | _ -> Alcotest.fail "Expected InvalidLimit");
+  
+  (* Invalid: negative limit *)
+  (match validate_query query (Some 0) (Some (-10)) with
+  | Error (InvalidLimit n) ->
+      Alcotest.(check int) "negative limit caught" (-10) n
+  | _ -> Alcotest.fail "Expected InvalidLimit for negative");
+  
+  (* Invalid: duplicate predicates (Cartesian product) *)
+  let query_dup = {
+    Beingdb.Query_parser.patterns = [
+      { name = "artist"; args = [Var "A1"] };
+      { name = "artist"; args = [Var "A2"] };
+    ];
+    variables = ["A1"; "A2"];
+  } in
+  (match validate_query query_dup (Some 0) (Some 10) with
+  | Error CartesianProduct ->
+      Alcotest.(check bool) "cartesian product detected" true true
+  | _ -> Alcotest.fail "Expected CartesianProduct error");
+  
+  (* Valid: unique predicates in join *)
+  let query_join = {
+    Beingdb.Query_parser.patterns = [
+      { name = "created"; args = [Var "A"; Var "W"] };
+      { name = "shown_in"; args = [Var "W"; Var "E"] };
+    ];
+    variables = ["A"; "W"; "E"];
+  } in
+  (match validate_query query_join (Some 5) (Some 20) with
+  | Ok (offset, limit) ->
+      Alcotest.(check (option int)) "join offset" (Some 5) offset;
+      Alcotest.(check (option int)) "join limit" (Some 20) limit
+  | _ -> Alcotest.fail "Expected Ok for valid join query")
+
+let test_query_safety_config () =
+  let open Beingdb.Query_safety.Config in
+  
+  (* Sanity checks on configuration values *)
+  Alcotest.(check bool) "timeout positive" true (query_timeout > 0.0);
+  Alcotest.(check bool) "timeout reasonable" true (query_timeout < 10.0);
+  Alcotest.(check bool) "max results positive" true (max_intermediate_results > 0);
+  Alcotest.(check bool) "max results reasonable" true 
+    (max_intermediate_results > 100 && max_intermediate_results < 100_000)
+
+let test_query_safety_errors () =
+  let open Beingdb.Query_safety in
+  
+  (* Test error messages are non-empty and descriptive *)
+  let msg1 = error_message (InvalidOffset (-5)) in
+  Alcotest.(check bool) "InvalidOffset message exists" true (String.length msg1 > 0);
+  
+  let msg2 = error_message (InvalidLimit 0) in
+  Alcotest.(check bool) "InvalidLimit message exists" true (String.length msg2 > 0);
+  
+  let msg3 = error_message CartesianProduct in
+  Alcotest.(check bool) "CartesianProduct message exists" true (String.length msg3 > 0);
+  
+  let msg4 = error_message InvalidSyntax in
+  Alcotest.(check bool) "InvalidSyntax message exists" true (String.length msg4 > 0)
+
 let () =
   Alcotest.run "BeingDB" [
     "Parse", [
@@ -629,5 +725,10 @@ let () =
     ];
     "Arity Validation", [
       Alcotest.test_case "detect mixed arities" `Quick test_arity_validation;
+    ];
+    "Query Safety", [
+      Alcotest.test_case "validation" `Quick test_query_safety_validation;
+      Alcotest.test_case "configuration values" `Quick test_query_safety_config;
+      Alcotest.test_case "error messages" `Quick test_query_safety_errors;
     ];
   ]

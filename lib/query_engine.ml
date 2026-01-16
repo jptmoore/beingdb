@@ -84,32 +84,47 @@ let count_streaming store query =
   else
     (* Multi-predicate join: stream and count without storing *)
     let count = ref 0 in
+    let aborted = ref false in
     
     let rec count_patterns bindings patterns =
-      match patterns with
-      | [] ->
-          (* Found a valid result, increment count *)
-          incr count;
-          Lwt.return_unit
+      if !aborted then Lwt.return_unit
+      else
+        (* Yield to allow timeout to fire *)
+        Lwt.pause () >>= fun () ->
+        match patterns with
+        | [] ->
+            (* Found a valid result, increment count *)
+            incr count;
+            (* Abort if count gets too large (Cartesian product protection) *)
+            if !count > Query_safety.Config.max_intermediate_results then begin
+              aborted := true;
+              Lwt.return_unit
+            end else
+              Lwt.return_unit
       
-      | pattern :: rest ->
-          match pattern_to_args bindings pattern with
-          | None -> Lwt.return_unit
-          | Some args ->
-              Pack_backend.query_predicate store pattern.name args
-              >>= fun results ->
-              
-              (* For each result, continue counting (no storage) *)
-              Lwt_list.iter_s (fun result ->
-                let new_bindings = bind_variables pattern.args result in
-                match merge_bindings bindings new_bindings with
-                | None -> Lwt.return_unit
-                | Some merged -> count_patterns merged rest
-              ) results
+        | pattern :: rest ->
+            match pattern_to_args bindings pattern with
+            | None -> Lwt.return_unit
+            | Some args ->
+                Pack_backend.query_predicate store pattern.name args
+                >>= fun results ->
+                
+                (* For each result, continue counting (no storage) *)
+                Lwt_list.iter_s (fun result ->
+                  (* Yield on EVERY iteration to allow timeout/cancellation *)
+                  Lwt.pause () >>= fun () ->
+                  if !aborted then Lwt.return_unit
+                  else
+                    let new_bindings = bind_variables pattern.args result in
+                    match merge_bindings bindings new_bindings with
+                    | None -> Lwt.return_unit
+                    | Some merged -> count_patterns merged rest
+                ) results
     in
     
     count_patterns [] query.patterns
-    >|= fun () -> !count
+    >|= fun () ->
+    if !aborted then Query_safety.Config.max_intermediate_results else !count
 
 (** Stream join with early cutoff for paginated queries *)
 let execute_streaming store query ~offset ~limit =
@@ -131,15 +146,22 @@ let execute_streaming store query ~offset ~limit =
     (* Multi-predicate join: stream with early cutoff *)
     let collected = ref [] in
     let skipped = ref 0 in
+    let processed = ref 0 in
     
     let rec stream_patterns bindings patterns =
       (* Early cutoff: stop when we've collected enough *)
       if List.length !collected >= limit then
         Lwt.return_unit
+      (* Abort if we've processed too many intermediate results (Cartesian product protection) *)
+      else if !processed > Query_safety.Config.max_intermediate_results then
+        Lwt.return_unit
       else
+        (* Yield to allow timeout to fire *)
+        Lwt.pause () >>= fun () ->
         match patterns with
         | [] ->
             (* All patterns satisfied - yield this binding *)
+            incr processed;
             if !skipped >= offset then begin
               collected := bindings :: !collected;
               Lwt.return_unit
@@ -157,6 +179,8 @@ let execute_streaming store query ~offset ~limit =
                 
                 (* Process results one at a time with early cutoff *)
                 Lwt_list.iter_s (fun result ->
+                  (* Yield on EVERY iteration to allow timeout/cancellation *)
+                  Lwt.pause () >>= fun () ->
                   if List.length !collected >= limit then
                     Lwt.return_unit  (* Early exit *)
                   else
@@ -188,25 +212,43 @@ let execute store query =
     ) results in
     { bindings; variables = query.variables }
   else
-    (* Multi-predicate query (join) - compute ALL results *)
+    (* Multi-predicate query (join) - compute ALL results with safety limit *)
+    let result_count = ref 0 in
+    let aborted = ref false in
+    
     let rec execute_patterns bindings patterns =
-      match patterns with
-      | [] -> Lwt.return [bindings]
-      | pattern :: rest ->
-          match pattern_to_args bindings pattern with
-          | None -> Lwt.return []
-          | Some args ->
-              Pack_backend.query_predicate store pattern.name args
-              >>= fun results ->
-              Lwt_list.fold_left_s (fun acc result ->
-                let new_bindings = bind_variables pattern.args result in
-                match merge_bindings bindings new_bindings with
-                | None -> Lwt.return acc
-                | Some merged ->
-                    execute_patterns merged rest
-                    >|= fun nested_results ->
-                    nested_results @ acc
-              ) [] results
+      if !aborted then Lwt.return []
+      else
+        (* Yield to allow timeout to fire *)
+        Lwt.pause () >>= fun () ->
+        match patterns with
+        | [] ->
+            incr result_count;
+            (* Abort if we've accumulated too many results (Cartesian product protection) *)
+            if !result_count > Query_safety.Config.max_intermediate_results then begin
+              aborted := true;
+              Lwt.return []
+            end else
+              Lwt.return [bindings]
+        | pattern :: rest ->
+            match pattern_to_args bindings pattern with
+            | None -> Lwt.return []
+            | Some args ->
+                Pack_backend.query_predicate store pattern.name args
+                >>= fun results ->
+                Lwt_list.fold_left_s (fun acc result ->
+                  (* Yield on EVERY iteration to allow timeout/cancellation *)
+                  Lwt.pause () >>= fun () ->
+                  if !aborted then Lwt.return acc
+                  else
+                    let new_bindings = bind_variables pattern.args result in
+                    match merge_bindings bindings new_bindings with
+                    | None -> Lwt.return acc
+                    | Some merged ->
+                        execute_patterns merged rest
+                        >|= fun nested_results ->
+                        nested_results @ acc
+                ) [] results
     in
     
     execute_patterns [] query.patterns
