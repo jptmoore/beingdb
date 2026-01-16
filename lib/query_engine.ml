@@ -44,6 +44,29 @@ let pattern_to_args bindings pattern =
   else
     None
 
+(** Count constants (non-variable terms) in a pattern *)
+let count_constants pattern =
+  List.fold_left (fun acc term ->
+    match term with
+    | Atom _ | String _ -> acc + 1
+    | Var _ | Wildcard -> acc
+  ) 0 pattern.args
+
+(** Score pattern by selectivity (more constants = more selective = lower score) *)
+let selectivity_score pattern =
+  -1 * (count_constants pattern)  (* Negate so more constants sort first *)
+
+(** Optimize query by reordering patterns for better performance
+    Heuristic: Patterns with more constants are usually more selective,
+    so execute them first to reduce intermediate results. *)
+let optimize_query query =
+  let optimized_patterns = 
+    List.stable_sort (fun p1 p2 ->
+      compare (selectivity_score p1) (selectivity_score p2)
+    ) query.patterns
+  in
+  { query with patterns = optimized_patterns }
+
 (** Bind variables from query result *)
 let bind_variables pattern_args result_args =
   List.fold_left2 (fun acc term result ->
@@ -70,9 +93,12 @@ let merge_bindings b1 b2 =
 
 (** Count total results by streaming through join without materializing *)
 let count_streaming store query =
-  if List.length query.patterns = 1 then
+  (* Optimize query by reordering patterns for selectivity *)
+  let optimized_query = optimize_query query in
+  
+  if List.length optimized_query.patterns = 1 then
     (* Single predicate - just count directly *)
-    let pattern = List.hd query.patterns in
+    let pattern = List.hd optimized_query.patterns in
     Pack_backend.query_predicate store pattern.name 
       (List.map (function 
         | Atom a -> a 
@@ -122,15 +148,18 @@ let count_streaming store query =
                 ) results
     in
     
-    count_patterns [] query.patterns
+    count_patterns [] optimized_query.patterns
     >|= fun () ->
     if !aborted then Query_safety.Config.max_intermediate_results else !count
 
 (** Stream join with early cutoff for paginated queries *)
 let execute_streaming store query ~offset ~limit =
-  if List.length query.patterns = 1 then
+  (* Optimize query by reordering patterns for selectivity *)
+  let optimized_query = optimize_query query in
+  
+  if List.length optimized_query.patterns = 1 then
     (* Single predicate - materialize is fine, it's fast *)
-    let pattern = List.hd query.patterns in
+    let pattern = List.hd optimized_query.patterns in
     Pack_backend.query_predicate store pattern.name 
       (List.map (function 
         | Atom a -> a 
@@ -141,7 +170,7 @@ let execute_streaming store query ~offset ~limit =
     let bindings = List.map (fun result ->
       bind_variables pattern.args result
     ) results in
-    { bindings; variables = query.variables }
+    { bindings; variables = optimized_query.variables }
   else
     (* Multi-predicate join: stream with early cutoff *)
     let collected = ref [] in
@@ -191,15 +220,18 @@ let execute_streaming store query ~offset ~limit =
                 ) results
     in
     
-    stream_patterns [] query.patterns
+    stream_patterns [] optimized_query.patterns
     >|= fun () ->
-    { bindings = List.rev !collected; variables = query.variables }
+    { bindings = List.rev !collected; variables = optimized_query.variables }
 
 (** Execute query: returns all results, pagination handled by result_to_json *)
 let execute store query =
+  (* Optimize query by reordering patterns for selectivity *)
+  let optimized_query = optimize_query query in
+  
   (* Single predicate: simple case *)
-  if List.length query.patterns = 1 then
-    let pattern = List.hd query.patterns in
+  if List.length optimized_query.patterns = 1 then
+    let pattern = List.hd optimized_query.patterns in
     Pack_backend.query_predicate store pattern.name 
       (List.map (function 
         | Atom a -> a 
@@ -210,7 +242,7 @@ let execute store query =
     let bindings = List.map (fun result ->
       bind_variables pattern.args result
     ) results in
-    { bindings; variables = query.variables }
+    { bindings; variables = optimized_query.variables }
   else
     (* Multi-predicate query (join) - compute ALL results with safety limit *)
     let result_count = ref 0 in
@@ -251,9 +283,9 @@ let execute store query =
                 ) [] results
     in
     
-    execute_patterns [] query.patterns
+    execute_patterns [] optimized_query.patterns
     >|= fun all_bindings ->
-    { bindings = all_bindings; variables = query.variables }
+    { bindings = all_bindings; variables = optimized_query.variables }
 
 (** Format result as JSON with optional pagination *)
 let result_to_json ?offset ?limit result =

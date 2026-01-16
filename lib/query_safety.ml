@@ -7,7 +7,7 @@
 (** Configuration for query protection *)
 module Config = struct
   (** Query timeout in seconds - abort queries that run too long *)
-  let query_timeout = 2.0
+  let query_timeout = 5.0
   
   (** Maximum intermediate results before aborting (prevents Cartesian explosion) *)
   let max_intermediate_results = 10_000
