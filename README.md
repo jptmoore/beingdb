@@ -78,7 +78,7 @@ Your facts repository must follow this structure:
 
 ```
 your-facts-repo/
-├── predicates/           # Required directory
+├── predicates/          # Required directory
 │   ├── created.pl       # One predicate per file
 │   ├── shown_in.pl      # .pl extension recommended
 │   ├── held_at.pl
@@ -110,6 +110,8 @@ shown_in(faded_wallpaper, ica_london_2010).
 **Complete example repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
 
 ## Installation
+
+**Requires:** OCaml 5.1+ and opam
 
 See [docs/installation.md](docs/installation.md) for detailed instructions.
 
