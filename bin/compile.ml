@@ -110,13 +110,19 @@ let compile_all git_path pack_path =
     ) predicates in
     
     let total_facts = List.fold_left (fun acc (_name, count, _) -> acc + count) 0 results in
-    let error_count = List.fold_left (fun acc (_name, _, has_error) -> if has_error then acc + 1 else acc) 0 results in
+    let failed_predicates = List.filter_map (fun (name, _, has_error) -> 
+      if has_error then Some name else None
+    ) results in
+    let error_count = List.length failed_predicates in
     
     let* () = Logs_lwt.info (fun m -> m "") in
     let* () = 
-      if error_count > 0 then
-        Logs_lwt.err (fun m -> m "Compilation failed with %d error(s)!" error_count)
-      else
+      if error_count > 0 then begin
+        let* () = Logs_lwt.err (fun m -> m "Compilation failed with %d error(s)!" error_count) in
+        Lwt_list.iter_s (fun pred ->
+          Logs_lwt.err (fun m -> m "  Failed: %s" pred)
+        ) failed_predicates
+      end else
         Logs_lwt.info (fun m -> m "Compilation complete!")
     in
     let* () = Logs_lwt.info (fun m -> m "  Predicates: %d" (List.length predicates)) in
