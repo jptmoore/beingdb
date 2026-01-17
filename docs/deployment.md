@@ -2,15 +2,6 @@
 
 Deploy BeingDB in production using Docker with snapshot-based updates.
 
-## Key Concepts
-
-BeingDB uses **immutable snapshots** for zero-downtime deployments:
-
-1. **Facts live in Git** - Version control for your knowledge base
-2. **Compile to snapshots** - Transform facts into optimized pack format
-3. **Deploy with symlinks** - Point container at snapshot via `current` symlink
-4. **Update atomically** - Compile new snapshot, update symlink, restart (minimal downtime)
-
 ## Quick Start
 
 ### Prerequisites
