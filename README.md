@@ -30,8 +30,8 @@ Your knowledge base evolves like a codebase. Subject matter experts who already 
 
 Facts are Prolog-style predicates—one fact per line:
 ```prolog
-created(tina_keane, she).
-shown_in(she, rewind_exhibition_1995).
+created(tina_keane, shadow_of_a_journey).
+shown_in(shadow_of_a_journey, rewind_exhibition_1995).
 held_at(rewind_exhibition_1995, ica_london).
 ```
 
