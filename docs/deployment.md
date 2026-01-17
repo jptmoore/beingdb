@@ -2,6 +2,17 @@
 
 Deploy BeingDB in production using Docker with snapshot-based updates.
 
+## Deployment Patterns
+
+**Single instance (this guide):** Docker Compose with symlink-based updates. Simple restart causes ~2-5 seconds downtime.
+
+**Zero-downtime options:**
+- **Blue-green with Docker:** Run two containers, compile to new snapshot, start second container, switch traffic via nginx/load balancer, stop first container
+- **Kubernetes:** Use Deployments with rolling updates. Mount snapshots as ConfigMaps or persistent volumes, update ConfigMap to trigger pod rollout
+- **Multi-replica:** Load balance across N instances, update them sequentially (1/N downtime at a time)
+
+**Key principle:** Snapshots are immutable. Compile new snapshot → point new instances at it → switch traffic → remove old instances.
+
 ## Quick Start
 
 ### Prerequisites
