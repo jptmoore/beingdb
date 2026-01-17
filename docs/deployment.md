@@ -12,7 +12,7 @@ Deploy BeingDB in production using Docker with snapshot-based updates.
 ### 1. Setup Directory Structure
 
 ```bash
-mkdir -p data/snapshots data/git_store
+mkdir -p data/snapshots
 
 # Clone your facts repository
 git clone https://github.com/your-org/your-facts.git data/git_store
