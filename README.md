@@ -126,100 +126,32 @@ dune install
 
 ## Quick Start
 
-**Production workflow** (Git repository with predicates):
+**Local development:**
 
 ```bash
-# One-time: Clone facts from remote Git repository
+# Clone facts from remote Git repository
 beingdb-clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
 
 # Compile to pack snapshot
 beingdb-compile --git ./git_store --pack ./pack_store
 
 # Start server
-beingdb-serve --pack ./pack_store --port 8080 --max-results 5000 &
+beingdb-serve --pack ./pack_store --port 8080 --max-results 5000
 
 # Query
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
-**Update workflow:**
+**Production deployment:**
 
-```bash
-# Pull latest changes from remote Git repository
-beingdb-pull --git ./git_store --remote https://github.com/jptmoore/beingdb-sample-facts.git
+See [docs/deployment.md](docs/deployment.md) for Docker deployment with docker-compose, zero-downtime updates, and production best practices.
 
-# Compile to NEW timestamped snapshot (capture timestamp)
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-beingdb-compile --git ./git_store --pack ./snapshots/pack_$TIMESTAMP
+## Documentation
 
-# Stop old server
-pkill beingdb-serve
-
-# Start new server with updated snapshot
-beingdb-serve --pack ./snapshots/pack_$TIMESTAMP --port 8080 --max-results 5000 &
-```
-
-**Zero-downtime deployments:**
-
-For production systems, use blue-green deployment:
-1. Compile the new snapshot with a timestamp
-2. Start the new server on a different port (e.g., 8081)
-3. Update your load balancer/reverse proxy to route traffic to the new port
-4. Verify the new server is working correctly
-5. Stop the old server (running on port 8080)
-
-This ensures no downtime during updates, and allows instant rollback if issues arise. The timestamped snapshots are preserved on disk, so you can quickly restart an old server with a previous snapshot if needed.
-
-## Query Language
-
-**Facts** (examples/sample_predicates.pl):
-
-```prolog
-created(tina_keane, she).
-shown_in(she, rewind_exhibition_1995).
-held_at(rewind_exhibition_1995, ica_london).
-keyword(doc_456, "neural networks").
-```
-
-**Terms:**
-
-- `Work`, `Artist` - Variables (uppercase)
-- `tina_keane`, `1979` - Atoms (lowercase)
-- `"neural networks"` - Strings (quoted)
-- `_` - Wildcard
-
-**Query Examples:**
-
-```bash
-# Pattern matching
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(tina_keane, Work)"}'
-
-# With pagination
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(Artist, Work)", "offset": 0, "limit": 10}'
-
-# Joins
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition), held_at(Exhibition, Venue)"}'
-
-# Joins with pagination
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)", "offset": 5, "limit": 3}'
-
-# Strings
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "keyword(Doc, \"neural networks\")"}'
-```
-
-## API
-
-- `GET /predicates` - List predicates
-- `GET /query/:predicate` - Get all facts for predicate
-- `POST /query` - Execute query with joins
-  - Body: `{"query": "...", "offset": 0, "limit": 10}` (offset/limit optional)
-
-Response: `{"variables": [...], "results": [...], "count": N, "total": M, "offset": 0, "limit": 10}`
+- **[Installation Guide](docs/installation.md)** - Setup instructions for all platforms
+- **[Query Language](docs/query-language.md)** - Pattern matching, joins, pagination, and optimization
+- **[API Reference](docs/api.md)** - Complete HTTP API documentation
+- **[Deployment Guide](docs/deployment.md)** - Production deployment with Docker
 
 ## Development
 

@@ -1,0 +1,34 @@
+# Build artifacts
+_build/
+*.install
+*.opam~
+
+# Dependencies
+node_modules/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test data and local storage
+test_data/
+git-store/
+pack-store/
+data/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Documentation build
+docs/_build/

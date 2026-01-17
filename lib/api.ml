@@ -198,4 +198,4 @@ let serve_pack_only max_results pack_store port =
       (handle_query_language max_results pack_store);
   ] in
   
-  Dream.run ~port (Dream.logger @@ router)
+  Dream.run ~interface:"0.0.0.0" ~port (Dream.logger @@ router)
