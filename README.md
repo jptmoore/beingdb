@@ -72,7 +72,9 @@ Use BeingDB when you need facts that can be reviewed, versioned, and queried wit
 - **Multi-curator knowledge bases** requiring Git-based collaboration
 - **Any project** where facts should be versioned, reviewed, and queryable like code
 
-**Example use case:** A shared fact repository where curators add or correct information through small pull requests, editors review the changes, and the validated knowledge base redeploys automatically—treating cultural data with the same rigour and workflow as software.
+## What you get
+
+A shared fact repository where curators add or correct information through small pull requests, editors review the changes, and the validated knowledge base redeploys automatically—treating cultural data with the same rigour and workflow as software.
 
 ## Quick Start
 
