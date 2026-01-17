@@ -72,25 +72,25 @@ Use BeingDB when you need facts that can be reviewed, versioned, and queried wit
 - **Multi-curator knowledge bases** requiring Git-based collaboration
 - **Any project** where facts should be versioned, reviewed, and queryable like code
 
-**Example use case:** A museum's collection database where curators submit facts via pull requests, changes are reviewed by senior staff, and the knowledge base is automatically deployed on merge—just like software.
+**Example use case:** A shared fact repository where curators add or correct information through small pull requests, editors review the changes, and the validated knowledge base redeploys automatically—treating cultural data with the same rigour and workflow as software.
 
 ## Quick Start
 
 ```bash
-# Install (requires OCaml 5.1+ and opam)
-git clone https://github.com/jptmoore/beingdb.git && cd beingdb
-opam install . --deps-only -y && dune build --release && dune install
-
-# Try with sample facts
+# Clone sample facts
 beingdb-clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
+
+# Compile to optimized format
 beingdb-compile --git ./git_store --pack ./pack_store
+
+# Start server
 beingdb-serve --pack ./pack_store
 
 # Query (in another terminal)
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
-**Next steps:** [Getting Started Guide](docs/getting-started.md) for complete walkthrough
+**Installation:** See [Installation Guide](docs/installation.md) (requires OCaml 5.1+ and opam)
 
 ## Documentation
 
