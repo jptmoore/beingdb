@@ -41,40 +41,7 @@ created(Artist, Work), shown_in(Work, Exhibition)
 ```
 
 No schema, no complex rules. Your LLM handles reasoning; BeingDB provides the reliable, joinable facts.
-
-**Perfect for:**
-- RAG chatbots needing structured metadata alongside vectors
-- Research archives with multiple curators
-- Digital humanities projects requiring provenance
-- Knowledge bases that evolve through team collaboration
-- Any system where facts should be reviewed and versioned like code
-
-BeingDB is small by design, but unlocks something most RAG systems lack: **collaborative, versioned, queryable facts.**
-
-## What BeingDB is NOT
-
-BeingDB is **not** a graph database, **not** a reasoning engine, and **not** a vector store.
-
-It's a simple, immutable fact store designed to complement your RAG stack. Think of it as:
-- **Git** handles versioning and collaboration
-- **Vector stores** handle semantic search over documents
-- **LLMs** handle reasoning and natural language understanding
-- **BeingDB** handles structured facts with reliable joins
-
-Use BeingDB when you need facts that can be reviewed, versioned, and queried with certainty—not when you need fuzzy semantic search or complex inference.
-
-## Who is this for?
-
-- **Cultural heritage institutions** managing collections metadata
-- **Research archives** with evolving datasets requiring provenance
-- **Digital humanities projects** where facts need peer review
-- **RAG systems** needing structured metadata alongside vector search
-- **Multi-curator knowledge bases** requiring Git-based collaboration
-- **Any project** where facts should be versioned, reviewed, and queryable like code
-
-## What you get
-
-A shared fact repository where curators add or correct information through small pull requests, editors review the changes, and the validated knowledge base redeploys automatically—treating cultural data with the same rigour and workflow as software.
+You get a shared fact repository where curators add or correct information through small pull requests, editors review the changes, and the validated knowledge base redeploys automatically—treating cultural data with the same rigour and workflow as software.
 
 ## Quick Start
 
