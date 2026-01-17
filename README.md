@@ -135,7 +135,10 @@ beingdb-clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_s
 # Compile to pack snapshot
 beingdb-compile --git ./git_store --pack ./pack_store
 
-# Start server
+# Start server (default port 8080, max results 1000)
+beingdb-serve --pack ./pack_store
+
+# Or with custom settings
 beingdb-serve --pack ./pack_store --port 8080 --max-results 5000
 
 # Query

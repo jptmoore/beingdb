@@ -98,6 +98,8 @@ chmod +x update.sh
 ./update.sh
 ```
 
+**Note:** Server defaults to 1000 max results. Configure via `MAX_RESULTS` environment variable.
+
 ## Configuration
 
 ### Environment Variables
