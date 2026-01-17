@@ -72,99 +72,35 @@ Use BeingDB when you need facts that can be reviewed, versioned, and queried wit
 - **Multi-curator knowledge bases** requiring Git-based collaboration
 - **Any project** where facts should be versioned, reviewed, and queryable like code
 
-## Repository Structure
-
-Your facts repository must follow this structure:
-
-```
-your-facts-repo/
-├── predicates/          # Required directory
-│   ├── created.pl       # One predicate per file
-│   ├── shown_in.pl      # .pl extension recommended
-│   ├── held_at.pl
-│   └── description.pl
-└── README.md            # Optional documentation
-```
-
-**Best practices:**
-- All predicate files must be under `predicates/` directory
-- Use `.pl` extension for syntax highlighting and clarity (automatically stripped by BeingDB)
-- One predicate type per file (e.g., all `created(...)` facts in `created.pl`)
-- **Each predicate must have consistent arity** - mixing `created(a, b)` and `created(a, b, c)` in the same file will cause compile errors
-- File name becomes the predicate name (`created.pl` → `created` predicate)
-- Files without `.pl` extension work too (`created` file → `created` predicate)
-
-**Example `predicates/created.pl`:**
-```prolog
-created(tina_keane, she).
-created(tina_keane, faded_wallpaper).
-created(tina_keane, shadow_of_a_journey).
-```
-
-**Example `predicates/shown_in.pl`:**
-```prolog
-shown_in(she, rewind_exhibition_1995).
-shown_in(faded_wallpaper, ica_london_2010).
-```
-
-**Complete example repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
-
-## Installation
-
-**Requires:** OCaml 5.1+ and opam
-
-See [docs/installation.md](docs/installation.md) for detailed instructions.
-
-**Quick install (Linux/macOS):**
-```bash
-git clone https://github.com/jptmoore/beingdb.git
-cd beingdb
-opam install . --deps-only -y
-dune build --release
-dune install
-```
+**Example use case:** A museum's collection database where curators submit facts via pull requests, changes are reviewed by senior staff, and the knowledge base is automatically deployed on merge—just like software.
 
 ## Quick Start
 
-**Local development:**
-
 ```bash
-# Clone facts from remote Git repository
+# Install (requires OCaml 5.1+ and opam)
+git clone https://github.com/jptmoore/beingdb.git && cd beingdb
+opam install . --deps-only -y && dune build --release && dune install
+
+# Try with sample facts
 beingdb-clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
-
-# Compile to pack snapshot
 beingdb-compile --git ./git_store --pack ./pack_store
-
-# Start server (default port 8080, max results 1000)
 beingdb-serve --pack ./pack_store
 
-# Or with custom settings
-beingdb-serve --pack ./pack_store --port 8080 --max-results 5000
-
-# Query
+# Query (in another terminal)
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
-**Production deployment:**
-
-See [docs/deployment.md](docs/deployment.md) for Docker deployment with docker-compose, zero-downtime updates, and production best practices.
+**Next steps:** [Getting Started Guide](docs/getting-started.md) for complete walkthrough
 
 ## Documentation
 
-- **[Installation Guide](docs/installation.md)** - Setup instructions for all platforms
-- **[Query Language](docs/query-language.md)** - Pattern matching, joins, pagination, and optimization
-- **[API Reference](docs/api.md)** - Complete HTTP API documentation
-- **[Deployment Guide](docs/deployment.md)** - Production deployment with Docker
+- **[Getting Started](docs/getting-started.md)** - Complete tutorial with examples
+- **[Installation](docs/installation.md)** - Platform-specific setup
+- **[Query Language](docs/query-language.md)** - Patterns, joins, optimization
+- **[API Reference](docs/api.md)** - HTTP API documentation
+- **[Deployment](docs/deployment.md)** - Production Docker deployment
 
-## Development
-
-**Unit tests:**
-
-```bash
-dune test
-```
-
-Tests individual components (Git backend, Pack backend, parsing)
+**Example facts repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
 
 ## License
 
