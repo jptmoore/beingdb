@@ -40,8 +40,6 @@ beingdb-serve --pack ./pack_store
 curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 ```
 
-**Installation:** See [Installation Guide](docs/installation.md) (requires OCaml 5.1+ and opam)
-
 ## Documentation
 
 - **[Getting Started](docs/getting-started.md)** - Complete tutorial with examples
