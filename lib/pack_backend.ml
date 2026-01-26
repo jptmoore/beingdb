@@ -147,6 +147,28 @@ let list_predicates store =
       Irmin.Type.to_string Store.Path.step_t step)
   |> Lwt.return
 
+(** Get the arity of a predicate by sampling the first fact *)
+let get_predicate_arity store predicate_name =
+  let prefix = [ predicate_name ] in
+  let* all_paths = collect_paths store prefix in
+  match all_paths with
+  | [] -> Lwt.return None
+  | path :: _ ->
+      (* Extract arity from path: predicate/arg1/arg2/... -> arity = number of args *)
+      match path with
+      | _ :: args -> Lwt.return (Some (List.length args))
+      | [] -> Lwt.return None
+
+(** List all predicates with their arities *)
+let list_predicates_with_arity store =
+  let* predicates = list_predicates store in
+  Lwt_list.map_s (fun pred ->
+    let* arity = get_predicate_arity store pred in
+    match arity with
+    | Some a -> Lwt.return (pred, a)
+    | None -> Lwt.return (pred, 0)  (* Empty predicate has arity 0 *)
+  ) predicates
+
 let write_fact store predicate_name args =
   let path = fact_to_path predicate_name args in
   Store.set_exn store path "" ~info:(info "Materialize fact")

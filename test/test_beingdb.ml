@@ -282,6 +282,16 @@ let test_pack_backend () =
       ["created"; "shown_in"]
       sorted_predicates;
     
+    (* List predicates with arity *)
+    Beingdb.Pack_backend.list_predicates_with_arity store
+    >>= fun predicates_with_arity ->
+    
+    let sorted_with_arity = List.sort (fun (a, _) (b, _) -> String.compare a b) predicates_with_arity in
+    Alcotest.(check (list (pair string int)))
+      "pack backend list predicates with arity"
+      [("created", 2); ("shown_in", 2)]
+      sorted_with_arity;
+    
     (* Cleanup *)
     let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
     let _ = Unix.system cmd in

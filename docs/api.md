@@ -63,16 +63,16 @@ curl http://localhost:8080/version
 GET /predicates
 ```
 
-Lists all available predicates in the pack store.
+Lists all available predicates in the pack store with their arities.
 
 **Response:**
 ```json
 {
   "predicates": [
-    "created",
-    "shown_in",
-    "held_at",
-    "keyword"
+    {"name": "created", "arity": 2},
+    {"name": "shown_in", "arity": 2},
+    {"name": "held_at", "arity": 2},
+    {"name": "keyword", "arity": 1}
   ]
 }
 ```
