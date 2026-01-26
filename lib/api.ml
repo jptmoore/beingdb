@@ -37,10 +37,16 @@ let fact_to_json args =
 
 (** List all predicates *)
 let handle_list_predicates pack_store _req =
-  Pack_backend.list_predicates pack_store
-  >>= fun predicates ->
+  Pack_backend.list_predicates_with_arity pack_store
+  >>= fun predicates_with_arity ->
+  let predicates_json = List.map (fun (name, arity) ->
+    `Assoc [
+      "name", `String name;
+      "arity", `Int arity
+    ]
+  ) predicates_with_arity in
   let json = `Assoc [
-    "predicates", `List (List.map (fun p -> `String p) predicates)
+    "predicates", `List predicates_json
   ] in
   json_response json
 
