@@ -47,6 +47,7 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 - **[Query Language](docs/query-language.md)** - Patterns, joins, optimization
 - **[API Reference](docs/api.md)** - HTTP API documentation
 - **[Deployment](docs/deployment.md)** - Production Docker deployment
+- **[Internals](docs/internals.md)** - Storage architecture and encoding format
 
 **Example facts repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
 

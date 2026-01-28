@@ -12,6 +12,29 @@
 
 open Lwt.Infix
 
+(** Concurrency limiter to prevent FD exhaustion under load *)
+let concurrency_limiter max_concurrent =
+  let semaphore = Lwt_mutex.create () in
+  let count = ref 0 in
+  
+  fun handler req ->
+    Lwt_mutex.lock semaphore >>= fun () ->
+    if !count >= max_concurrent then begin
+      Lwt_mutex.unlock semaphore;
+      Dream.respond ~status:`Service_Unavailable "Server overloaded, retry later"
+    end else begin
+      incr count;
+      Lwt_mutex.unlock semaphore;
+      
+      Lwt.finalize
+        (fun () -> handler req)
+        (fun () ->
+          Lwt_mutex.lock semaphore >>= fun () ->
+          decr count;
+          Lwt_mutex.unlock semaphore;
+          Lwt.return_unit)
+    end
+
 let json_response data =
   Dream.json (Yojson.Safe.to_string data)
 
@@ -33,7 +56,7 @@ let handle_version _req =
 
 (** Convert fact arguments to JSON *)
 let fact_to_json args =
-  `List (List.map (fun s -> `String s) args)
+  `List (List.map (fun arg -> `String (Types.arg_to_string arg)) args)
 
 (** List all predicates *)
 let handle_list_predicates pack_store _req =
@@ -71,7 +94,6 @@ let execute_query_with_protection pack_store query offset limit_to_use =
   let is_join = List.length query.Query_parser.patterns > 1 in
   let use_streaming = 
     is_join && 
-    Option.is_some offset && 
     Option.is_some limit_to_use
   in
   
@@ -82,20 +104,22 @@ let execute_query_with_protection pack_store query offset limit_to_use =
           let offset_val = Option.value offset ~default:0 in
           let limit_val = Option.get limit_to_use in
           
-          (* Pass 1: Count total by streaming (constant memory) *)
-          Query_engine.count_streaming pack_store query
-          >>= fun total ->
-          
-          (* Pass 2: Stream to get the page (early cutoff) *)
+          (* Skip expensive count, just stream the page *)
           Query_engine.execute_streaming pack_store query ~offset:offset_val ~limit:limit_val
           >>= fun page_result ->
           
-          (* Build response with total from count pass *)
-          let json = Query_engine.result_to_json ~offset:offset_val ~limit:limit_val page_result in
-          let open Yojson.Safe.Util in
-          let json_obj = to_assoc json in
-          let json_with_total = `Assoc (("total", `Int total) :: (List.remove_assoc "total" json_obj)) in
-          json_response json_with_total
+          (* Build response without total count *)
+          let result_json = `Assoc [
+            "results", `List (List.map (fun binding ->
+              `Assoc [
+                "bindings", `List (List.map (fun (var, value) ->
+                  `Assoc ["variable", `String var; "value", `String value]
+                ) binding)
+              ]
+            ) page_result.Query_engine.bindings);
+            "variables", `List (List.map (fun v -> `String v) page_result.Query_engine.variables);
+          ] in
+          json_response result_json
         else
           (* Single predicate or unpaginated: full materialization is fine *)
           Query_engine.execute pack_store query
@@ -157,51 +181,56 @@ let handle_query_language max_results pack_store req =
       | _ -> error_response "Expected JSON object"
 
 (** Build Dream router *)
-let router max_results git_store pack_store =
+let router max_results git_store pack_store limiter =
   Dream.router [
     Dream.get "/" handle_root;
     
     Dream.get "/version" handle_version;
     
     Dream.get "/predicates" 
-      (handle_list_predicates pack_store);
+      (limiter (handle_list_predicates pack_store));
     
     Dream.get "/query/:predicate" 
-      (fun req ->
+      (limiter (fun req ->
         let predicate = Dream.param req "predicate" in
-        handle_query pack_store predicate req);
+        handle_query pack_store predicate req));
     
     Dream.post "/query"
-      (handle_query_language max_results pack_store);
+      (limiter (handle_query_language max_results pack_store));
     
     Dream.post "/sync"
-      (handle_sync git_store pack_store);
+      (limiter (handle_sync git_store pack_store));
   ]
 
 (** Start the API server *)
-let serve ~max_results ~port ~git_store ~pack_store =
+let serve ~max_results ~max_concurrent ~port ~git_store ~pack_store =
   Logs.info (fun m -> m "Starting API server on port %d" port);
+  let limiter = concurrency_limiter max_concurrent in
+  
   Dream.run ~port
     (Dream.logger
-    @@ router max_results git_store pack_store)
+    @@ router max_results git_store pack_store limiter)
 
 (** Pack-only server (no Git backend, no sync endpoint) *)
-let serve_pack_only max_results pack_store port =
+let serve_pack_only max_results max_concurrent pack_store port =
+  (* Limit concurrent requests to prevent FD exhaustion *)
+  let limiter = concurrency_limiter max_concurrent in
+  
   let router = Dream.router [
     Dream.get "/" handle_root;
     
     Dream.get "/version" handle_version;
     
     Dream.get "/predicates" 
-      (handle_list_predicates pack_store);
+      (limiter (handle_list_predicates pack_store));
     
     Dream.get "/query/:predicate" 
-      (fun req ->
+      (limiter (fun req ->
         let predicate = Dream.param req "predicate" in
-        handle_query pack_store predicate req);
+        handle_query pack_store predicate req));
     
     Dream.post "/query"
-      (handle_query_language max_results pack_store);
+      (limiter (handle_query_language max_results pack_store));
   ] in
   
   Dream.run ~interface:"0.0.0.0" ~port (Dream.logger @@ router)

@@ -2,61 +2,75 @@
 
 open Lwt.Infix
 
+(* Helper: Create testable for arg_value *)
+let arg_value_testable =
+  Alcotest.testable Beingdb.Types.pp_arg_value (=)
+
+let arg_value_list_testable =
+  Alcotest.list arg_value_testable
+
+let fact_testable =
+  Alcotest.pair Alcotest.string arg_value_list_testable
+
+(* Helper: Convert string list to Atom list for convenience *)
+let atoms strs = List.map (fun s -> Beingdb.Types.Atom s) strs
+
 let test_parse_fact () =
   let open Beingdb.Parse_predicate in
+  let open Beingdb.Types in
   
   (* Test simple fact *)
   let fact1 = "created(tina_keane, she)." in
   let result1 = parse_fact fact1 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse simple fact" 
-    (Some ("created", ["tina_keane"; "she"]))
+    (Some ("created", [Atom "tina_keane"; Atom "she"]))
     result1;
   
   (* Test fact without trailing dot *)
   let fact2 = "shown_in(she, rewind_exhibition_1995)" in
   let result2 = parse_fact fact2 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse fact without dot"
-    (Some ("shown_in", ["she"; "rewind_exhibition_1995"]))
+    (Some ("shown_in", [Atom "she"; Atom "rewind_exhibition_1995"]))
     result2;
   
   (* Test fact with spaces *)
   let fact3 = "created( tina_keane , she )." in
   let result3 = parse_fact fact3 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse fact with spaces"
-    (Some ("created", ["tina_keane"; "she"]))
+    (Some ("created", [Atom "tina_keane"; Atom "she"]))
     result3;
   
   (* Test three-argument fact *)
   let fact4 = "relationship(subject, predicate, object)." in
   let result4 = parse_fact fact4 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse three-argument fact"
-    (Some ("relationship", ["subject"; "predicate"; "object"]))
+    (Some ("relationship", [Atom "subject"; Atom "predicate"; Atom "object"]))
     result4;
   
   (* Test single-argument fact *)
   let fact5 = "active(user123)." in
   let result5 = parse_fact fact5 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse single-argument fact"
-    (Some ("active", ["user123"]))
+    (Some ("active", [Atom "user123"]))
     result5;
   
   (* Test fact with quoted strings *)
   let fact6 = "keyword(doc_456, \"neural networks\")." in
   let result6 = parse_fact fact6 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse fact with quoted string"
-    (Some ("keyword", ["doc_456"; "neural networks"]))
+    (Some ("keyword", [Atom "doc_456"; String "neural networks"]))
     result6;
   
   (* Test invalid facts *)
   let fact7 = "not_a_fact" in
   let result7 = parse_fact fact7 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse invalid fact (no parens)"
     None
     result7;
@@ -64,14 +78,14 @@ let test_parse_fact () =
   (* Parser is lenient with unclosed parens - it just treats content as args *)
   let fact8 = "invalid(" in
   let result8 = parse_fact fact8 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse fact with unclosed parens (lenient parser)"
     (Some ("invalid", []))
     result8;
   
   let fact9 = "" in
   let result9 = parse_fact fact9 in
-  Alcotest.(check (option (pair string (list string))))
+  Alcotest.(check (option fact_testable))
     "parse empty string"
     None
     result9
@@ -187,21 +201,21 @@ let test_pack_backend () =
     >>= fun store ->
     
     (* Write facts to 'created' predicate *)
-    Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_1"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_a"; "work_1"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_b"; "work_2"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_b"; "work_2"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_3"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_a"; "work_3"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_c"; "work_4"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_c"; "work_4"])
     >>= fun () ->
     
     (* Write facts to 'shown_in' predicate *)
-    Beingdb.Pack_backend.write_fact store "shown_in" ["work_1"; "exhibition_a"]
+    Beingdb.Pack_backend.write_fact store "shown_in" (atoms ["work_1"; "exhibition_a"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "shown_in" ["work_2"; "exhibition_b"]
+    Beingdb.Pack_backend.write_fact store "shown_in" (atoms ["work_2"; "exhibition_b"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "shown_in" ["work_3"; "exhibition_a"]
+    Beingdb.Pack_backend.write_fact store "shown_in" (atoms ["work_3"; "exhibition_a"])
     >>= fun () ->
     
     (* Query all 'created' facts *)
@@ -223,7 +237,7 @@ let test_pack_backend () =
       (List.length all_shown);
     
     (* Query with pattern - all works by artist_a *)
-    Beingdb.Pack_backend.query_predicate store "created" ["artist_a"; "_"]
+    Beingdb.Pack_backend.query_predicate store "created" (atoms ["artist_a"; "_"])
     >>= fun artist_a_works ->
     
     Alcotest.(check int)
@@ -232,7 +246,7 @@ let test_pack_backend () =
       (List.length artist_a_works);
     
     (* Query with pattern - find specific work *)
-    Beingdb.Pack_backend.query_predicate store "created" ["_"; "work_2"]
+    Beingdb.Pack_backend.query_predicate store "created" (atoms ["_"; "work_2"])
     >>= fun work_2_facts ->
     
     Alcotest.(check int)
@@ -240,13 +254,13 @@ let test_pack_backend () =
       1
       (List.length work_2_facts);
     
-    Alcotest.(check (list (list string)))
+    Alcotest.(check (list arg_value_list_testable))
       "pack backend work_2 created by artist_b"
-      [["artist_b"; "work_2"]]
+      [atoms ["artist_b"; "work_2"]]
       work_2_facts;
     
     (* Query with pattern - works shown at exhibition_a *)
-    Beingdb.Pack_backend.query_predicate store "shown_in" ["_"; "exhibition_a"]
+    Beingdb.Pack_backend.query_predicate store "shown_in" (atoms ["_"; "exhibition_a"])
     >>= fun exhibition_a_works ->
     
     Alcotest.(check int)
@@ -255,7 +269,7 @@ let test_pack_backend () =
       (List.length exhibition_a_works);
     
     (* Query with wildcards in both positions *)
-    Beingdb.Pack_backend.query_predicate store "created" ["_"; "_"]
+    Beingdb.Pack_backend.query_predicate store "created" (atoms ["_"; "_"])
     >>= fun all_wildcards ->
     
     Alcotest.(check int)
@@ -309,21 +323,21 @@ let test_query_engine () =
     >>= fun store ->
     
     (* Setup test data - artist creates works, works shown in exhibitions *)
-    Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_1"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_a"; "work_1"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_a"; "work_2"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_a"; "work_2"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_b"; "work_3"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_b"; "work_3"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "shown_in" ["work_1"; "exhibition_x"]
+    Beingdb.Pack_backend.write_fact store "shown_in" (atoms ["work_1"; "exhibition_x"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "shown_in" ["work_2"; "exhibition_y"]
+    Beingdb.Pack_backend.write_fact store "shown_in" (atoms ["work_2"; "exhibition_y"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "shown_in" ["work_3"; "exhibition_x"]
+    Beingdb.Pack_backend.write_fact store "shown_in" (atoms ["work_3"; "exhibition_x"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "held_at" ["exhibition_x"; "venue_london"]
+    Beingdb.Pack_backend.write_fact store "held_at" (atoms ["exhibition_x"; "venue_london"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "held_at" ["exhibition_y"; "venue_paris"]
+    Beingdb.Pack_backend.write_fact store "held_at" (atoms ["exhibition_y"; "venue_paris"])
     >>= fun () ->
     
     (* Test simple pattern query *)
@@ -427,19 +441,19 @@ let test_pagination () =
     >>= fun store ->
     
     (* Insert 5 test facts *)
-    Beingdb.Pack_backend.write_fact store "created" ["artist_1"; "work_1"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_1"; "work_1"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_2"; "work_2"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_2"; "work_2"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_3"; "work_3"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_3"; "work_3"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_4"; "work_4"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_4"; "work_4"])
     >>= fun () ->
-    Beingdb.Pack_backend.write_fact store "created" ["artist_5"; "work_5"]
+    Beingdb.Pack_backend.write_fact store "created" (atoms ["artist_5"; "work_5"])
     >>= fun () ->
     
     (* Test offset without limit *)
-    Beingdb.Pack_backend.query_predicate ~offset:2 store "created" ["_"; "_"]
+    Beingdb.Pack_backend.query_predicate ~offset:2 store "created" (atoms ["_"; "_"])
     >>= fun offset_results ->
     
     Alcotest.(check int)
@@ -448,7 +462,7 @@ let test_pagination () =
       (List.length offset_results);
     
     (* Test limit without offset *)
-    Beingdb.Pack_backend.query_predicate ~limit:2 store "created" ["_"; "_"]
+    Beingdb.Pack_backend.query_predicate ~limit:2 store "created" (atoms ["_"; "_"])
     >>= fun limit_results ->
     
     Alcotest.(check int)
@@ -457,7 +471,7 @@ let test_pagination () =
       (List.length limit_results);
     
     (* Test offset and limit together *)
-    Beingdb.Pack_backend.query_predicate ~offset:1 ~limit:2 store "created" ["_"; "_"]
+    Beingdb.Pack_backend.query_predicate ~offset:1 ~limit:2 store "created" (atoms ["_"; "_"])
     >>= fun paginated_results ->
     
     Alcotest.(check int)
@@ -831,6 +845,304 @@ let test_predicate_name_validation () =
       Alcotest.(check string) "mixed query fails on bad predicate" "bad-name" name
   | _ -> Alcotest.fail "Expected InvalidPredicateName for mixed query")
 
+let test_encode_decode_basic () =
+  let open Beingdb.Types in
+  let args = [Atom "alice"; Atom "bob"; Atom "charlie"] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed args in
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable)
+    "encode/decode round-trip"
+    args
+    decoded
+
+let test_special_characters () =
+  let open Beingdb.Types in
+  (* Test colons in arguments - atoms can contain colons *)
+  let args_with_colons = [Atom "alice:admin"; Atom "project:x"; Atom "role:owner"] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed args_with_colons in
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable)
+    "encode/decode with colons"
+    args_with_colons
+    decoded;
+  
+  (* Test quotes in strings *)
+  let args_with_quotes = [String "say \"hello\""; Atom "world"] in
+  let (encoded2, value_opt2) = Beingdb.Pack_backend.encode_args_typed args_with_quotes in
+  let decoded2 = Beingdb.Pack_backend.decode_args_typed encoded2 value_opt2 in
+  Alcotest.(check arg_value_list_testable)
+    "encode/decode with quotes"
+    args_with_quotes
+    decoded2;
+  
+  (* Test newlines and special chars in strings *)
+  let args_with_special = [String "line1\nline2"; String "tab\there"; String "emoji😀"] in
+  let (encoded3, value_opt3) = Beingdb.Pack_backend.encode_args_typed args_with_special in
+  let decoded3 = Beingdb.Pack_backend.decode_args_typed encoded3 value_opt3 in
+  Alcotest.(check arg_value_list_testable)
+    "encode/decode with special chars"
+    args_with_special
+    decoded3
+
+let test_edge_cases () =
+  let open Beingdb.Types in
+  (* Empty atoms *)
+  let empty = [Atom ""; Atom ""; Atom ""] in
+  let (encoded1, value_opt1) = Beingdb.Pack_backend.encode_args_typed empty in
+  let decoded1 = Beingdb.Pack_backend.decode_args_typed encoded1 value_opt1 in
+  Alcotest.(check arg_value_list_testable)
+    "encode/decode empty strings"
+    empty
+    decoded1;
+  
+  (* Single argument *)
+  let single = [Atom "alone"] in
+  let (encoded2, value_opt2) = Beingdb.Pack_backend.encode_args_typed single in
+  let decoded2 = Beingdb.Pack_backend.decode_args_typed encoded2 value_opt2 in
+  Alcotest.(check arg_value_list_testable)
+    "encode/decode single arg"
+    single
+    decoded2;
+  
+  (* Very long string *)
+  let long_arg = String.make 10000 'x' in
+  let long = [String long_arg; Atom "short"] in
+  let (encoded3, value_opt3) = Beingdb.Pack_backend.encode_args_typed long in
+  let decoded3 = Beingdb.Pack_backend.decode_args_typed encoded3 value_opt3 in
+  Alcotest.(check arg_value_list_testable)
+    "encode/decode very long arg"
+    long
+    decoded3
+
+let test_high_arity () =
+  Lwt_main.run begin
+    let test_dir = Filename.temp_file "beingdb_arity_" "" in
+    Unix.unlink test_dir;
+    Unix.mkdir test_dir 0o755;
+    
+    Beingdb.Pack_backend.init ~fresh:true test_dir
+    >>= fun store ->
+    
+    (* Test arity 5 *)
+    let args5 = atoms ["a"; "b"; "c"; "d"; "e"] in
+    Beingdb.Pack_backend.write_fact store "test5" args5
+    >>= fun () ->
+    
+    Beingdb.Pack_backend.query_predicate store "test5" (atoms ["_"; "_"; "_"; "_"; "_"])
+    >>= fun results ->
+    Alcotest.(check int) "arity 5 stored" 1 (List.length results);
+    Alcotest.(check (list arg_value_list_testable)) "arity 5 matches" [args5] results;
+    
+    (* Test arity 10 *)
+    let args10 = atoms ["1"; "2"; "3"; "4"; "5"; "6"; "7"; "8"; "9"; "10"] in
+    Beingdb.Pack_backend.write_fact store "test10" args10
+    >>= fun () ->
+    
+    Beingdb.Pack_backend.query_predicate store "test10" 
+      (atoms ["_"; "_"; "_"; "_"; "_"; "_"; "_"; "_"; "_"; "_"])
+    >>= fun results10 ->
+    Alcotest.(check int) "arity 10 stored" 1 (List.length results10);
+    
+    (* Test pattern matching on arity 5 (3rd position) *)
+    Beingdb.Pack_backend.write_fact store "test5" (atoms ["x"; "y"; "target"; "z"; "w"])
+    >>= fun () ->
+    
+    Beingdb.Pack_backend.query_predicate store "test5" (atoms ["_"; "_"; "target"; "_"; "_"])
+    >>= fun pattern_results ->
+    Alcotest.(check int) "pattern on arity 5" 1 (List.length pattern_results);
+    
+    let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+    let _ = Unix.system cmd in
+    Lwt.return ()
+  end
+
+let test_pagination_overflow () =
+  Lwt_main.run begin
+    let test_dir = Filename.temp_file "beingdb_overflow_" "" in
+    Unix.unlink test_dir;
+    Unix.mkdir test_dir 0o755;
+    
+    Beingdb.Pack_backend.init ~fresh:true test_dir
+    >>= fun store ->
+    
+    (* Write 10 facts *)
+    let rec write_facts n =
+      if n <= 0 then Lwt.return ()
+      else
+        Beingdb.Pack_backend.write_fact store "data" (atoms [string_of_int n])
+        >>= fun () -> write_facts (n - 1)
+    in
+    write_facts 10
+    >>= fun () ->
+    
+    (* Test with very large limit (should not overflow) *)
+    Beingdb.Pack_backend.query_predicate store "data" ~offset:5 ~limit:max_int (atoms ["_"])
+    >>= fun results ->
+    Alcotest.(check int) "large limit doesn't overflow" 5 (List.length results);
+    
+    (* Test offset near end *)
+    Beingdb.Pack_backend.query_predicate store "data" ~offset:9 ~limit:100 (atoms ["_"])
+    >>= fun results2 ->
+    Alcotest.(check int) "offset near end" 1 (List.length results2);
+    
+    let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+    let _ = Unix.system cmd in
+    Lwt.return ()
+  end
+
+let test_typed_encoding_atoms () =
+  let open Beingdb.Types in
+  (* Test pure atoms (should stay in path) *)
+  let args = [Atom "alice"; Atom "bob"; Atom "project_x"] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed args in
+  
+  Alcotest.(check (option string)) "atoms have no value" None value_opt;
+  
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable) "atoms round-trip" args decoded
+
+let test_typed_encoding_strings () =
+  let open Beingdb.Types in
+  (* Test pure strings (should go to value) *)
+  let args = [Atom "id123"; String "Long text\nwith newlines"; String "More\ttext"] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed args in
+  
+  Alcotest.(check bool) "strings have value" true (Option.is_some value_opt);
+  
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable) "strings round-trip" args decoded
+
+let test_typed_encoding_mixed () =
+  let open Beingdb.Types in
+  (* Test mixed atoms and strings *)
+  let args = [Atom "alice"; String "Short bio\nwith newline"; Atom "bob"; String "Another\nlong text"] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed args in
+  
+  Alcotest.(check bool) "mixed has value" true (Option.is_some value_opt);
+  
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable) "mixed round-trip" args decoded;
+  
+  (* Verify encoding structure: contains atoms inline *)
+  let has_substring str sub =
+    try ignore (Str.search_forward (Str.regexp_string sub) str 0); true
+    with Not_found -> false
+  in
+  Alcotest.(check bool) "contains alice" true (has_substring encoded "alice");
+  Alcotest.(check bool) "contains bob" true (has_substring encoded "bob");
+  Alcotest.(check bool) "contains placeholder" true (has_substring encoded "$:")
+
+let test_typed_encoding_attack_patterns () =
+  let open Beingdb.Types in
+  (* Test atoms that look like encoding patterns *)
+  let tricky_atoms = [Atom "5:alice"; Atom "$:0"; Atom "999:fake"; Atom "3:$:0"] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed tricky_atoms in
+  
+  Alcotest.(check (option string)) "tricky atoms have no value" None value_opt;
+  
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable) "tricky atoms round-trip" tricky_atoms decoded
+
+let test_typed_encoding_special_chars () =
+  let open Beingdb.Types in
+  (* Test various special characters in atoms and strings *)
+  let args = [
+    Atom "alice:admin";      (* colon in atom *)
+    Atom "role:owner";       (* another colon *)
+    Atom "emoji😀";          (* unicode *)
+    String "Quote \"test\""; (* quotes in string *)
+    String "tab\there";      (* tab in string *)
+  ] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed args in
+  
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable) "special chars round-trip" args decoded
+
+let test_typed_encoding_empty_and_long () =
+  let open Beingdb.Types in
+  (* Test empty strings and very long arguments *)
+  let long_text = String.make 5000 'x' in  (* 5KB string *)
+  let args = [Atom ""; Atom "short"; String long_text; Atom ""] in
+  let (encoded, value_opt) = Beingdb.Pack_backend.encode_args_typed args in
+  
+  let decoded = Beingdb.Pack_backend.decode_args_typed encoded value_opt in
+  Alcotest.(check arg_value_list_testable) "empty and long round-trip" args decoded;
+  match List.nth decoded 2 with
+  | String text -> Alcotest.(check int) "long text preserved" (String.length long_text) (String.length text)
+  | _ -> Alcotest.fail "Expected String type"
+
+let test_typed_encoding_single_arg () =
+  let open Beingdb.Types in
+  (* Test single argument cases *)
+  let single_atom = [Atom "alice"] in
+  let (enc1, val1) = Beingdb.Pack_backend.encode_args_typed single_atom in
+  let dec1 = Beingdb.Pack_backend.decode_args_typed enc1 val1 in
+  Alcotest.(check arg_value_list_testable) "single atom" single_atom dec1;
+  
+  let single_string = [String "Long text\nwith newline"] in
+  let (enc2, val2) = Beingdb.Pack_backend.encode_args_typed single_string in
+  let dec2 = Beingdb.Pack_backend.decode_args_typed enc2 val2 in
+  Alcotest.(check arg_value_list_testable) "single string" single_string dec2
+
+let test_typed_encoding_integration () =
+  let open Beingdb.Types in
+  (* Integration test with actual pack backend *)
+  Lwt_main.run begin
+    let test_dir = Filename.temp_file "beingdb_typed_" "" in
+    Unix.unlink test_dir;
+    Unix.mkdir test_dir 0o755;
+    
+    Beingdb.Pack_backend.init ~fresh:true test_dir
+    >>= fun store ->
+    
+    (* Write fact with mixed atoms and strings *)
+    let args = [Atom "doc123"; String "Title of document"; Atom "alice"; String "Long body\nwith multiple\nlines of text"] in
+    Beingdb.Pack_backend.write_fact store "document" args
+    >>= fun () ->
+    
+    (* Query back *)
+    Beingdb.Pack_backend.query_predicate store "document" [Atom "_"; Atom "_"; Atom "_"; Atom "_"]
+    >>= fun results ->
+    
+    Alcotest.(check int) "typed encoding stored" 1 (List.length results);
+    Alcotest.(check (list arg_value_list_testable)) "typed encoding retrieved" [args] results;
+    
+    (* Test pattern matching still works *)
+    Beingdb.Pack_backend.query_predicate store "document" [Atom "doc123"; Atom "_"; Atom "_"; Atom "_"]
+    >>= fun pattern_results ->
+    
+    Alcotest.(check int) "pattern match on typed" 1 (List.length pattern_results);
+    
+    let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+    let _ = Unix.system cmd in
+    Lwt.return ()
+  end
+
+let test_typed_encoding_security () =
+  (* Test that malicious inputs don't break decoding *)
+  
+  (* Negative length should be rejected *)
+  let malicious1 = "-5:alice:3:bob" in
+  let decoded1 = Beingdb.Pack_backend.decode_args_typed malicious1 None in
+  Alcotest.(check bool) "negative length rejected" true (List.length decoded1 = 0);
+  
+  (* Huge length should be rejected *)
+  let malicious2 = "999999999:x:3:bob" in
+  let decoded2 = Beingdb.Pack_backend.decode_args_typed malicious2 None in
+  Alcotest.(check bool) "huge length rejected" true (List.length decoded2 = 0);
+  
+  (* Out of bounds length *)
+  let malicious3 = "100:short" in  (* claims 100 bytes but only has 5 *)
+  let decoded3 = Beingdb.Pack_backend.decode_args_typed malicious3 None in
+  Alcotest.(check bool) "out of bounds rejected" true (List.length decoded3 = 0);
+  
+  (* Invalid placeholder index *)
+  let malicious4 = "5:alice:$:99" in
+  let decoded4 = Beingdb.Pack_backend.decode_args_typed malicious4 (Some "text") in
+  (* Should keep $:99 as-is since index 99 doesn't exist, treating it as Atom *)
+  Alcotest.(check bool) "invalid placeholder kept" true 
+    (List.mem (Beingdb.Types.Atom "$:99") decoded4)
+
 let () =
   Alcotest.run "BeingDB" [
     "Parse", [
@@ -856,5 +1168,27 @@ let () =
       Alcotest.test_case "configuration values" `Quick test_query_safety_config;
       Alcotest.test_case "error messages" `Quick test_query_safety_errors;
       Alcotest.test_case "predicate name validation" `Quick test_predicate_name_validation;
+    ];
+    "Encoding", [
+      Alcotest.test_case "basic round-trip" `Quick test_encode_decode_basic;
+      Alcotest.test_case "special characters" `Quick test_special_characters;
+      Alcotest.test_case "edge cases" `Quick test_edge_cases;
+    ];
+    "High Arity", [
+      Alcotest.test_case "arity 5 and 10" `Quick test_high_arity;
+    ];
+    "Pagination Edge Cases", [
+      Alcotest.test_case "overflow protection" `Quick test_pagination_overflow;
+    ];
+    "Type-Aware Encoding", [
+      Alcotest.test_case "pure atoms" `Quick test_typed_encoding_atoms;
+      Alcotest.test_case "pure strings" `Quick test_typed_encoding_strings;
+      Alcotest.test_case "mixed atoms and strings" `Quick test_typed_encoding_mixed;
+      Alcotest.test_case "attack patterns" `Quick test_typed_encoding_attack_patterns;
+      Alcotest.test_case "special characters" `Quick test_typed_encoding_special_chars;
+      Alcotest.test_case "empty and long args" `Quick test_typed_encoding_empty_and_long;
+      Alcotest.test_case "single argument" `Quick test_typed_encoding_single_arg;
+      Alcotest.test_case "integration test" `Quick test_typed_encoding_integration;
+      Alcotest.test_case "security validation" `Quick test_typed_encoding_security;
     ];
   ]

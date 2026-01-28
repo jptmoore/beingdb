@@ -2,7 +2,7 @@
 
 open Cmdliner
 
-let serve pack_path port max_results =
+let serve pack_path port max_results max_concurrent =
   (* Initialize Pack store first *)
   let pack = Lwt_main.run (
     let open Lwt.Syntax in
@@ -14,7 +14,8 @@ let serve pack_path port max_results =
   (* Then start Dream server (which takes over event loop) *)
   Logs.info (fun m -> m "Starting API server on port %d" port);
   Logs.info (fun m -> m "Max results per query: %d" max_results);
-  Beingdb.Api.serve_pack_only max_results pack port
+  Logs.info (fun m -> m "Max concurrent queries: %d" max_concurrent);
+  Beingdb.Api.serve_pack_only max_results max_concurrent pack port
 
 let pack_path =
   let doc = "Path to Pack store directory" in
@@ -28,6 +29,10 @@ let max_results =
   let doc = "Maximum number of results per query (hard limit)" in
   Arg.(value & opt int 1000 & info ["max-results"] ~docv:"NUM" ~doc)
 
+let max_concurrent =
+  let doc = "Maximum concurrent queries (prevents FD exhaustion)" in
+  Arg.(value & opt int 20 & info ["max-concurrent"] ~docv:"NUM" ~doc)
+
 let cmd =
   let doc = "Serve queries from Pack store" in
   let man = [
@@ -37,7 +42,7 @@ let cmd =
     `Pre "  beingdb serve --pack ./pack --port 8080 --max-results 5000";
   ] in
   let info = Cmd.info "serve" ~version:"0.1.0" ~doc ~man in
-  Cmd.v info Term.(const serve $ pack_path $ port $ max_results)
+  Cmd.v info Term.(const serve $ pack_path $ port $ max_results $ max_concurrent)
 
 let () =
   Fmt_tty.setup_std_outputs ();

@@ -1,5 +1,6 @@
 (** BeingDB: Logic-based knowledge store with Git and Pack backends *)
 
+module Types = Types
 module Git_backend = Git_backend
 module Pack_backend = Pack_backend
 module Parse_predicate = Parse_predicate
