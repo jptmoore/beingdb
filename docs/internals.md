@@ -37,7 +37,7 @@ document(doc123, "Large text with\nnewlines")
 
 **Encoded as:**
 - Path: `["document"; "6:doc123:$:0"]`
-- Value: `"Large text with\nnewlines"`
+- Value: `"26:Large text with\nnewlines"`
 
 **Format:** Atoms inline, strings replaced with `$:N` placeholder
 
@@ -49,9 +49,9 @@ note(author, "First string", "Second string")
 
 **Encoded as:**
 - Path: `["note"; "6:author:$:0:$:1"]`
-- Value: `"First string\x00Second string"`
+- Value: `"12:First string13:Second string"`
 
-**Format:** Null-separated (`\x00`) strings in value field
+**Format:** Length-prefixed (`N:string`) strings in value field
 
 ## Length Prefixes
 
@@ -75,5 +75,5 @@ $:1    # Second string
 $:2    # Third string
 ```
 
-Value field stores strings null-separated: `str1\x00str2\x00str3`
+Value field stores strings length-prefixed: `12:First string13:Second string`
 

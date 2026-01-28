@@ -1126,6 +1126,64 @@ let test_typed_encoding_integration () =
     Lwt.return ()
   end
 
+let test_length_prefixed_value_encoding () =
+  let open Beingdb.Types in
+  (* Test the new length-prefixed value encoding format specifically *)
+  
+  (* Test 1: Multiple strings - the key use case from docs *)
+  let args1 = [Atom "author"; String "First string"; String "Second string"] in
+  let (encoded1, value_opt1) = Beingdb.Pack_backend.encode_args_typed args1 in
+  
+  (* Verify value format is length-prefixed *)
+  (match value_opt1 with
+  | Some v -> 
+      Alcotest.(check bool) "value starts with length" true 
+        (String.contains v ':');  (* Should contain "12:First string13:Second string" *)
+      (* Verify it's NOT null-separated *)
+      Alcotest.(check bool) "no null bytes" false 
+        (String.contains v '\x00')
+  | None -> Alcotest.fail "Expected value field for strings");
+  
+  let decoded1 = Beingdb.Pack_backend.decode_args_typed encoded1 value_opt1 in
+  Alcotest.(check arg_value_list_testable) "multiple strings round-trip" args1 decoded1;
+  
+  (* Test 2: String with special characters that could break parsing *)
+  let args2 = [String "text:with:colons"; String "text\nwith\nnewlines"; String ""] in
+  let (encoded2, value_opt2) = Beingdb.Pack_backend.encode_args_typed args2 in
+  let decoded2 = Beingdb.Pack_backend.decode_args_typed encoded2 value_opt2 in
+  Alcotest.(check arg_value_list_testable) "special chars in length-prefixed" args2 decoded2;
+  
+  (* Test 3: Many strings *)
+  let many_strings = List.init 10 (fun i -> String (Printf.sprintf "String %d" i)) in
+  let (encoded3, value_opt3) = Beingdb.Pack_backend.encode_args_typed many_strings in
+  let decoded3 = Beingdb.Pack_backend.decode_args_typed encoded3 value_opt3 in
+  Alcotest.(check arg_value_list_testable) "many strings round-trip" many_strings decoded3;
+  
+  (* Test 4: Strings with varying lengths *)
+  let args4 = [String ""; String "x"; String (String.make 100 'a'); String "short"] in
+  let (encoded4, value_opt4) = Beingdb.Pack_backend.encode_args_typed args4 in
+  let decoded4 = Beingdb.Pack_backend.decode_args_typed encoded4 value_opt4 in
+  Alcotest.(check arg_value_list_testable) "varying length strings" args4 decoded4;
+  
+  (* Test 5: Verify exact format structure *)
+  let args5 = [Atom "id"; String "abc"; String "de"] in
+  let (encoded5, value_opt5) = Beingdb.Pack_backend.encode_args_typed args5 in
+  (match value_opt5 with
+  | Some v -> 
+      (* Should be "3:abc2:de" *)
+      Alcotest.(check string) "exact length-prefix format" "3:abc2:de" v
+  | None -> Alcotest.fail "Expected value field");
+  
+  (* Verify it decodes correctly *)
+  let decoded5 = Beingdb.Pack_backend.decode_args_typed encoded5 value_opt5 in
+  Alcotest.(check arg_value_list_testable) "exact format round-trip" args5 decoded5;
+  
+  (* Test 6: Strings containing null bytes - the edge case that motivated length-prefixing *)
+  let args6 = [String "text\x00with\x00nulls"; String "normal"; String "\x00starts_with_null"] in
+  let (encoded6, value_opt6) = Beingdb.Pack_backend.encode_args_typed args6 in
+  let decoded6 = Beingdb.Pack_backend.decode_args_typed encoded6 value_opt6 in
+  Alcotest.(check arg_value_list_testable) "null bytes in strings work" args6 decoded6
+
 let test_typed_encoding_security () =
   (* Test that malicious inputs don't break decoding *)
   
@@ -1198,5 +1256,6 @@ let () =
       Alcotest.test_case "single argument" `Quick test_typed_encoding_single_arg;
       Alcotest.test_case "integration test" `Quick test_typed_encoding_integration;
       Alcotest.test_case "security validation" `Quick test_typed_encoding_security;
+      Alcotest.test_case "length-prefixed value format" `Quick test_length_prefixed_value_encoding;
     ];
   ]
