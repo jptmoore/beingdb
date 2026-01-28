@@ -94,7 +94,6 @@ let execute_query_with_protection pack_store query offset limit_to_use =
   let is_join = List.length query.Query_parser.patterns > 1 in
   let use_streaming = 
     is_join && 
-    Option.is_some offset && 
     Option.is_some limit_to_use
   in
   
@@ -105,20 +104,22 @@ let execute_query_with_protection pack_store query offset limit_to_use =
           let offset_val = Option.value offset ~default:0 in
           let limit_val = Option.get limit_to_use in
           
-          (* Pass 1: Count total by streaming (constant memory) *)
-          Query_engine.count_streaming pack_store query
-          >>= fun total ->
-          
-          (* Pass 2: Stream to get the page (early cutoff) *)
+          (* Skip expensive count, just stream the page *)
           Query_engine.execute_streaming pack_store query ~offset:offset_val ~limit:limit_val
           >>= fun page_result ->
           
-          (* Build response with total from count pass *)
-          let json = Query_engine.result_to_json ~offset:offset_val ~limit:limit_val page_result in
-          let open Yojson.Safe.Util in
-          let json_obj = to_assoc json in
-          let json_with_total = `Assoc (("total", `Int total) :: (List.remove_assoc "total" json_obj)) in
-          json_response json_with_total
+          (* Build response without total count *)
+          let result_json = `Assoc [
+            "results", `List (List.map (fun binding ->
+              `Assoc [
+                "bindings", `List (List.map (fun (var, value) ->
+                  `Assoc ["variable", `String var; "value", `String value]
+                ) binding)
+              ]
+            ) page_result.Query_engine.bindings);
+            "variables", `List (List.map (fun v -> `String v) page_result.Query_engine.variables);
+          ] in
+          json_response result_json
         else
           (* Single predicate or unpaginated: full materialization is fine *)
           Query_engine.execute pack_store query

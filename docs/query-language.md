@@ -193,6 +193,37 @@ Built-in safety limits prevent runaway queries:
 
 If a query exceeds these limits, you'll get a clear error message explaining which limit was hit.
 
+### Handling Expensive Joins
+
+**For large datasets, joins without constraints can timeout:**
+
+```bash
+# This might timeout if predicates are large
+created_by(Work, Artist), source_url(Work, URL)
+```
+
+**Solution: Always use `limit` with joins on large datasets:**
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created_by(Work, Artist), source_url(Work, URL)", "limit": 100}'
+```
+
+When you provide a `limit`, BeingDB uses **streaming execution with early cutoff**:
+- Processes combinations incrementally
+- Stops immediately after finding N results
+- Doesn't compute the full result set
+
+**Even better: Add specific constraints:**
+
+```bash
+# Bind one variable to reduce search space
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created_by(Work, tina_keane), source_url(Work, URL)"}'
+```
+
+**Trade-off:** Queries with `limit` don't return a `total` count (to avoid computing all results).
+
 ## What BeingDB Does NOT Support
 
 - **Negation:** No `NOT` operator (e.g., `not(created(X, Y))`)
@@ -208,9 +239,10 @@ If a query exceeds these limits, you'll get a clear error message explaining whi
 
 1. **Order doesn't matter** - BeingDB optimizes automatically
 2. **Use constants** - `created(tina_keane, W)` is faster than `created(A, W)`
-3. **Paginate joins** - Always use `offset`/`limit` with multi-pattern queries
-4. **Keep predicates simple** - One relationship type per predicate
-5. **Consistent arity** - All facts for a predicate must have the same number of arguments
+3. **Always use `limit` for joins** - Prevents timeouts on large datasets
+4. **Add constraints when possible** - Bind at least one variable to reduce search space
+5. **Keep predicates simple** - One relationship type per predicate
+6. **Consistent arity** - All facts for a predicate must have the same number of arguments
 
 ## Further Reading
 
