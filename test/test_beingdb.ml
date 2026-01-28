@@ -67,6 +67,14 @@ let test_parse_fact () =
     (Some ("keyword", [Atom "doc_456"; String "neural networks"]))
     result6;
   
+  (* Test fact with multiple strings *)
+  let fact6b = "note(author, \"First string\", \"Second string\")." in
+  let result6b = parse_fact fact6b in
+  Alcotest.(check (option fact_testable))
+    "parse fact with multiple strings"
+    (Some ("note", [Atom "author"; String "First string"; String "Second string"]))
+    result6b;
+  
   (* Test invalid facts *)
   let fact7 = "not_a_fact" in
   let result7 = parse_fact fact7 in
