@@ -2,12 +2,12 @@
     
     Storage format: Type-aware hybrid encoding
     - Atoms (identifiers): stored in path - "5:alice:7:project"
-    - Strings (text): stored in value - "$:0:$:1" in path, "text1\x00text2" in value
+    - Strings (text): stored in value - "$:0:$:1" in path, "5:text112:longer text2" in value
     - Type information from parser determines storage strategy
     
     Examples:
     - person(alice, bob) → Path: ["person"; "5:alice:3:bob"], Value: ""
-    - doc(id, "Large text") → Path: ["person"; "2:id:$:0"], Value: "Large text"
+    - doc(id, "Large text") → Path: ["person"; "2:id:$:0"], Value: "10:Large text"
 *)
 
 open Lwt.Syntax
@@ -35,7 +35,12 @@ let encode_args_typed args =
   let path_encoded = String.concat ":" encoded_parts in
   let value_encoded = 
     if !string_values = [] then None
-    else Some (String.concat "\x00" (List.rev !string_values))  (* null-separated *)
+    else 
+      (* Length-prefixed format: "<len>:<string><len>:<string>..." *)
+      let encoded_strings = List.rev !string_values |> List.map (fun s ->
+        Printf.sprintf "%d:%s" (String.length s) s
+      ) in
+      Some (String.concat "" encoded_strings)
   in
   (path_encoded, value_encoded)
 
@@ -88,7 +93,27 @@ let decode_args_typed path_encoded value_opt =
       (* No strings, all atoms *)
       List.map (fun part -> Types.Atom part) path_parts
   | Some value_data ->
-      let string_values = String.split_on_char '\x00' value_data in
+      (* Parse length-prefixed strings: "<len>:<string><len>:<string>..." *)
+      let rec parse_strings pos acc =
+        if pos >= String.length value_data then
+          List.rev acc
+        else
+          match String.index_from_opt value_data pos ':' with
+          | None -> List.rev acc
+          | Some colon_pos ->
+              let len_str = String.sub value_data pos (colon_pos - pos) in
+              match int_of_string_opt len_str with
+              | None -> List.rev acc
+              | Some len when len < 0 || len > 1_000_000 -> List.rev acc
+              | Some len ->
+                  let value_start = colon_pos + 1 in
+                  if value_start + len > String.length value_data then
+                    List.rev acc
+                  else
+                    let value = String.sub value_data value_start len in
+                    parse_strings (value_start + len) (value :: acc)
+      in
+      let string_values = parse_strings 0 [] in
       List.map (fun part ->
         if String.length part >= 3 && String.sub part 0 2 = "$:" then
           (* Placeholder: extract index and replace with String type *)
