@@ -109,12 +109,18 @@ The pack store is read-only and immutable, optimized for fast queries.
 Run the query server pointing at your pack store:
 
 ```bash
-# Default settings (port 8080, max results 1000)
+# Default settings (port 8080, max results 1000, max concurrent 20)
 beingdb-serve --pack ./pack_store
 
 # Custom settings
-beingdb-serve --pack ./pack_store --port 8080 --max-results 5000
+beingdb-serve --pack ./pack_store --port 8080 --max-results 5000 --max-concurrent 40
 ```
+
+**Server options:**
+- `--pack` - Path to pack store directory (required)
+- `--port` - HTTP port (default: 8080)
+- `--max-results` - Maximum results per query (default: 1000)
+- `--max-concurrent` - Maximum concurrent queries (default: 20, prevents file descriptor exhaustion)
 
 Server starts with:
 ```
@@ -122,6 +128,7 @@ beingdb-serve: [INFO] BeingDB Server
 beingdb-serve: [INFO] Pack store: ./pack_store
 beingdb-serve: [INFO] Starting API server on port 8080
 beingdb-serve: [INFO] Max results per query: 1000
+beingdb-serve: [INFO] Max concurrent queries: 20
 17.01.26 12:00:00.000                Running at http://localhost:8080
 ```
 

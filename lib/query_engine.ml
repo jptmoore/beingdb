@@ -27,14 +27,14 @@ type result = {
 
 (** Convert term to concrete value using bindings *)
 let resolve_term bindings = function
-  | Atom a -> Some a
-  | String s -> Some s
-  | Wildcard -> Some "_"
+  | Atom a -> Some (Types.Atom a)
+  | String s -> Some (Types.String s)
+  | Wildcard -> Some (Types.Atom "_")
   | Var v -> 
       (* If variable not in bindings, treat as wildcard for first pattern *)
       match List.assoc_opt v bindings with
-      | Some value -> Some value
-      | None -> Some "_"
+      | Some value -> Some (Types.Atom value)  (* Bindings store strings, wrap as Atom *)
+      | None -> Some (Types.Atom "_")
 
 (** Convert pattern to query arguments, resolving variables *)
 let pattern_to_args bindings pattern =
@@ -71,7 +71,7 @@ let optimize_query query =
 let bind_variables pattern_args result_args =
   List.fold_left2 (fun acc term result ->
     match term with
-    | Var v -> (v, result) :: acc
+    | Var v -> (v, Types.arg_to_string result) :: acc
     | _ -> acc
   ) [] pattern_args result_args
 
@@ -99,12 +99,12 @@ let count_streaming store query =
   if List.length optimized_query.patterns = 1 then
     (* Single predicate - just count directly *)
     let pattern = List.hd optimized_query.patterns in
-    Pack_backend.query_predicate store pattern.name 
-      (List.map (function 
-        | Atom a -> a 
-        | String s -> s 
-        | Wildcard -> "_" 
-        | Var _ -> "_") pattern.args)
+    let pattern_args = List.map (function 
+      | Atom a -> Types.Atom a
+      | String s -> Types.String s
+      | Wildcard -> Types.Atom "_"
+      | Var _ -> Types.Atom "_") pattern.args in
+    Pack_backend.query_predicate store pattern.name pattern_args
     >|= fun results ->
     List.length results
   else
@@ -160,12 +160,12 @@ let execute_streaming store query ~offset ~limit =
   if List.length optimized_query.patterns = 1 then
     (* Single predicate - materialize is fine, it's fast *)
     let pattern = List.hd optimized_query.patterns in
-    Pack_backend.query_predicate store pattern.name 
-      (List.map (function 
-        | Atom a -> a 
-        | String s -> s 
-        | Wildcard -> "_" 
-        | Var _ -> "_") pattern.args)
+    let pattern_args = List.map (function 
+      | Atom a -> Types.Atom a
+      | String s -> Types.String s
+      | Wildcard -> Types.Atom "_"
+      | Var _ -> Types.Atom "_") pattern.args in
+    Pack_backend.query_predicate store pattern.name pattern_args
     >|= fun results ->
     let bindings = List.map (fun result ->
       bind_variables pattern.args result
@@ -232,12 +232,12 @@ let execute store query =
   (* Single predicate: simple case *)
   if List.length optimized_query.patterns = 1 then
     let pattern = List.hd optimized_query.patterns in
-    Pack_backend.query_predicate store pattern.name 
-      (List.map (function 
-        | Atom a -> a 
-        | String s -> s 
-        | Wildcard -> "_" 
-        | Var _ -> "_") pattern.args)
+    let pattern_args = List.map (function 
+      | Atom a -> Types.Atom a
+      | String s -> Types.String s
+      | Wildcard -> Types.Atom "_"
+      | Var _ -> Types.Atom "_") pattern.args in
+    Pack_backend.query_predicate store pattern.name pattern_args
     >|= fun results ->
     let bindings = List.map (fun result ->
       bind_variables pattern.args result

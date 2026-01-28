@@ -113,7 +113,15 @@ environment:
   SNAPSHOT_PATH: /data/snapshots/current  # Symlink to active snapshot
   PORT: 8080                               # HTTP port
   MAX_RESULTS: 5000                        # Max results per response
+  MAX_CONCURRENT: 20                       # Max concurrent queries (prevents FD exhaustion)
 ```
+
+**Configuration Options:**
+
+- `MAX_RESULTS` (default: 1000) - Maximum number of results returned per query
+- `MAX_CONCURRENT` (default: 20) - Maximum concurrent queries allowed. Prevents file descriptor exhaustion under heavy load. Requests beyond this limit receive `503 Service Unavailable` responses
+- `PORT` (default: 8080) - HTTP server port
+- `SNAPSHOT_PATH` - Path to pack store directory (use symlink for atomic updates)
 
 ### Resource Limits
 

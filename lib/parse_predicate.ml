@@ -99,15 +99,15 @@ let parse_fact fact =
         
         let arg_strings = split_args [] "" false false 0 in
         
-        (* Unquote string arguments *)
+        (* Parse arguments preserving type information *)
         let args = List.map (fun arg ->
           let arg = String.trim arg in
           if String.length arg >= 2 && arg.[0] = '"' then
             match parse_quoted_string arg 0 with
-            | Some (content, _) -> content
-            | None -> arg  (* malformed, keep as-is *)
+            | Some (content, _) -> Types.String content  (* Quoted string *)
+            | None -> Types.Atom arg  (* malformed quote, treat as atom *)
           else
-            arg
+            Types.Atom arg  (* Unquoted atom *)
         ) arg_strings in
         
         Some (predicate, args)

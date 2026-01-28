@@ -1,14 +1,107 @@
 (** Pack Backend: High-performance runtime snapshot
     
-    Structure:
-    - One directory per predicate
-    - One node per fact
-    - Arguments encoded in the path
-    - Optimized for lookup and joins
-    - Disk-based persistent storage using Irmin Pack
+    Storage format: Type-aware hybrid encoding
+    - Atoms (identifiers): stored in path - "5:alice:7:project"
+    - Strings (text): stored in value - "$:0:$:1" in path, "text1\x00text2" in value
+    - Type information from parser determines storage strategy
+    
+    Examples:
+    - person(alice, bob) → Path: ["person"; "5:alice:3:bob"], Value: ""
+    - doc(id, "Large text") → Path: ["person"; "2:id:$:0"], Value: "Large text"
 *)
 
 open Lwt.Syntax
+
+(** Encode args with explicit type information:
+    Atoms go inline as "5:alice", Strings get placeholders "$:0", "$:1", ... 
+    Returns (encoded_path, string_values_list) *)
+let encode_args_typed args =
+  let string_values = ref [] in
+  let string_count = ref 0 in
+  
+  let encoded_parts = List.map (fun arg ->
+    match arg with
+    | Types.String text ->
+        (* Store string in value field, use $:N as placeholder *)
+        string_values := text :: !string_values;
+        let placeholder = Printf.sprintf "$:%d" !string_count in
+        incr string_count;
+        placeholder  (* No length prefix for placeholders *)
+    | Types.Atom atom ->
+        (* Store atom inline in path with length prefix *)
+        Printf.sprintf "%d:%s" (String.length atom) atom
+  ) args in
+  
+  let path_encoded = String.concat ":" encoded_parts in
+  let value_encoded = 
+    if !string_values = [] then None
+    else Some (String.concat "\x00" (List.rev !string_values))  (* null-separated *)
+  in
+  (path_encoded, value_encoded)
+
+(** Decode args from path and optional value field *)
+let decode_args_typed path_encoded value_opt =
+  (* Parse path_encoded handling both "N:value" (atoms) and "$:N" (string refs) *)
+  let rec parse pos acc =
+    if pos >= String.length path_encoded then
+      List.rev acc
+    else if pos + 2 <= String.length path_encoded && 
+            String.sub path_encoded pos 2 = "$:" then
+      (* String placeholder: $:N *)
+      let rest = String.sub path_encoded (pos + 2) (String.length path_encoded - pos - 2) in
+      (match String.index_opt rest ':' with
+       | Some next_colon ->
+           let idx_str = String.sub rest 0 next_colon in
+           let placeholder = "$:" ^ idx_str in
+           parse (pos + 2 + next_colon + 1) (placeholder :: acc)
+       | None ->
+           (* Last element - must preserve $: prefix *)
+           let placeholder = "$:" ^ rest in
+           List.rev (placeholder :: acc))
+    else
+      (* Regular atom: N:value format *)
+      (match String.index_from_opt path_encoded pos ':' with
+       | None -> List.rev acc
+       | Some colon_pos ->
+           let len_str = String.sub path_encoded pos (colon_pos - pos) in
+           (match int_of_string_opt len_str with
+           | None -> 
+               (* Not a number, malformed *)
+               List.rev acc
+           | Some len when len < 0 || len > 1_000_000 ->
+               (* Reject negative or unreasonably large lengths *)
+               List.rev acc
+           | Some len ->
+               let value_start = colon_pos + 1 in
+               if value_start + len > String.length path_encoded || value_start + len < value_start then
+                 (* Out of bounds or integer overflow *)
+                 List.rev acc
+               else
+                 let value = String.sub path_encoded value_start len in
+                 parse (value_start + len + 1) (value :: acc)))
+  in
+  let path_parts = parse 0 [] in
+  
+  (* Now replace $:N placeholders with actual strings from value *)
+  match value_opt with
+  | None -> 
+      (* No strings, all atoms *)
+      List.map (fun part -> Types.Atom part) path_parts
+  | Some value_data ->
+      let string_values = String.split_on_char '\x00' value_data in
+      List.map (fun part ->
+        if String.length part >= 3 && String.sub part 0 2 = "$:" then
+          (* Placeholder: extract index and replace with String type *)
+          (match int_of_string_opt (String.sub part 2 (String.length part - 2)) with
+          | Some idx when idx >= 0 && idx < List.length string_values ->
+              Types.String (List.nth string_values idx)
+          | _ -> Types.Atom part)  (* Invalid placeholder, treat as atom *)
+        else
+          Types.Atom part  (* Regular atom *)
+      ) path_parts
+
+(** Size threshold for switching to value-based storage (1KB) *)
+let storage_threshold = 1024
 
 module Conf = struct
   let entries = 32
@@ -25,6 +118,7 @@ module Store_info = Irmin_unix.Info(Store.Info)
 let info message = Store_info.v ~author:"beingdb" "%s" message
 
 type t = Store.t
+type repo = Store.Repo.t
 
 (** Pack configuration with minimal indexing strategy for GC support *)
 let pack_config ?(fresh=false) path =
@@ -44,102 +138,67 @@ let init ?(fresh=false) path =
   let* repo = Store.Repo.v config in
   Store.main repo
 
-(** Encode fact arguments as a path: predicate(a,b,c) -> /predicate/a/b/c *)
+(** Close repository to free file descriptors *)
+let close_repo repo =
+  Store.Repo.close repo
+
+(** Encode fact as 2-level path with type-aware storage *)
 let fact_to_path predicate_name args =
-  predicate_name :: args
+  let (path_encoded, value_opt) = encode_args_typed args in
+  ([predicate_name; path_encoded], value_opt)
 
-(** Recursively collect all paths under a prefix *)
-let rec collect_paths store prefix =
-  let* entries = Store.list store prefix in
-  Lwt_list.fold_left_s (fun acc (step, _tree) ->
-    let step_str = Irmin.Type.to_string Store.Path.step_t step in
-    let new_path = prefix @ [step_str] in
-    (* Check if this is a node (directory) or contents (leaf) *)
-    let* is_leaf = Store.mem store new_path in
-    if is_leaf then
-      Lwt.return (new_path :: acc)
-    else
-      let* sub_paths = collect_paths store new_path in
-      Lwt.return (sub_paths @ acc)
-  ) [] entries
+(** Decode 2-level path back to (predicate, args) with value field *)
+let path_to_fact path value_opt =
+  match path with
+  | [predicate; path_encoded] ->
+      Some (predicate, decode_args_typed path_encoded value_opt)
+  | _ -> None
 
-(** Recursively collect all paths under a tree with optional pagination *)
-let rec collect_paths_from_tree ?offset ?length tree prefix =
-  let* entries = Store.Tree.list tree [] ?offset ?length in
-  Lwt_list.fold_left_s (fun acc (step, subtree) ->
-    let step_str = Irmin.Type.to_string Store.Tree.step_t step in
-    let new_path = prefix @ [step_str] in
-    let* kind = Store.Tree.kind subtree [] in
-    match kind with
-    | Some `Contents -> Lwt.return (new_path :: acc)
-    | Some `Node ->
-        let* sub_paths = collect_paths_from_tree subtree new_path in
-        Lwt.return (sub_paths @ acc)
-    | None -> Lwt.return acc
-  ) [] entries
-
-(** Query facts matching pattern (use "_" for wildcards) 
-    Uses native offset/limit for single-predicate queries without wildcards *)
+(** Query predicate with pattern matching and pagination. 
+    Handles type-aware storage. *)
 let query_predicate ?offset ?limit store predicate_name pattern =
-  let prefix = [ predicate_name ] in
+  let* entries = Store.list store [predicate_name] in
   
-  (* Check if pattern has wildcards *)
-  let has_wildcards = List.exists (fun p -> p = "_") pattern in
+  let offset_val = Option.value offset ~default:0 in
+  let limit_val = Option.value limit ~default:max_int in
   
-  let* all_paths = 
-    if has_wildcards then
-      (* Pattern has wildcards - need to collect all then filter *)
-      collect_paths store prefix
-    else
-      (* No wildcards and single predicate - can use native pagination *)
-      let length = limit in
-      let* tree_opt = Store.find_tree store prefix in
-      match tree_opt with
-      | None -> Lwt.return []
-      | Some tree ->
-          collect_paths_from_tree ?offset ?length tree prefix
+  let matches_pattern args =
+    List.length args = List.length pattern &&
+    List.for_all2 Types.args_match pattern args
   in
   
-  let matches_pattern path =
-    match path with
-    | [] -> false
-    | _pred :: args ->
-        if List.length args <> List.length pattern then false
-        else
-          List.for_all2 (fun arg pat ->
-            pat = "_" || arg = pat
-          ) args pattern
-  in
+  let count = ref 0 in
+  let results = ref [] in
   
-  let results = all_paths
-    |> List.filter matches_pattern
-    |> List.map (function _pred :: args -> args | [] -> [])
-  in
+  (* Parse each immediate child *)
+  let* () = Lwt_list.iter_s (fun (step, tree) ->
+    let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
+    
+    (* Read value field (may be empty) *)
+    let* value_opt = Store.Tree.find tree [] in
+    let args = decode_args_typed path_encoded value_opt in
+    
+    if matches_pattern args then begin
+      if !count >= offset_val && !count - offset_val < limit_val then
+        results := args :: !results;
+      incr count
+    end;
+    Lwt.return ()
+  ) entries in
   
-  (* Apply offset/limit manually if we couldn't use native pagination *)
-  let results = 
-    if has_wildcards then
-      let results = match offset with
-        | None -> results
-        | Some off -> List.filteri (fun i _ -> i >= off) results
-      in
-      match limit with
-      | None -> results
-      | Some lim -> List.filteri (fun i _ -> i < lim) results
-    else
-      results  (* Already paginated by native offset/length *)
-  in
-  
-  Lwt.return results
+  Lwt.return (List.rev !results)
 
-(** Query all facts for a predicate *)
+(** Query all facts for a predicate. Handles type-aware storage. *)
 let query_all store predicate_name =
-  let prefix = [ predicate_name ] in
-  let* all_paths = collect_paths store prefix in
-  all_paths
-  |> List.map (function _pred :: args -> args | [] -> [])
-  |> Lwt.return
+  let* entries = Store.list store [predicate_name] in
+  
+  Lwt_list.map_s (fun (step, tree) ->
+    let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
+    let* value_opt = Store.Tree.find tree [] in
+    Lwt.return (decode_args_typed path_encoded value_opt)
+  ) entries
 
+(** List all predicates *)
 let list_predicates store =
   let* entries = Store.list store [] in
   entries
@@ -147,17 +206,12 @@ let list_predicates store =
       Irmin.Type.to_string Store.Path.step_t step)
   |> Lwt.return
 
-(** Get the arity of a predicate by sampling the first fact *)
+(** Get arity by sampling first fact *)
 let get_predicate_arity store predicate_name =
-  let prefix = [ predicate_name ] in
-  let* all_paths = collect_paths store prefix in
-  match all_paths with
+  let* all = query_all store predicate_name in
+  match all with
+  | first :: _ -> Lwt.return (Some (List.length first))
   | [] -> Lwt.return None
-  | path :: _ ->
-      (* Extract arity from path: predicate/arg1/arg2/... -> arity = number of args *)
-      match path with
-      | _ :: args -> Lwt.return (Some (List.length args))
-      | [] -> Lwt.return None
 
 (** List all predicates with their arities *)
 let list_predicates_with_arity store =
@@ -166,12 +220,14 @@ let list_predicates_with_arity store =
     let* arity = get_predicate_arity store pred in
     match arity with
     | Some a -> Lwt.return (pred, a)
-    | None -> Lwt.return (pred, 0)  (* Empty predicate has arity 0 *)
+    | None -> Lwt.return (pred, 0)
   ) predicates
 
+(** Write fact to store with hybrid storage *)
 let write_fact store predicate_name args =
-  let path = fact_to_path predicate_name args in
-  Store.set_exn store path "" ~info:(info "Materialize fact")
+  let (path, value_opt) = fact_to_path predicate_name args in
+  let value = Option.value value_opt ~default:"" in
+  Store.set_exn store path value ~info:(info "Materialize fact")
 
 let clear store =
   Store.remove_exn store [] ~info:(info "Clear all facts")
