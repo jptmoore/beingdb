@@ -8,6 +8,8 @@ BeingDB solves this by treating facts like source code: **store them in Git, que
 
 Your knowledge base evolves like a codebase. Subject matter experts who already use Git for documentation can contribute facts using the same workflow.
 
+BeingDB uses the same storage backend that powers the Tezos blockchain. This means your facts benefit from the same immutability guarantees, content-addressed integrity, and production-hardened performance that secures a live blockchain.
+
 ## Simple Query Language
 
 Facts are Prolog-style predicates—one fact per line:
@@ -50,10 +52,6 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 - **[Internals](docs/internals.md)** - Storage architecture and encoding format
 
 **Example facts repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
-
-## Battle-Tested Storage
-
-BeingDB uses Irmin Pack, the same storage backend that powers the Tezos blockchain. This means your facts benefit from the same immutability guarantees, content-addressed integrity, and production-hardened performance that secures a live blockchain with billions in value.
 
 ## License
 
