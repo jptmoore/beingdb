@@ -51,6 +51,10 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 
 **Example facts repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
 
+## Battle-Tested Storage
+
+BeingDB uses Irmin Pack, the same storage backend that powers the Tezos blockchain. This means your facts benefit from the same immutability guarantees, content-addressed integrity, and production-hardened performance that secures a live blockchain with billions in value.
+
 ## License
 
 MIT
