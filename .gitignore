@@ -46,3 +46,6 @@ test_data/
 
 # Example relations (if you want to track examples, remove this line)
 relations/
+
+# editor
+.vscode/
