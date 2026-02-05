@@ -1,5 +1,5 @@
 # Multi-stage build for BeingDB server
-FROM ocaml/opam:alpine-ocaml-5.1 AS builder
+FROM ocaml/opam:alpine-ocaml-5.4 AS builder
 
 # Install system dependencies
 USER root

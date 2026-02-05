@@ -11,14 +11,14 @@ sudo apt-get install -y opam libgmp-dev libev-dev libssl-dev pkg-config
 opam init -y
 eval $(opam env)
 
-# Install OCaml 5.1 (or later)
-opam switch create 5.1.0
+# Install OCaml 5.4.0 (or later)
+opam switch create 5.4.0
 eval $(opam env)
 
 # Clone and build BeingDB
 git clone https://github.com/jptmoore/beingdb.git
 cd beingdb
-opam install . --deps-only -y
+opam install . --deps-only --with-test -y
 dune build --release
 
 # Install binaries to ~/.local/bin or /usr/local/bin
@@ -34,13 +34,13 @@ brew install opam gmp libev openssl pkg-config
 # Then follow the same opam/dune steps as Linux above
 opam init -y
 eval $(opam env)
-opam switch create 5.1.0
+opam switch create 5.4.0
 eval $(opam env)
 
 # Clone and build BeingDB
 git clone https://github.com/jptmoore/beingdb.git
 cd beingdb
-opam install . --deps-only -y
+opam install . --deps-only --with-test -y
 dune build --release
 
 # Install binaries
