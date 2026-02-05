@@ -107,5 +107,5 @@ let () =
   Logs.set_reporter (Logs_fmt.reporter ());
   Logs.set_level (Some Logs.Info);
   (* Initialize RNG for git-paf/mirage-crypto *)
-  Mirage_crypto_rng_unix.use_default ();
+  Mirage_crypto_rng_unix.initialize (module Mirage_crypto_rng.Fortuna);
   exit (Cmd.eval cmd)
