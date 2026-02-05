@@ -21,12 +21,28 @@ let import_directory input_dir git_path =
     
     let* git = Beingdb.Git_backend.init git_path in
     
+    (* Check for predicates/ subdirectory (repo structure convention) *)
+    let predicates_dir = Filename.concat input_dir "predicates" in
+    let scan_dir = 
+      if Sys.file_exists predicates_dir && Sys.is_directory predicates_dir then
+        predicates_dir
+      else
+        input_dir
+    in
+    
+    let* () = 
+      if scan_dir = predicates_dir then
+        Logs_lwt.info (fun m -> m "Using predicates/ subdirectory")
+      else
+        Lwt.return_unit
+    in
+    
     (* Find all files in source directory *)
-    let files = Sys.readdir input_dir 
+    let files = Sys.readdir scan_dir 
                 |> Array.to_list
                 |> List.filter (fun f -> 
                     not (String.starts_with ~prefix:"." f))
-                |> List.map (Filename.concat input_dir)
+                |> List.map (Filename.concat scan_dir)
                 |> List.filter (fun p -> not (Sys.is_directory p))
     in
     
