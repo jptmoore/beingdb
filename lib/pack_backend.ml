@@ -180,48 +180,80 @@ let path_to_fact path value_opt =
   | _ -> None
 
 (** Query predicate with pattern matching and pagination. 
-    Handles type-aware storage. *)
+    Handles type-aware storage with proper resource cleanup. *)
 let query_predicate ?offset ?limit store predicate_name pattern =
-  let* entries = Store.list store [predicate_name] in
-  
-  let offset_val = Option.value offset ~default:0 in
-  let limit_val = Option.value limit ~default:max_int in
-  
-  let matches_pattern args =
-    List.length args = List.length pattern &&
-    List.for_all2 Types.args_match pattern args
-  in
-  
-  let count = ref 0 in
-  let results = ref [] in
-  
-  (* Parse each immediate child *)
-  let* () = Lwt_list.iter_s (fun (step, tree) ->
-    let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
-    
-    (* Read value field (may be empty) *)
-    let* value_opt = Store.Tree.find tree [] in
-    let args = decode_args_typed path_encoded value_opt in
-    
-    if matches_pattern args then begin
-      if !count >= offset_val && !count - offset_val < limit_val then
-        results := args :: !results;
-      incr count
-    end;
-    Lwt.return ()
-  ) entries in
-  
-  Lwt.return (List.rev !results)
+  Lwt.finalize
+    (fun () ->
+      let* entries = Store.list store [predicate_name] in
+      
+      let offset_val = Option.value offset ~default:0 in
+      let limit_val = Option.value limit ~default:max_int in
+      
+      let matches_pattern args =
+        List.length args = List.length pattern &&
+        List.for_all2 Types.args_match pattern args
+      in
+      
+      let count = ref 0 in
+      let results = ref [] in
+      
+      (* Parse each immediate child *)
+      let* () = Lwt_list.iter_s (fun (step, tree) ->
+        let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
+        
+        (* Read value field (may be empty) *)
+        let* value_opt = Store.Tree.find tree [] in
+        let args = decode_args_typed path_encoded value_opt in
+        
+        if matches_pattern args then begin
+          if !count >= offset_val && !count - offset_val < limit_val then
+            results := args :: !results;
+          incr count
+        end;
+        Lwt.return ()
+      ) entries in
+      
+      Lwt.return (List.rev !results)
+    )
+    (fun () -> Lwt.pause ())
 
-(** Query all facts for a predicate. Handles type-aware storage. *)
+(** Query all facts for a predicate. Handles type-aware storage with resource cleanup. *)
 let query_all store predicate_name =
-  let* entries = Store.list store [predicate_name] in
-  
-  Lwt_list.map_s (fun (step, tree) ->
-    let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
-    let* value_opt = Store.Tree.find tree [] in
-    Lwt.return (decode_args_typed path_encoded value_opt)
-  ) entries
+  Lwt.finalize
+    (fun () ->
+      let* entries = Store.list store [predicate_name] in
+      
+      Lwt_list.map_s (fun (step, tree) ->
+        let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
+        let* value_opt = Store.Tree.find tree [] in
+        Lwt.return (decode_args_typed path_encoded value_opt)
+      ) entries
+    )
+    (fun () -> Lwt.pause ())
+
+(** Query all facts for a predicate with a limit. Prevents OOM on large predicates. *)
+let query_all_limited ?(limit=1000) store predicate_name =
+  Lwt.finalize
+    (fun () ->
+      let* entries = Store.list store [predicate_name] in
+      
+      (* Limit the entries to prevent OOM *)
+      let limited_entries = 
+        let rec take n lst =
+          match n, lst with
+          | 0, _ | _, [] -> []
+          | n, x :: xs -> x :: take (n - 1) xs
+        in
+        take limit entries
+      in
+      
+      Lwt_list.map_s (fun (step, tree) ->
+        let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
+        let* value_opt = Store.Tree.find tree [] in
+        Lwt.return (decode_args_typed path_encoded value_opt)
+      ) limited_entries
+    )
+    (fun () -> Lwt.pause ())
 
 (** List all predicates *)
 let list_predicates store =
@@ -231,14 +263,65 @@ let list_predicates store =
       Irmin.Type.to_string Store.Path.step_t step)
   |> Lwt.return
 
-(** Get arity by sampling first fact *)
+(** Get arity by reading only first fact, not all facts.
+    This prevents file descriptor exhaustion on large predicates. *)
 let get_predicate_arity store predicate_name =
-  let* all = query_all store predicate_name in
-  match all with
-  | first :: _ -> Lwt.return (Some (List.length first))
+  let* entries = Store.list store [predicate_name] in
+  match entries with
   | [] -> Lwt.return None
+  | (step, tree) :: _ ->
+      (* Read only first fact to get arity *)
+      let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
+      let* value_opt = Store.Tree.find tree [] in
+      let args = decode_args_typed path_encoded value_opt in
+      Lwt.return (Some (List.length args))
 
-(** List all predicates with their arities *)
+(** Sample up to N facts from a predicate. More efficient than query_all
+    for large predicates as it stops after reading N facts. *)
+let sample_facts ?(limit=20) store predicate_name =
+  Lwt.finalize
+    (fun () ->
+      let* entries = Store.list store [predicate_name] in
+      
+      (* Use Lwt_list.take_s to limit iteration and prevent FD exhaustion *)
+      let limited_entries = 
+        let rec take n lst =
+          match n, lst with
+          | 0, _ | _, [] -> []
+          | n, x :: xs -> x :: take (n - 1) xs
+        in
+        take limit entries
+      in
+      
+      Lwt_list.map_s (fun (step, tree) ->
+        let path_encoded = Irmin.Type.to_string Store.Path.step_t step in
+        let* value_opt = Store.Tree.find tree [] in
+        Lwt.return (decode_args_typed path_encoded value_opt)
+      ) limited_entries
+    )
+    (fun () -> Lwt.pause ())
+
+(** List all predicates with their arities and optional sample facts.
+    Uses efficient arity lookup to prevent FD exhaustion. *)
+let list_predicates_with_arity_and_samples ?samples store =
+  let* predicates = list_predicates store in
+  Lwt_list.map_s (fun pred ->
+    let* arity = get_predicate_arity store pred in
+    match samples with
+    | None ->
+        (* No samples requested *)
+        (match arity with
+        | Some a -> Lwt.return (pred, a, None)
+        | None -> Lwt.return (pred, 0, None))
+    | Some limit ->
+        (* Samples requested - read limited facts *)
+        let* sample_list = sample_facts ~limit store pred in
+        (match arity with
+        | Some a -> Lwt.return (pred, a, Some sample_list)
+        | None -> Lwt.return (pred, 0, Some sample_list))
+  ) predicates
+
+(** List all predicates with their arities (efficient version). *)
 let list_predicates_with_arity store =
   let* predicates = list_predicates store in
   Lwt_list.map_s (fun pred ->

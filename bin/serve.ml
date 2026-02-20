@@ -15,7 +15,7 @@ let serve pack_path port max_results max_concurrent =
   Logs.info (fun m -> m "Starting API server on port %d" port);
   Logs.info (fun m -> m "Max results per query: %d" max_results);
   Logs.info (fun m -> m "Max concurrent queries: %d" max_concurrent);
-  Beingdb.Api.serve_pack_only max_results max_concurrent pack port
+  Beingdb.Api.serve max_results max_concurrent pack port
 
 let pack_path =
   let doc = "Path to Pack store directory" in

@@ -65,7 +65,10 @@ GET /predicates
 
 Lists all available predicates in the pack store with their arities.
 
-**Response:**
+**Query Parameters:**
+- `samples` (optional, integer, max 1000) - Include N sample facts for each predicate
+
+**Response (without samples):**
 ```json
 {
   "predicates": [
@@ -77,12 +80,47 @@ Lists all available predicates in the pack store with their arities.
 }
 ```
 
-**Example:**
-```bash
-curl http://localhost:8080/predicates
+**Response (with samples):**
+```json
+{
+  "predicates": [
+    {
+      "name": "created",
+      "arity": 2,
+      "samples": [
+        ["tina_keane", "she"],
+        ["tina_keane", "faded_wallpaper"]
+      ],
+      "sample_count": 2
+    },
+    {
+      "name": "shown_in",
+      "arity": 2,
+      "samples": [
+        ["she", "rewind_exhibition_1995"]
+      ],
+      "sample_count": 1
+    }
+  ],
+  "samples_per_predicate": 20
+}
 ```
 
-**Use case:** Discovery, autocomplete, validation
+**Examples:**
+```bash
+# List predicates without samples
+curl http://localhost:8080/predicates
+
+# List predicates with 20 sample facts each
+curl http://localhost:8080/predicates?samples=20
+```
+
+**Use cases:** 
+- Discovery and autocomplete (without samples)
+- Schema exploration and validation (with samples)
+- Bot/LLM predicate caching with example facts
+
+**Performance note:** Using `samples` parameter is optimized for large datasets and prevents file descriptor exhaustion by limiting reads per predicate.
 
 ---
 

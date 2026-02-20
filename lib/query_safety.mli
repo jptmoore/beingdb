@@ -24,6 +24,13 @@ type validation_error =
 (** Get user-friendly error message for a validation error *)
 val error_message : validation_error -> string
 
+(** Validate predicate name syntax.
+    
+    Predicate names must contain only lowercase letters, numbers, and underscores.
+    Returns Ok () on success, or Error with InvalidPredicateName.
+*)
+val validate_predicate_name : string -> (unit, validation_error) result
+
 (** Validate query structure and parameters.
     
     This is the main validation entry point. It checks:
