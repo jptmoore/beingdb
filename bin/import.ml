@@ -10,7 +10,7 @@ let import_predicate git_store path =
   
   (* Batch write: entire predicate in single commit *)
   let* () = Beingdb.Git_backend.write_predicate git_store filename content in
-  Logs_lwt.info (fun m -> m "✓ %s (%d lines)" filename (List.length content_lines))
+  Lwt_io.printlf "✓ %s (%d lines)" filename (List.length content_lines)
 
 let import_directory input_dir git_path =
   (* Validate input directory exists before starting *)
@@ -25,10 +25,10 @@ let import_directory input_dir git_path =
   );
   
   Lwt_main.run (
-    let* () = Logs_lwt.info (fun m -> m "BeingDB Import") in
-    let* () = Logs_lwt.info (fun m -> m "Input: %s" input_dir) in
-    let* () = Logs_lwt.info (fun m -> m "Git:   %s" git_path) in
-    let* () = Logs_lwt.info (fun m -> m "") in
+    let* () = Lwt_io.printl "BeingDB Import" in
+    let* () = Lwt_io.printlf "Input: %s" input_dir in
+    let* () = Lwt_io.printlf "Git:   %s" git_path in
+    let* () = Lwt_io.printl "" in
     
     let* git = Beingdb.Git_backend.init git_path in
     
@@ -43,7 +43,7 @@ let import_directory input_dir git_path =
     
     let* () = 
       if scan_dir = predicates_dir then
-        Logs_lwt.info (fun m -> m "Using predicates/ subdirectory")
+        Lwt_io.printl "Using predicates/ subdirectory"
       else
         Lwt.return_unit
     in
@@ -76,20 +76,20 @@ let import_directory input_dir git_path =
                 |> List.filter is_predicate_file
     in
     
-    let* () = Logs_lwt.info (fun m -> m "Found %d predicates" (List.length files)) in
+    let* () = Lwt_io.printlf "Found %d predicates" (List.length files) in
     
     if List.length files = 0 then (
-      let* () = Logs_lwt.warn (fun m -> m "Warning: No predicates found in %s" scan_dir) in
-      let* () = Logs_lwt.info (fun m -> m "") in
-      Logs_lwt.info (fun m -> m "Import complete (nothing to import)")
+      let* () = Lwt_io.eprintlf "Warning: No predicates found in %s" scan_dir in
+      let* () = Lwt_io.printl "" in
+      Lwt_io.printl "Import complete (nothing to import)"
     ) else (
-      let* () = Logs_lwt.info (fun m -> m "") in
+      let* () = Lwt_io.printl "" in
       
       (* Import each file *)
       let* () = Lwt_list.iter_s (import_predicate git) files in
       
-      let* () = Logs_lwt.info (fun m -> m "") in
-      Logs_lwt.info (fun m -> m "Import complete!")
+      let* () = Lwt_io.printl "" in
+      Lwt_io.printl "Import complete!"
     )
   )
 
@@ -114,7 +114,4 @@ let cmd =
   Cmd.v info Term.(const import_directory $ input_dir $ git_path)
 
 let () =
-  Fmt_tty.setup_std_outputs ();
-  Logs.set_reporter (Logs_fmt.reporter ());
-  Logs.set_level (Some Logs.Info);
   exit (Cmd.eval cmd)
