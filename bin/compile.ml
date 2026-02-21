@@ -4,8 +4,6 @@ open Lwt.Syntax
 open Cmdliner
 
 let compile_predicate pack_store git_store predicate_name =
-  let* () = Logs_lwt.info (fun m -> m "Compiling %s..." predicate_name) in
-  
   (* Read predicate content from Irmin Git *)
   let* content_opt = Beingdb.Git_backend.read_predicate git_store predicate_name in
   
@@ -41,6 +39,15 @@ let compile_predicate pack_store git_store predicate_name =
         | `Valid data -> Some data
       ) parse_results in
       
+      (* If all facts are invalid, skip this predicate entirely *)
+      if List.length parsed_facts = 0 && List.length facts > 0 then (
+        let* () = Logs_lwt.warn (fun m -> m "✗ %s (no valid facts - not predicate data)" predicate_name) in
+        Lwt.return (0, false)
+      ) else if List.length parsed_facts = 0 then (
+        let* () = Logs_lwt.info (fun m -> m "✓ %s (0 facts)" predicate_name) in
+        Lwt.return (0, false)
+      ) else (
+      
       (* Check arity consistency *)
       let arities = List.map (fun (_, args, _) -> List.length args) parsed_facts in
       let unique_arities = List.sort_uniq compare arities in
@@ -68,22 +75,22 @@ let compile_predicate pack_store git_store predicate_name =
         if List.length unique_arities > 1 then
           Lwt.return_unit
         else
-          Lwt_list.iter_s (fun (_, args, _) ->
-            Beingdb.Pack_backend.write_fact pack_store predicate_name args
-          ) parsed_facts
+          (* Batch write: all facts in single commit *)
+          let args_list = List.map (fun (_, args, _) -> args) parsed_facts in
+          let message = Printf.sprintf "Compile %s (%d facts)" predicate_name (List.length args_list) in
+          Beingdb.Pack_backend.write_predicate_batch pack_store predicate_name args_list message
       in
       
       let fact_count = if List.length unique_arities > 1 then 0 else List.length parsed_facts in
       let has_error = List.length unique_arities > 1 in
       let* () = 
-        if fact_count > 0 then
-          Logs_lwt.info (fun m -> m "  ✓ %d facts" fact_count)
-        else if has_error then
-          Logs_lwt.info (fun m -> m "  ✗ 0 facts (arity mismatch)")
+        if has_error then
+          Logs_lwt.info (fun m -> m "✗ %s (arity mismatch)" predicate_name)
         else
-          Logs_lwt.info (fun m -> m "  ✓ 0 facts")
+          Logs_lwt.info (fun m -> m "✓ %s (%d facts)" predicate_name fact_count)
       in
       Lwt.return (fact_count, has_error)
+      )
 
 let compile_all git_path pack_path =
   Lwt_main.run (
@@ -96,11 +103,9 @@ let compile_all git_path pack_path =
     let* git = Beingdb.Git_backend.init git_path in
     let* pack = Beingdb.Pack_backend.init ~fresh:true pack_path in
     
-    let* () = Logs_lwt.info (fun m -> m "Initialized fresh Pack store") in
-    
     (* List all predicates from Irmin Git *)
     let* predicates = Beingdb.Git_backend.list_predicates git in
-    let* () = Logs_lwt.info (fun m -> m "Found %d predicates in Git HEAD" (List.length predicates)) in
+    let* () = Logs_lwt.info (fun m -> m "Found %d predicates" (List.length predicates)) in
     let* () = Logs_lwt.info (fun m -> m "") in
     
     (* Compile each predicate *)
@@ -125,8 +130,8 @@ let compile_all git_path pack_path =
       end else
         Logs_lwt.info (fun m -> m "Compilation complete!")
     in
-    let* () = Logs_lwt.info (fun m -> m "  Predicates: %d" (List.length predicates)) in
-    let* () = Logs_lwt.info (fun m -> m "  Total facts: %d" total_facts) in
+    let* () = Logs_lwt.info (fun m -> m "Predicates: %d" (List.length predicates)) in
+    let* () = Logs_lwt.info (fun m -> m "Total facts: %d" total_facts) in
     
     if error_count > 0 then
       exit 1

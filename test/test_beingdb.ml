@@ -199,7 +199,77 @@ let test_git_backend () =
     Lwt.return ()
   end
 
-let test_pack_backend () =
+let test_pack_backend_batch () =
+  Lwt_main.run begin
+    let test_dir = Filename.temp_file "beingdb_test_pack_batch_" "" in
+    Unix.unlink test_dir;
+    Unix.mkdir test_dir 0o755;
+    
+    Beingdb.Pack_backend.init ~fresh:true test_dir
+    >>= fun store ->
+    
+    (* Batch write multiple facts to 'created' predicate *)
+    let created_facts = [
+      atoms ["artist_a"; "work_1"];
+      atoms ["artist_b"; "work_2"];
+      atoms ["artist_a"; "work_3"];
+      atoms ["artist_c"; "work_4"];
+    ] in
+    Beingdb.Pack_backend.write_predicate_batch store "created" created_facts "Batch write created facts"
+    >>= fun () ->
+    
+    (* Batch write multiple facts to 'shown_in' predicate *)
+    let shown_in_facts = [
+      atoms ["work_1"; "exhibition_a"];
+      atoms ["work_2"; "exhibition_b"];
+      atoms ["work_3"; "exhibition_a"];
+    ] in
+    Beingdb.Pack_backend.write_predicate_batch store "shown_in" shown_in_facts "Batch write shown_in facts"
+    >>= fun () ->
+    
+    (* Query all 'created' facts *)
+    Beingdb.Pack_backend.query_all store "created"
+    >>= fun all_created ->
+    
+    Alcotest.(check int)
+      "batch write stores 4 'created' facts"
+      4
+      (List.length all_created);
+    
+    (* Query all 'shown_in' facts *)
+    Beingdb.Pack_backend.query_all store "shown_in"
+    >>= fun all_shown ->
+    
+    Alcotest.(check int)
+      "batch write stores 3 'shown_in' facts"
+      3
+      (List.length all_shown);
+    
+    (* Query with pattern - all works by artist_a *)
+    Beingdb.Pack_backend.query_predicate store "created" (atoms ["artist_a"; "_"])
+    >>= fun artist_a_works ->
+    
+    Alcotest.(check int)
+      "batch write pattern match finds 2 works by artist_a"
+      2
+      (List.length artist_a_works);
+    
+    (* Verify empty batch write doesn't fail *)
+    Beingdb.Pack_backend.write_predicate_batch store "empty_pred" [] "Empty batch write"
+    >>= fun () ->
+    
+    Beingdb.Pack_backend.query_all store "empty_pred"
+    >>= fun empty_results ->
+    
+    Alcotest.(check int)
+      "empty batch write stores 0 facts"
+      0
+      (List.length empty_results);
+    
+    Lwt.return ()
+  end
+
+let test_pack_backend_original () =
   Lwt_main.run begin
     let test_dir = Filename.temp_file "beingdb_test_pack_" "" in
     Unix.unlink test_dir;
@@ -1218,7 +1288,8 @@ let () =
       Alcotest.test_case "read/write" `Quick test_git_backend;
     ];
     "Pack Backend", [
-      Alcotest.test_case "query" `Quick test_pack_backend;
+      Alcotest.test_case "query" `Quick test_pack_backend_original;
+      Alcotest.test_case "batch write" `Quick test_pack_backend_batch;
     ];
     "Query Engine", [
       Alcotest.test_case "joins and patterns" `Quick test_query_engine;
