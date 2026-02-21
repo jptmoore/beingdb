@@ -9,7 +9,7 @@ let compile_predicate pack_store git_store predicate_name =
   
   match content_opt with
   | None ->
-      let* () = Logs_lwt.warn (fun m -> m "  Predicate not found: %s" predicate_name) in
+      let* () = Lwt_io.eprintlf "  Predicate not found: %s" predicate_name in
       Lwt.return (0, false)
   | Some content ->
       let facts = String.split_on_char '\n' content
@@ -29,7 +29,7 @@ let compile_predicate pack_store git_store predicate_name =
       
       (* Log warnings for invalid facts *)
       let* () = Lwt_list.iter_s (function
-        | `Invalid fact -> Logs_lwt.warn (fun m -> m "  Skipping invalid fact: %s" fact)
+        | `Invalid fact -> Lwt_io.eprintlf "  Skipping invalid fact: %s" fact
         | `Valid _ -> Lwt.return_unit
       ) parse_results in
       
@@ -41,10 +41,10 @@ let compile_predicate pack_store git_store predicate_name =
       
       (* If all facts are invalid, skip this predicate entirely *)
       if List.length parsed_facts = 0 && List.length facts > 0 then (
-        let* () = Logs_lwt.warn (fun m -> m "✗ %s (no valid facts - not predicate data)" predicate_name) in
+        let* () = Lwt_io.eprintlf "✗ %s (no valid facts - not predicate data)" predicate_name in
         Lwt.return (0, false)
       ) else if List.length parsed_facts = 0 then (
-        let* () = Logs_lwt.info (fun m -> m "✓ %s (0 facts)" predicate_name) in
+        let* () = Lwt_io.printlf "✓ %s (0 facts)" predicate_name in
         Lwt.return (0, false)
       ) else (
       
@@ -61,11 +61,11 @@ let compile_predicate pack_store git_store predicate_name =
             if List.length arity_examples <= 5 then arity_examples 
             else List.filteri (fun i _ -> i < 5) arity_examples 
           in
-          let* () = Logs_lwt.err (fun m -> m "  ERROR: Mixed arities in %s" predicate_name) in
+          let* () = Lwt_io.eprintlf "  ERROR: Mixed arities in %s" predicate_name in
           let* () = Lwt_list.iter_s (fun ex ->
-            Logs_lwt.err (fun m -> m "    %s" ex)
+            Lwt_io.eprintlf "    %s" ex
           ) examples_to_show in
-          Logs_lwt.err (fun m -> m "  Each predicate file must contain facts with consistent arity")
+          Lwt_io.eprintl "  Each predicate file must contain facts with consistent arity"
         else
           Lwt.return_unit
       in
@@ -85,19 +85,19 @@ let compile_predicate pack_store git_store predicate_name =
       let has_error = List.length unique_arities > 1 in
       let* () = 
         if has_error then
-          Logs_lwt.info (fun m -> m "✗ %s (arity mismatch)" predicate_name)
+          Lwt_io.eprintlf "✗ %s (arity mismatch)" predicate_name
         else
-          Logs_lwt.info (fun m -> m "✓ %s (%d facts)" predicate_name fact_count)
+          Lwt_io.printlf "✓ %s (%d facts)" predicate_name fact_count
       in
       Lwt.return (fact_count, has_error)
       )
 
 let compile_all git_path pack_path =
   Lwt_main.run (
-    let* () = Logs_lwt.info (fun m -> m "BeingDB Compile") in
-    let* () = Logs_lwt.info (fun m -> m "Source: Irmin Git (%s)" git_path) in
-    let* () = Logs_lwt.info (fun m -> m "Target: Pack (%s)" pack_path) in
-    let* () = Logs_lwt.info (fun m -> m "") in
+    let* () = Lwt_io.printl "BeingDB Compile" in
+    let* () = Lwt_io.printlf "Source: Irmin Git (%s)" git_path in
+    let* () = Lwt_io.printlf "Target: Pack (%s)" pack_path in
+    let* () = Lwt_io.printl "" in
     
     (* Initialize stores - pack with fresh=true to overwrite existing *)
     let* git = Beingdb.Git_backend.init git_path in
@@ -105,8 +105,8 @@ let compile_all git_path pack_path =
     
     (* List all predicates from Irmin Git *)
     let* predicates = Beingdb.Git_backend.list_predicates git in
-    let* () = Logs_lwt.info (fun m -> m "Found %d predicates" (List.length predicates)) in
-    let* () = Logs_lwt.info (fun m -> m "") in
+    let* () = Lwt_io.printlf "Found %d predicates" (List.length predicates) in
+    let* () = Lwt_io.printl "" in
     
     (* Compile each predicate *)
     let* results = Lwt_list.map_s (fun predicate_name ->
@@ -120,18 +120,18 @@ let compile_all git_path pack_path =
     ) results in
     let error_count = List.length failed_predicates in
     
-    let* () = Logs_lwt.info (fun m -> m "") in
+    let* () = Lwt_io.printl "" in
     let* () = 
       if error_count > 0 then begin
-        let* () = Logs_lwt.err (fun m -> m "Compilation failed with %d error(s)!" error_count) in
+        let* () = Lwt_io.eprintlf "Compilation failed with %d error(s)!" error_count in
         Lwt_list.iter_s (fun pred ->
-          Logs_lwt.err (fun m -> m "  Failed: %s" pred)
+          Lwt_io.eprintlf "  Failed: %s" pred
         ) failed_predicates
       end else
-        Logs_lwt.info (fun m -> m "Compilation complete!")
+        Lwt_io.printl "Compilation complete!"
     in
-    let* () = Logs_lwt.info (fun m -> m "Predicates: %d" (List.length predicates)) in
-    let* () = Logs_lwt.info (fun m -> m "Total facts: %d" total_facts) in
+    let* () = Lwt_io.printlf "Predicates: %d" (List.length predicates) in
+    let* () = Lwt_io.printlf "Total facts: %d" total_facts in
     
     if error_count > 0 then
       exit 1
@@ -162,7 +162,4 @@ let cmd =
   Cmd.v info Term.(const compile_all $ git_path $ pack_path)
 
 let () =
-  Fmt_tty.setup_std_outputs ();
-  Logs.set_reporter (Logs_fmt.reporter ());
-  Logs.set_level (Some Logs.Info);
   exit (Cmd.eval cmd)

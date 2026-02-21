@@ -8,19 +8,19 @@ module Sync = Irmin.Sync.Make(Store)
 
 let pull_updates git_path remote branch =
   Lwt_main.run (
-    let* () = Logs_lwt.info (fun m -> m "BeingDB Pull") in
-    let* () = Logs_lwt.info (fun m -> m "Store:  %s" git_path) in
-    let* () = Logs_lwt.info (fun m -> m "Remote: %s" remote) in
-    let* () = Logs_lwt.info (fun m -> m "Branch: %s" branch) in
-    let* () = Logs_lwt.info (fun m -> m "") in
+    let* () = Lwt_io.printl "BeingDB Pull" in
+    let* () = Lwt_io.printlf "Store:  %s" git_path in
+    let* () = Lwt_io.printlf "Remote: %s" remote in
+    let* () = Lwt_io.printlf "Branch: %s" branch in
+    let* () = Lwt_io.printl "" in
     
     Lwt.catch (fun () ->
-      let* () = Logs_lwt.info (fun m -> m "Opening Git store...") in
+      let* () = Lwt_io.printl "Opening Git store..." in
       let config = Irmin_git.config ~bare:true git_path in
       let* repo = Store.Repo.v config in
       let* store = Store.main repo in
       
-      let* () = Logs_lwt.info (fun m -> m "Pulling from remote...") in
+      let* () = Lwt_io.printl "Pulling from remote..." in
       let* remote_ref = Store.remote remote in
       
       (* Pull from remote - fetches and merges into current branch *)
@@ -28,18 +28,18 @@ let pull_updates git_path remote branch =
       
       match result with
       | Ok (`Head _) ->
-          let* () = Logs_lwt.info (fun m -> m "Successfully pulled updates") in
-          let* () = Logs_lwt.info (fun m -> m "Git store updated at: %s" git_path) in
+          let* () = Lwt_io.printl "Successfully pulled updates" in
+          let* () = Lwt_io.printlf "Git store updated at: %s" git_path in
           Lwt.return_unit
       | Ok `Empty ->
-          let* () = Logs_lwt.info (fun m -> m "No updates (remote is empty)") in
+          let* () = Lwt_io.printl "No updates (remote is empty)" in
           Lwt.return_unit
       | Error (`Msg msg) ->
-          let* () = Logs_lwt.err (fun m -> m "Pull failed: %s" msg) in
+          let* () = Lwt_io.eprintlf "Pull failed: %s" msg in
           Lwt.fail_with msg
       | Error (`Conflict msg) ->
-          let* () = Logs_lwt.err (fun m -> m "Conflict during pull: %s" msg) in
-          let* () = Logs_lwt.info (fun m -> m "Manual resolution required") in
+          let* () = Lwt_io.eprintlf "Conflict during pull: %s" msg in
+          let* () = Lwt_io.eprintl "Manual resolution required" in
           Lwt.fail_with msg
     ) (fun exn ->
       let error_msg = Printexc.to_string exn in
@@ -55,24 +55,24 @@ let pull_updates git_path remote branch =
       
       if is_network_error then
         (* Network/proxy issue *)
-        let* () = Logs_lwt.err (fun m -> m "Network connection failed") in
-        let* () = Logs_lwt.info (fun m -> m "") in
-        let* () = Logs_lwt.info (fun m -> m "Unable to reach remote repository (likely network/proxy issue).") in
-        let* () = Logs_lwt.info (fun m -> m "") in
-        let* () = Logs_lwt.info (fun m -> m "Solutions:") in
-        let* () = Logs_lwt.info (fun m -> m "1. Try from outside corporate network/proxy") in
-        let* () = Logs_lwt.info (fun m -> m "2. Try SSH URL instead of HTTPS") in
-        let* () = Logs_lwt.info (fun m -> m "3. Use manual workflow:") in
-        let* () = Logs_lwt.info (fun m -> m "   cd <repo> && git pull") in
-        let* () = Logs_lwt.info (fun m -> m "   beingdb-import --input <repo> --git %s" git_path) in
+        let* () = Lwt_io.eprintl "Network connection failed" in
+        let* () = Lwt_io.eprintl "" in
+        let* () = Lwt_io.eprintl "Unable to reach remote repository (likely network/proxy issue)." in
+        let* () = Lwt_io.eprintl "" in
+        let* () = Lwt_io.eprintl "Solutions:" in
+        let* () = Lwt_io.eprintl "1. Try from outside corporate network/proxy" in
+        let* () = Lwt_io.eprintl "2. Try SSH URL instead of HTTPS" in
+        let* () = Lwt_io.eprintl "3. Use manual workflow:" in
+        let* () = Lwt_io.eprintl "   cd <repo> && git pull" in
+        let* () = Lwt_io.eprintlf "   beingdb-import --input <repo> --git %s" git_path in
         Lwt.return_unit
       else
-        let* () = Logs_lwt.err (fun m -> m "Pull failed: %s" error_msg) in
-        let* () = Logs_lwt.info (fun m -> m "") in
-        let* () = Logs_lwt.info (fun m -> m "Troubleshooting:") in
-        let* () = Logs_lwt.info (fun m -> m "- Ensure Git store exists at: %s" git_path) in
-        let* () = Logs_lwt.info (fun m -> m "- Check network connectivity") in
-        let* () = Logs_lwt.info (fun m -> m "- Verify remote URL is correct") in
+        let* () = Lwt_io.eprintlf "Pull failed: %s" error_msg in
+        let* () = Lwt_io.eprintl "" in
+        let* () = Lwt_io.eprintl "Troubleshooting:" in
+        let* () = Lwt_io.eprintlf "- Ensure Git store exists at: %s" git_path in
+        let* () = Lwt_io.eprintl "- Check network connectivity" in
+        let* () = Lwt_io.eprintl "- Verify remote URL is correct" in
         Lwt.return_unit
     )
   )
@@ -103,9 +103,6 @@ let cmd =
   Cmd.v info Term.(const pull_updates $ git_path $ remote $ branch)
 
 let () =
-  Fmt_tty.setup_std_outputs ();
-  Logs.set_reporter (Logs_fmt.reporter ());
-  Logs.set_level (Some Logs.Info);
   (* Initialize RNG for git-paf/mirage-crypto *)
   Mirage_crypto_rng_unix.use_default ();
   exit (Cmd.eval cmd)
