@@ -8,11 +8,22 @@ let import_predicate git_store path =
   let* content_lines = Lwt_io.lines_of_file path |> Lwt_stream.to_list in
   let content = String.concat "\n" content_lines in
   
-  let* () = Logs_lwt.info (fun m -> m "Importing %s (%d lines)" filename (List.length content_lines)) in
+  (* Batch write: entire predicate in single commit *)
   let* () = Beingdb.Git_backend.write_predicate git_store filename content in
-  Logs_lwt.info (fun m -> m "✓ Imported %s" filename)
+  Logs_lwt.info (fun m -> m "✓ %s (%d lines)" filename (List.length content_lines))
 
 let import_directory input_dir git_path =
+  (* Validate input directory exists before starting *)
+  if not (Sys.file_exists input_dir) then (
+    Printf.eprintf "import: [ERROR] Input directory does not exist: %s\n%!" input_dir;
+    exit 1
+  );
+  
+  if not (Sys.is_directory input_dir) then (
+    Printf.eprintf "import: [ERROR] Input path is not a directory: %s\n%!" input_dir;
+    exit 1
+  );
+  
   Lwt_main.run (
     let* () = Logs_lwt.info (fun m -> m "BeingDB Import") in
     let* () = Logs_lwt.info (fun m -> m "Input: %s" input_dir) in
@@ -37,23 +48,49 @@ let import_directory input_dir git_path =
         Lwt.return_unit
     in
     
-    (* Find all files in source directory *)
-    let files = Sys.readdir scan_dir 
-                |> Array.to_list
-                |> List.filter (fun f -> 
-                    not (String.starts_with ~prefix:"." f))
-                |> List.map (Filename.concat scan_dir)
-                |> List.filter (fun p -> not (Sys.is_directory p))
+    (* Filter predicate files: exclude known non-data file types *)
+    let is_predicate_file path =
+      let basename = Filename.basename path in
+      (* Skip hidden files and directories *)
+      if String.starts_with ~prefix:"." basename || Sys.is_directory path then
+        false
+      (* Skip README and common documentation files *)
+      else if String.starts_with ~prefix:"README" (String.uppercase_ascii basename) then
+        false
+      (* Skip by extension: scripts, docs, configs *)
+      else if String.ends_with ~suffix:".sh" path ||
+              String.ends_with ~suffix:".md" path ||
+              String.ends_with ~suffix:".txt" path ||
+              String.ends_with ~suffix:".json" path ||
+              String.ends_with ~suffix:".yml" path ||
+              String.ends_with ~suffix:".yaml" path then
+        false
+      (* Accept .pl and files without extensions as predicates *)
+      else
+        true
     in
     
-    let* () = Logs_lwt.info (fun m -> m "Found %d predicate files" (List.length files)) in
-    let* () = Logs_lwt.info (fun m -> m "") in
+    let files = Sys.readdir scan_dir 
+                |> Array.to_list
+                |> List.map (Filename.concat scan_dir)
+                |> List.filter is_predicate_file
+    in
     
-    (* Import each file *)
-    let* () = Lwt_list.iter_s (import_predicate git) files in
+    let* () = Logs_lwt.info (fun m -> m "Found %d predicates" (List.length files)) in
     
-    let* () = Logs_lwt.info (fun m -> m "") in
-    Logs_lwt.info (fun m -> m "Import complete!")
+    if List.length files = 0 then (
+      let* () = Logs_lwt.warn (fun m -> m "Warning: No predicates found in %s" scan_dir) in
+      let* () = Logs_lwt.info (fun m -> m "") in
+      Logs_lwt.info (fun m -> m "Import complete (nothing to import)")
+    ) else (
+      let* () = Logs_lwt.info (fun m -> m "") in
+      
+      (* Import each file *)
+      let* () = Lwt_list.iter_s (import_predicate git) files in
+      
+      let* () = Logs_lwt.info (fun m -> m "") in
+      Logs_lwt.info (fun m -> m "Import complete!")
+    )
   )
 
 let input_dir =

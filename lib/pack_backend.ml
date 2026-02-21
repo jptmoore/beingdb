@@ -337,5 +337,24 @@ let write_fact store predicate_name args =
   let value = Option.value value_opt ~default:"" in
   Store.set_exn store path value ~info:(info "Materialize fact")
 
+(** Batch write multiple facts for a predicate in single commit.
+    More efficient than write_fact for bulk loading. *)
+let write_predicate_batch store predicate_name args_list message =
+  (* Convert all facts to path/value pairs *)
+  let items = List.map (fun args ->
+    let (path, value_opt) = fact_to_path predicate_name args in
+    let value = Option.value value_opt ~default:"" in
+    (path, value)
+  ) args_list in
+  
+  (* Batch write all items using with_tree for single commit *)
+  Store.with_tree_exn store [] ~info:(info message) (fun tree_opt ->
+    let tree = Option.value tree_opt ~default:(Store.Tree.empty ()) in
+    let* updated_tree = Lwt_list.fold_left_s (fun acc_tree (path, value) ->
+      Store.Tree.add acc_tree path value
+    ) tree items in
+    Lwt.return_some updated_tree
+  )
+
 let clear store =
   Store.remove_exn store [] ~info:(info "Clear all facts")
