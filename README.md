@@ -8,8 +8,6 @@ BeingDB solves this by treating facts like source code: **store them in Git, que
 
 Your knowledge base evolves like a codebase. Subject matter experts who already use Git for documentation can contribute facts using the same workflow.
 
-BeingDB uses the same storage technology that powers the Tezos blockchain, giving your facts blockchain-grade immutability and integrity. **Deploy across multiple locations for digital preservation**—each location independently syncs from Git to create verifiable identical copies, ensuring your knowledge base survives any single point of failure.
-
 ## Simple Query Language
 
 Facts are Prolog-style predicates—one fact per line:
@@ -48,8 +46,6 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 - **[Installation](docs/installation.md)** - Platform-specific setup
 - **[Query Language](docs/query-language.md)** - Patterns, joins, optimization
 - **[API Reference](docs/api.md)** - HTTP API documentation
-- **[Deployment](docs/deployment.md)** - Production Docker deployment
-- **[Digital Preservation](docs/digital-preservation.md)** - Multi-region setup and disaster recovery
 - **[Internals](docs/internals.md)** - Storage architecture and encoding format
 
 **Example facts repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
