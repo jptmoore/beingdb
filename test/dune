@@ -12,3 +12,18 @@
  (name test_api)
  (libraries beingdb alcotest lwt lwt.unix dream)
  (modes native))
+
+(test
+ (name test_db)
+ (libraries beingdb alcotest lwt lwt.unix)
+ (modes native))
+
+(test
+ (name test_model)
+ (libraries beingdb alcotest lwt lwt.unix)
+ (modes native))
+
+(test
+ (name test_controller)
+ (libraries beingdb alcotest lwt lwt.unix yojson)
+ (modes native))

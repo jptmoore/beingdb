@@ -7,4 +7,7 @@ module Parse_predicate = Parse_predicate
 module Query_parser = Query_parser
 module Query_engine = Query_engine
 module Query_safety = Query_safety
+module Db = Db
+module Model = Model
+module Controller = Controller
 module Api = Api
