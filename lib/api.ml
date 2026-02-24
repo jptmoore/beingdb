@@ -11,29 +11,6 @@
 
 open Lwt.Infix
 
-(** Concurrency limiter to prevent FD exhaustion under load *)
-let concurrency_limiter max_concurrent =
-  let semaphore = Lwt_mutex.create () in
-  let count = ref 0 in
-  
-  fun handler req ->
-    Lwt_mutex.lock semaphore >>= fun () ->
-    if !count >= max_concurrent then begin
-      Lwt_mutex.unlock semaphore;
-      Dream.respond ~status:`Service_Unavailable "Server overloaded, retry later"
-    end else begin
-      incr count;
-      Lwt_mutex.unlock semaphore;
-      
-      Lwt.finalize
-        (fun () -> handler req)
-        (fun () ->
-          Lwt_mutex.lock semaphore >>= fun () ->
-          decr count;
-          Lwt_mutex.unlock semaphore;
-          Lwt.return_unit)
-    end
-
 let json_response data =
   Dream.json (Yojson.Safe.to_string data)
 
@@ -69,94 +46,62 @@ let handle_list_predicates pack_store req =
         | _ -> None
   in
   
-  (* Additional safety: limit total samples across all predicates to 10,000 *)
-  let max_total_samples = 10_000 in
-  
-  (* Use Lwt.finalize to ensure resources are cleaned up even on error *)
-  Lwt.finalize
-    (fun () ->
-      match samples with
-      | None ->
-          (* No samples - just return predicates with arity *)
-          Pack_backend.list_predicates_with_arity pack_store
-          >>= fun predicates_with_arity ->
-          let predicates_json = List.map (fun (name, arity) ->
-            `Assoc [
-              "name", `String name;
-              "arity", `Int arity
-            ]
-          ) predicates_with_arity in
-          let json = `Assoc [
-            "predicates", `List predicates_json
-          ] in
-          json_response json
-      | Some limit ->
-          (* Samples requested - return predicates with arity and sample facts *)
-          Pack_backend.list_predicates_with_arity_and_samples ~samples:limit pack_store
-          >>= fun predicates_with_samples ->
-          
-          (* Track total samples to enforce global limit *)
-          let total_samples = ref 0 in
-          let predicates_json = List.map (fun (name, arity, samples_opt) ->
-            let base = [
-              "name", `String name;
-              "arity", `Int arity
-            ] in
-            match samples_opt with
-            | None -> `Assoc base
-            | Some sample_facts ->
-                let sample_count = List.length sample_facts in
-                total_samples := !total_samples + sample_count;
-                
-                (* If we exceeded total limit, truncate samples for this predicate *)
-                let facts_to_include = 
-                  if !total_samples > max_total_samples then
-                    let allowed = max 0 (max_total_samples - (!total_samples - sample_count)) in
-                    List.filteri (fun i _ -> i < allowed) sample_facts
-                  else
-                    sample_facts
-                in
-                
-                `Assoc (base @ [
-                  "samples", `List (List.map fact_to_json facts_to_include);
-                  "sample_count", `Int (List.length facts_to_include)
-                ])
-          ) predicates_with_samples in
-          let json = `Assoc [
-            "predicates", `List predicates_json;
-            "samples_per_predicate", `Int limit;
-            "total_samples_limit", `Int max_total_samples
-          ] in
-          json_response json
-    )
-    (fun () -> 
-      (* Cleanup: yield to allow any pending operations to complete *)
-      Lwt.pause ())
+  match samples with
+  | None ->
+      (* No samples - just return predicates with arity *)
+      Pack_backend.list_predicates_with_arity pack_store
+      >>= fun predicates_with_arity ->
+      let predicates_json = List.map (fun (name, arity) ->
+        `Assoc [
+          "name", `String name;
+          "arity", `Int arity
+        ]
+      ) predicates_with_arity in
+      let json = `Assoc [
+        "predicates", `List predicates_json
+      ] in
+      json_response json
+  | Some limit ->
+      (* Samples requested - return predicates with arity and sample facts *)
+      Pack_backend.list_predicates_with_arity_and_samples ~samples:limit pack_store
+      >>= fun predicates_with_samples ->
+      
+      let predicates_json = List.map (fun (name, arity, samples_opt) ->
+        let base = [
+          "name", `String name;
+          "arity", `Int arity
+        ] in
+        match samples_opt with
+        | None -> `Assoc base
+        | Some sample_facts ->
+            `Assoc (base @ [
+              "samples", `List (List.map fact_to_json sample_facts);
+              "sample_count", `Int (List.length sample_facts)
+            ])
+      ) predicates_with_samples in
+      let json = `Assoc [
+        "predicates", `List predicates_json;
+        "samples_per_predicate", `Int limit
+      ] in
+      json_response json
 
-(** Get all facts for a predicate with security limits *)
+(** Get all facts for a predicate with result limits *)
 let handle_query max_results pack_store predicate _req =
   (* Validate predicate name to prevent injection attacks *)
   match Query_safety.validate_predicate_name predicate with
   | Error err -> error_response (Query_safety.error_message err)
   | Ok () ->
-      (* Use Lwt.finalize to ensure resources are cleaned up *)
-      Lwt.finalize
-        (fun () ->
-          (* Apply limit to prevent OOM on large predicates *)
-          Pack_backend.query_all_limited ~limit:max_results pack_store predicate
-          >>= fun results ->
-          let json = `Assoc [
-            "predicate", `String predicate;
-            "facts", `List (List.map fact_to_json results);
-            "count", `Int (List.length results);
-            "limited", `Bool true;
-            "max_results", `Int max_results
-          ] in
-          json_response json
-        )
-        (fun () -> 
-          (* Cleanup: yield to allow any pending operations to complete *)
-          Lwt.pause ())
+      (* Apply limit to prevent OOM on large predicates *)
+      Pack_backend.query_all_limited ~limit:max_results pack_store predicate
+      >>= fun results ->
+      let json = `Assoc [
+        "predicate", `String predicate;
+        "facts", `List (List.map fact_to_json results);
+        "count", `Int (List.length results);
+        "limited", `Bool true;
+        "max_results", `Int max_results
+      ] in
+      json_response json
 
 (** Execute query with timeout wrapper - extracted to avoid duplication *)
 let execute_query_with_protection pack_store query offset limit_to_use =
@@ -205,23 +150,13 @@ let execute_query_with_protection pack_store query offset limit_to_use =
 
 (** Execute a query with joins *)
 let handle_query_language max_results pack_store req =
-  (* Security: check body size before reading *)
-  let max_body_size = 1024 * 1024 in  (* 1MB limit *)
-  match Dream.header req "Content-Length" with
-  | Some length_str when int_of_string_opt length_str |> Option.fold ~none:false ~some:(fun len -> len > max_body_size) ->
-      error_response (Printf.sprintf "Request body too large (max %d bytes)" max_body_size)
-  | _ ->
-      Dream.body req
-      >>= fun body ->
-      
-      (* Additional check on actual body size *)
-      if String.length body > max_body_size then
-        error_response (Printf.sprintf "Request body too large (max %d bytes)" max_body_size)
-      else
-        (* Parse JSON request *)
-        match Yojson.Safe.from_string body with
-        | exception _ -> error_response "Invalid JSON"
-        | json ->
+  Dream.body req
+  >>= fun body ->
+  
+  (* Parse JSON request *)
+  match Yojson.Safe.from_string body with
+  | exception _ -> error_response "Invalid JSON"
+  | json ->
       match json with
       | `Assoc fields ->
           (match List.assoc_opt "query" fields with
@@ -253,32 +188,26 @@ let handle_query_language max_results pack_store req =
                         | None -> Some max_results
                       in
                       
-                      (* Execute query with protection *)
+                      (* Execute query with timeout and result limits *)
                       execute_query_with_protection pack_store query valid_offset limit_to_use
                   ))
           | _ -> error_response "Missing 'query' field")
       | _ -> error_response "Expected JSON object"
 
 (** Start the API server *)
-let serve max_results max_concurrent pack_store port =
-  (* Limit concurrent requests to prevent FD exhaustion *)
-  let limiter = concurrency_limiter max_concurrent in
-  
+let serve max_results pack_store port =
   let router = Dream.router [
     Dream.get "/" handle_root;
     
     Dream.get "/version" handle_version;
     
-    Dream.get "/predicates" 
-      (limiter (handle_list_predicates pack_store));
+    Dream.get "/predicates" (handle_list_predicates pack_store);
     
-    Dream.get "/query/:predicate" 
-      (limiter (fun req ->
-        let predicate = Dream.param req "predicate" in
-        handle_query max_results pack_store predicate req));
+    Dream.get "/query/:predicate" (fun req ->
+      let predicate = Dream.param req "predicate" in
+      handle_query max_results pack_store predicate req);
     
-    Dream.post "/query"
-      (limiter (handle_query_language max_results pack_store));
+    Dream.post "/query" (handle_query_language max_results pack_store);
   ] in
   
   Dream.run ~interface:"0.0.0.0" ~port (Dream.logger @@ router)
