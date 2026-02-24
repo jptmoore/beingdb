@@ -86,8 +86,8 @@ let list_predicates ~samples store =
 (** Query single predicate with validation *)
 let query_predicate ~max_results store predicate =
   (* Validate predicate name *)
-  match Query_safety.validate_predicate_name predicate with
-  | Error err -> Lwt.return (Error (Query_safety.error_message err))
+  match Query_validation.validate_predicate_name predicate with
+  | Error err -> Lwt.return (Error (Query_validation.error_message err))
   | Ok () ->
       Model.query_predicate ~limit:max_results store predicate
       >>= fun facts ->
@@ -104,11 +104,11 @@ let query_predicate ~max_results store predicate =
 let execute_query ~max_results store query_str ~offset ~limit =
   (* Parse query *)
   match Query_parser.parse_query query_str with
-  | None -> Lwt.return (Error (Query_safety.error_message Query_safety.InvalidSyntax))
+  | None -> Lwt.return (Error (Query_validation.error_message Query_validation.InvalidSyntax))
   | Some query ->
       (* Validate query structure and parameters *)
-      match Query_safety.validate_query query offset limit with
-      | Error err -> Lwt.return (Error (Query_safety.error_message err))
+      match Query_validation.validate_query query offset limit with
+      | Error err -> Lwt.return (Error (Query_validation.error_message err))
       | Ok (valid_offset, valid_limit) ->
           (* Enforce max results limit *)
           let limit_to_use = 
@@ -124,7 +124,7 @@ let execute_query ~max_results store query_str ~offset ~limit =
           (* Execute with timeout *)
           Lwt.catch
             (fun () ->
-              Lwt_unix.with_timeout Query_safety.Config.query_timeout (fun () ->
+              Lwt_unix.with_timeout Query_validation.Config.query_timeout (fun () ->
                 if use_streaming then
                   let offset_val = Option.value valid_offset ~default:0 in
                   let limit_val = Option.get limit_to_use in
@@ -151,7 +151,7 @@ let execute_query ~max_results store query_str ~offset ~limit =
             (function
               | Lwt_unix.Timeout ->
                   let msg = Printf.sprintf "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints." 
-                    Query_safety.Config.query_timeout in
+                    Query_validation.Config.query_timeout in
                   Lwt.return (Error msg)
               | exn ->
                   Lwt.return (Error (Printf.sprintf "Query error: %s" (Printexc.to_string exn)))

@@ -206,13 +206,27 @@ let test_execute_query_pagination () =
   Lwt_main.run (
     let open Lwt.Syntax in
     let query = "created(Artist, Work)" in
-    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:(Some 0) ~limit:(Some 1) in
+    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:(Some 1) ~limit:(Some 1) in
     
     match result with
     | Ok json ->
-        let results = Yojson.Safe.Util.member "results" json in
-        let results_list = Yojson.Safe.Util.to_list results in
+        let open Yojson.Safe.Util in
+        
+        (* Check results *)
+        let results = member "results" json in
+        let results_list = to_list results in
         Alcotest.(check bool) "respects limit" true (List.length results_list <= 1);
+        
+        (* Check pagination metadata *)
+        let count = member "count" json |> to_int in
+        let total = member "total" json |> to_int in
+        let offset = member "offset" json |> to_int in
+        let limit = member "limit" json |> to_int in
+        
+        Alcotest.(check int) "count matches results" (List.length results_list) count;
+        Alcotest.(check bool) "total >= count" true (total >= count);
+        Alcotest.(check int) "offset is 1" 1 offset;
+        Alcotest.(check int) "limit is 1" 1 limit;
         
         cleanup test_dir;
         Lwt.return ()
@@ -281,6 +295,42 @@ let test_execute_query_max_results () =
         Alcotest.fail ("Query failed: " ^ err)
   )
 
+(** Test: execute_query JSON structure without pagination *)
+let test_execute_query_json_structure () =
+  let (store, test_dir) = create_test_pack "json_structure" in
+  
+  Lwt_main.run (
+    let open Lwt.Syntax in
+    let query = "created(Artist, Work)" in
+    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:None ~limit:None in
+    
+    match result with
+    | Ok json ->
+        let open Yojson.Safe.Util in
+        
+        (* Verify required fields exist *)
+        let variables = member "variables" json |> to_list in
+        let results = member "results" json |> to_list in
+        let count = member "count" json |> to_int in
+        let total = member "total" json |> to_int in
+        
+        (* Verify basic structure *)
+        Alcotest.(check bool) "has variables" true (List.length variables > 0);
+        Alcotest.(check bool) "has results" true (List.length results > 0);
+        Alcotest.(check int) "count matches results" (List.length results) count;
+        Alcotest.(check bool) "total >= count" true (total >= count);
+        
+        (* When no explicit pagination, limit is set to max_results (safety feature) *)
+        let limit = member "limit" json |> to_int in
+        Alcotest.(check int) "limit equals max_results" 100 limit;
+        
+        cleanup test_dir;
+        Lwt.return ()
+    | Error err ->
+        cleanup test_dir;
+        Alcotest.fail ("Query failed: " ^ err)
+  )
+
 let () =
   Alcotest.run "BeingDB Controller" [
     "List Predicates", [
@@ -297,6 +347,7 @@ let () =
       Alcotest.test_case "execute_query join" `Quick test_execute_query_join;
       Alcotest.test_case "execute_query pagination" `Quick test_execute_query_pagination;
       Alcotest.test_case "execute_query max_results" `Quick test_execute_query_max_results;
+      Alcotest.test_case "execute_query JSON structure" `Quick test_execute_query_json_structure;
     ];
     "Validation", [
       Alcotest.test_case "execute_query empty" `Quick test_execute_query_empty;
