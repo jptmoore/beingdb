@@ -247,5 +247,4 @@ curl -X POST http://localhost:8080/query \
 ## Further Reading
 
 - [API Reference](api.md)
-- [Deployment Guide](deployment.md)
 - [Installation Guide](installation.md)

@@ -389,5 +389,4 @@ curl -X POST http://localhost:8080/query \
 ## Further Reading
 
 - [Query Language](query-language.md)
-- [Deployment Guide](deployment.md)
 - [Installation Guide](installation.md)

@@ -2,13 +2,7 @@
 
 This guide walks you through setting up BeingDB and running your first queries.
 
-## Prerequisites
-
-- **OCaml 5.1+** and **opam** package manager
-- **Git** for facts version control
-- **Docker** (optional, for production deployment)
-
-See [Installation Guide](installation.md) for detailed setup instructions.
+**First time?** Install BeingDB following the [Installation Guide](installation.md).
 
 ## Repository Structure
 
@@ -46,26 +40,6 @@ shown_in(faded_wallpaper, ica_london_2010).
 ```
 
 **Complete example repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
-
-## Quick Install
-
-**Linux/macOS:**
-```bash
-git clone https://github.com/jptmoore/beingdb.git
-cd beingdb
-opam install . --deps-only -y
-dune build --release
-dune install
-```
-
-**Verify installation:**
-```bash
-beingdb-serve --help
-beingdb-compile --help
-beingdb-clone --help
-```
-
-For other platforms or troubleshooting, see [Installation Guide](installation.md).
 
 ## Local Development Workflow
 
@@ -275,60 +249,4 @@ beingdb-serve --pack ./pack_store &
 curl http://localhost:8080/predicates
 ```
 
-For zero-downtime production updates, see [Deployment Guide](deployment.md).
 
-## Development Tips
-
-**Test queries locally:**
-Use a REST client like [httpie](https://httpie.io/):
-```bash
-http POST :8080/query query='created(Artist, Work)' limit=5
-```
-
-**Enable debug logging:**
-BeingDB logs to stdout. Redirect to a file:
-```bash
-beingdb-serve --pack ./pack_store > server.log 2>&1 &
-```
-
-**Validate facts before compiling:**
-Check your predicate files for syntax errors:
-```bash
-# Each fact should end with '.'
-# Use consistent arity per predicate
-grep -r '^\w' predicates/
-```
-
-**Run tests:**
-```bash
-cd beingdb
-dune test
-```
-
-## Next Steps
-
-- **[Query Language Guide](query-language.md)** - Learn advanced query patterns
-- **[API Reference](api.md)** - Complete HTTP API documentation  
-- **[Deployment Guide](deployment.md)** - Production deployment with Docker
-- **[Installation Guide](installation.md)** - Platform-specific installation
-
-## Common Issues
-
-**"Pack_error: Invalid_layout"**
-- Pack store was compiled with a different Irmin version
-- Solution: Recompile pack store with current BeingDB installation
-
-**"Connection refused"**
-- Server not running or wrong port
-- Check: `curl http://localhost:8080/`
-
-**"Query timeout"**
-- Query exceeded 5 second limit
-- Solution: Add pagination or make query more selective with constants
-
-**Empty results**
-- Check predicates exist: `curl http://localhost:8080/predicates`
-- Verify fact format in Git repository
-- Check case sensitivity (predicates are lowercase)
-
-For more troubleshooting, see [Deployment Guide](deployment.md#troubleshooting).

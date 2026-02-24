@@ -42,8 +42,8 @@ curl -X POST http://localhost:8080/query -d '{"query": "created(Artist, Work)"}'
 
 ## Documentation
 
-- **[Getting Started](docs/getting-started.md)** - Complete tutorial with examples
 - **[Installation](docs/installation.md)** - Platform-specific setup
+- **[Getting Started](docs/getting-started.md)** - Complete tutorial with examples
 - **[Query Language](docs/query-language.md)** - Patterns, joins, optimization
 - **[API Reference](docs/api.md)** - HTTP API documentation
 - **[Internals](docs/internals.md)** - Storage architecture and encoding format
