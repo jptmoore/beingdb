@@ -122,7 +122,7 @@ let count_streaming store query =
             (* Found a valid result, increment count *)
             incr count;
             (* Abort if count gets too large (Cartesian product protection) *)
-            if !count > Query_safety.Config.max_intermediate_results then begin
+            if !count > Query_validation.Config.max_intermediate_results then begin
               aborted := true;
               Lwt.return_unit
             end else
@@ -150,7 +150,7 @@ let count_streaming store query =
     
     count_patterns [] optimized_query.patterns
     >|= fun () ->
-    if !aborted then Query_safety.Config.max_intermediate_results else !count
+    if !aborted then Query_validation.Config.max_intermediate_results else !count
 
 (** Stream join with early cutoff for paginated queries *)
 let execute_streaming store query ~offset ~limit =
@@ -182,7 +182,7 @@ let execute_streaming store query ~offset ~limit =
       if List.length !collected >= limit then
         Lwt.return_unit
       (* Abort if we've processed too many intermediate results (Cartesian product protection) *)
-      else if !processed > Query_safety.Config.max_intermediate_results then
+      else if !processed > Query_validation.Config.max_intermediate_results then
         Lwt.return_unit
       else
         (* Yield to allow timeout to fire *)
@@ -224,7 +224,7 @@ let execute_streaming store query ~offset ~limit =
     >|= fun () ->
     { bindings = List.rev !collected; variables = optimized_query.variables }
 
-(** Execute query: returns all results, pagination handled by result_to_json *)
+(** Execute query: returns all results *)
 let execute store query =
   (* Optimize query by reordering patterns for selectivity *)
   let optimized_query = optimize_query query in
@@ -257,7 +257,7 @@ let execute store query =
         | [] ->
             incr result_count;
             (* Abort if we've accumulated too many results (Cartesian product protection) *)
-            if !result_count > Query_safety.Config.max_intermediate_results then begin
+            if !result_count > Query_validation.Config.max_intermediate_results then begin
               aborted := true;
               Lwt.return []
             end else
@@ -286,44 +286,3 @@ let execute store query =
     execute_patterns [] optimized_query.patterns
     >|= fun all_bindings ->
     { bindings = all_bindings; variables = optimized_query.variables }
-
-(** Format result as JSON with optional pagination *)
-let result_to_json ?offset ?limit result =
-  let total_count = List.length result.bindings in
-  
-  (* Apply pagination *)
-  let offset_val = Option.value offset ~default:0 in
-  let limit_val = Option.value limit ~default:total_count in
-  
-  let paginated_bindings = 
-    result.bindings
-    |> (fun l -> List.filteri (fun i _ -> i >= offset_val) l)
-    |> (fun l -> List.filteri (fun i _ -> i < limit_val) l)
-  in
-  
-  let bindings_json = List.map (fun binding ->
-    let pairs = List.map (fun (var, value) ->
-      (var, `String value)
-    ) binding in
-    `Assoc pairs
-  ) paginated_bindings in
-  
-  let response = [
-    "variables", `List (List.map (fun v -> `String v) result.variables);
-    "results", `List bindings_json;
-    "count", `Int (List.length paginated_bindings);
-    "total", `Int total_count;
-  ] in
-  
-  (* Add pagination metadata if used *)
-  let response = 
-    if offset <> None || limit <> None then
-      response @ [
-        "offset", `Int offset_val;
-        "limit", `Int limit_val;
-      ]
-    else
-      response
-  in
-  
-  `Assoc response

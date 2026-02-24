@@ -557,37 +557,6 @@ let test_pagination () =
       2
       (List.length paginated_results);
     
-    (* Test pagination with result_to_json *)
-    (match Beingdb.Query_parser.parse_query "created(Artist, Work)" with
-    | None -> Lwt.fail_with "Failed to parse query"
-    | Some query ->
-        Beingdb.Query_engine.execute store query
-        >>= fun result ->
-        
-        (* Check total count *)
-        Alcotest.(check int)
-          "pagination: total results is 5"
-          5
-          (List.length result.bindings);
-        
-        (* Format with pagination *)
-        let json = Beingdb.Query_engine.result_to_json ~offset:1 ~limit:2 result in
-        
-        (* Extract fields from JSON *)
-        let open Yojson.Safe.Util in
-        let count = json |> member "count" |> to_int in
-        let total = json |> member "total" |> to_int in
-        let offset = json |> member "offset" |> to_int in
-        let limit = json |> member "limit" |> to_int in
-        
-        Alcotest.(check int) "pagination: JSON count is 2" 2 count;
-        Alcotest.(check int) "pagination: JSON total is 5" 5 total;
-        Alcotest.(check int) "pagination: JSON offset is 1" 1 offset;
-        Alcotest.(check int) "pagination: JSON limit is 2" 2 limit;
-        
-        Lwt.return ())
-    >>= fun () ->
-    
     (* Cleanup *)
     let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
     let _ = Unix.system cmd in
@@ -712,9 +681,9 @@ let test_arity_validation () =
     Lwt.return ()
   end
 
-(** Test Query_safety validation *)
-let test_query_safety_validation () =
-  let open Beingdb.Query_safety in
+(** Test Query_validation *)
+let test_query_validation () =
+  let open Beingdb.Query_validation in
   
   let query = {
     Beingdb.Query_parser.patterns = [
@@ -782,8 +751,8 @@ let test_query_safety_validation () =
       Alcotest.(check (option int)) "join limit" (Some 20) limit
   | _ -> Alcotest.fail "Expected Ok for valid join query")
 
-let test_query_safety_config () =
-  let open Beingdb.Query_safety.Config in
+let test_query_validation_config () =
+  let open Beingdb.Query_validation.Config in
   
   (* Sanity checks on configuration values *)
   Alcotest.(check bool) "timeout positive" true (query_timeout > 0.0);
@@ -792,8 +761,8 @@ let test_query_safety_config () =
   Alcotest.(check bool) "max results reasonable" true 
     (max_intermediate_results > 100 && max_intermediate_results < 100_000)
 
-let test_query_safety_errors () =
-  let open Beingdb.Query_safety in
+let test_query_validation_errors () =
+  let open Beingdb.Query_validation in
   
   (* Test error messages are non-empty and descriptive *)
   let msg1 = error_message (InvalidOffset (-5)) in
@@ -815,7 +784,7 @@ let test_query_safety_errors () =
   Alcotest.(check bool) "InvalidPredicateName empty message exists" true (String.length msg6 > 0)
 
 let test_predicate_name_validation () =
-  let open Beingdb.Query_safety in
+  let open Beingdb.Query_validation in
   
   (* Valid predicate names *)
   let valid_query_simple = {
@@ -1301,9 +1270,9 @@ let () =
       Alcotest.test_case "detect mixed arities" `Quick test_arity_validation;
     ];
     "Query Safety", [
-      Alcotest.test_case "validation" `Quick test_query_safety_validation;
-      Alcotest.test_case "configuration values" `Quick test_query_safety_config;
-      Alcotest.test_case "error messages" `Quick test_query_safety_errors;
+      Alcotest.test_case "validation" `Quick test_query_validation;
+      Alcotest.test_case "configuration values" `Quick test_query_validation_config;
+      Alcotest.test_case "error messages" `Quick test_query_validation_errors;
       Alcotest.test_case "predicate name validation" `Quick test_predicate_name_validation;
     ];
     "Encoding", [
