@@ -10,13 +10,12 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      # Mount snapshots directory. Use symlink './data/snapshots/current' to point to active snapshot
-      # This allows zero-downtime updates by switching the symlink atomically
+      # Mount pack_store directory directly
       # Note: Not :ro because Irmin needs to write lock files and metadata
-      - ./data/snapshots:/data/snapshots
+      - ./pack_store:/data/pack_store
     environment:
-      # Path to pack snapshot (symlink 'current' enables easy updates)
-      SNAPSHOT_PATH: /data/snapshots/current
+      # Path to pack snapshot
+      SNAPSHOT_PATH: /data/pack_store
       PORT: 8080
       MAX_RESULTS: 5000
     restart: unless-stopped
