@@ -74,23 +74,23 @@ let validate_predicate_name name =
   else
     Ok ()
 
-(** Validate all predicate names in query *)
+(** Validate all predicate names in query (including inside nested
+    optional/alternative/negation groups). *)
 let validate_predicate_names (query : Query_ast.query) =
   let rec check = function
     | [] -> Ok ()
-    | Query_ast.Pattern { predicate; _ } :: rest -> (
+    | (predicate, _) :: rest -> (
         match validate_predicate_name predicate with
         | Error _ as e -> e
         | Ok () -> check rest)
-    | _ :: rest -> check rest
   in
-  check query.clauses
+  check (Query_ast.all_patterns query.clauses)
 
-(** A query must contain at least one predicate pattern; comparisons alone
-    have no facts to bind variables from. *)
+(** A query must contain at least one predicate pattern (anywhere,
+    including nested inside optional/alternative/negation groups) --
+    comparisons alone have no facts to bind variables from. *)
 let validate_has_pattern (query : Query_ast.query) =
-  if List.exists (function Query_ast.Pattern _ -> true | _ -> false) query.clauses then Ok ()
-  else Error InvalidSyntax
+  if Query_ast.all_patterns query.clauses <> [] then Ok () else Error InvalidSyntax
 
 (** Validate query structure and parameters *)
 let validate_query query offset limit =

@@ -264,7 +264,14 @@ and semantics. In summary:
 
 - `lib/query_ast.ml` defines the structured AST (`term`, `clause`,
   `comparison_operator`) produced by `lib/query_parser.ml`; comparisons
-  are never re-interpreted from text during execution.
+  are never re-interpreted from text during execution. `clause` also
+  has three *group* variants -- `Optional`, `Alternatives`, and
+  `Not_exists`, each holding a nested `clause list` (or, for
+  `Alternatives`, a `clause list list`, one per branch) -- used to
+  express the expressive query language's `optional`/`either`-`or`/`not`
+  (see section 6). The core predicate-pattern parser never produces
+  these directly; only `Dsl_lower` does, so the core language's surface
+  syntax is unchanged.
 - `lib/query_planner.ml` is pure (it never touches the store): it
   collects every `Compare`/`Between` clause that constrains a variable
   with a literal (normalizing `literal OP variable` to `variable OP'
@@ -281,6 +288,12 @@ and semantics. In summary:
     equality index, so joins are index lookups too, not nested full
     scans);
   - `Full_scan` otherwise.
+
+  A group clause plans its nested clause list(s) recursively, with a
+  *copy* of the enclosing scope's bound-variable set: variables bound
+  only inside an `Optional`/`Alternatives`/`Not_exists` group never leak
+  out to the enclosing scope's planning decisions, a deliberately
+  conservative safety choice.
 - `lib/query_engine.ml` executes the plan: for every candidate fact
   fetched via the chosen access method, it re-verifies **every**
   argument position (constants, joined variables, and range/equality
@@ -291,19 +304,96 @@ and semantics. In summary:
   drive an index, such as comparisons between two joined variables) is
   re-evaluated against the final bindings as a post-filter; the first
   clause that raises a type-mismatch aborts the whole query with that
-  error.
+  error. Group steps execute as: `Optional_step` -- a left join (falls
+  through with the row unchanged if the nested group yields no
+  matches); `Alternatives_step` -- a union of every branch's
+  contributions; `Not_exists_step` -- negation-as-failure (the row
+  passes through unchanged only if the nested group yields *no*
+  matches).
 - `Query_engine.explain : Query_ast.query -> string` renders the chosen
-  access method per pattern, e.g.:
+  access method per pattern (recursively, with indentation, for nested
+  groups), e.g.:
 
   ```
   opened: range_index(position=1, lower=2019-01-01, upper=exclusive:2020-01-01)
   artist: full_scan
+  optional:
+    nationality: full_scan
   ```
 
-  There is no public `/explain` HTTP endpoint, but the internal
-  representation is available to any caller (and to tests).
+  It is available both internally (to tests) and via `POST /query` with
+  `"action": "explain"` (either language -- see section 6 and
+  [query-language.md](query-language.md)).
 
-## 6. Schema inference
+## 6. Expressive query language and query environment
+
+The expressive query language (`find`/`where`/...) is a *surface*
+syntax that lowers into the same `Query_ast.query` the core language
+produces, plus a thin wrapper (`Core_query.t`) carrying the
+post-execution directives the core AST has no concept of: `projection`,
+`distinct`, `order_by`, `limit`, `offset`. There is exactly one planner
+and executor underneath either language.
+
+Pipeline, module by module:
+
+- `lib/clause_parser.ml` -- leaf-clause parsing (a predicate pattern, a
+  comparison, or a `between`), factored out of `lib/query_parser.ml` so
+  both the core parser and the expressive parser accept identical
+  literal/clause syntax with no duplication.
+- `lib/surface_ast.ml` -- the parsed form of the expressive syntax,
+  before validation: leaf clauses carry a source line number (for error
+  messages), alongside `Optional`/`Alternatives`/`Negation` group
+  variants.
+- `lib/dsl_parser.ml` -- a line-oriented parser for `find`/`where`/
+  `optional`/`either`/`or`/`not`/`order by`/`limit`/`offset`, producing
+  a `Surface_ast.surface_query`.
+- `lib/query_environment.ml` -- dataset-aware predicate metadata used
+  for validation and introspection, built deterministically from the
+  compiled store's per-predicate manifests (section 7) via
+  `Pack_backend.list_predicates`/`get_manifest`/`sample_facts` -- no
+  separate cache or user-authored schema. Includes a fingerprint:
+  `"md5:" ^ Digest.to_hex (Digest.string canonical)` over sorted
+  predicate names, arities, observed argument types, and the
+  expressive-language version string (`Query_environment.language_version`,
+  currently `"beingdb-dsl/1"`) -- MD5 for the same reason fact IDs use
+  it (deterministic, dependency-free, not for adversarial contexts), not
+  a cryptographic guarantee.
+- `lib/predicate_suggest.ml` -- deterministic "did you mean" suggestions
+  for an unknown predicate name (normalized-name equality, Levenshtein
+  edit distance, underscore-token overlap, arity compatibility) -- no
+  embeddings or external calls.
+- `lib/dsl_lower.ml` -- validates a `Surface_ast.surface_query` against
+  a `Query_environment.t` and, if there are no errors, lowers it into a
+  `Core_query.t`. Collects *every* problem found (not just the first).
+  Checks: unknown predicates (with suggestions), arity, literal-vs-
+  observed-type mismatches (a literal type not seen at that argument
+  position anywhere in the compiled data is a hard error; a
+  heterogeneous position where the literal matches one of several
+  observed types is only a warning), unbound `find`/`order by`
+  variables, and "safe negation" (every variable used inside a `not`
+  block must be bound by some positive clause elsewhere in the query --
+  otherwise its value would be unconstrained). It does not attempt full
+  cross-variable type inference for `Compare`/`Between` between two
+  joined variables; that is still caught at execution time by
+  `Query_engine`'s existing type-checked comparison evaluator, exactly
+  as for the core language.
+- `lib/validation_error.ml` -- the structured error/warning type shared
+  by validation failures, with `to_json`/`warning_to_json` for the HTTP
+  and REPL surfaces.
+- `lib/core_query.ml` -- `Core_query.apply` runs the post-execution
+  pipeline over a raw `Query_engine.result`: order by full binding
+  (`Value.order_compare`, falling back to canonical-string comparison
+  for unordered types so `order by` always produces *some* deterministic
+  order), project to the requested variables, `distinct`-dedupe on the
+  projected tuple (via `Value.equal`, across the whole result set, not
+  just adjacent rows), then offset/limit.
+- `lib/controller.ml`'s `run_query` is the single dispatch point for
+  both languages and all three actions (`execute`/`validate`/`explain`),
+  used identically by `Api.ml` (`POST /query`) and `Cli_repl.ml` (the
+  REPL's query commands) -- neither surface re-implements any part of
+  this pipeline.
+
+## 7. Schema inference
 
 No user-authored schema is required or supported. `lib/manifest.ml`
 computes, purely from the compiled facts for one predicate (during
@@ -326,7 +416,7 @@ Compile-time warnings are emitted (to stderr, non-fatal) for mixed
 argument types at a position. Inconsistent arity within one predicate
 file is a fatal compile error, since arity is fixed per predicate.
 
-## 7. Known limitations
+## 8. Known limitations
 
 - Range scans are correct but not asymptotically optimal: they enumerate
   every distinct index key in the relevant type branch(es) rather than

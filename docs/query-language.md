@@ -1,7 +1,20 @@
 # BeingDB Query Language
 
-BeingDB uses a typed, Prolog-style query language for pattern matching,
-joins, and comparisons over facts.
+BeingDB has two query languages that share one planner and executor:
+
+- The **core query language**: a typed, Prolog-style pattern language
+  (predicate patterns, joins, comparisons). This is the low-level model
+  everything else compiles down to. Documented first, below.
+- The **expressive query language**: a line-oriented `find`/`where`
+  syntax for programmatic, interactive, and LLM/RAG use, adding
+  projection, `optional`, `either`/`or`, `not`, `order by`, `limit`,
+  `offset`, `distinct`, and dataset-aware validation on top of the same
+  core patterns and comparisons. See
+  [Expressive Query Language](#expressive-query-language) below.
+
+Both languages lower into the same structured AST and run through the
+same planner and executor -- there is no separate execution path for
+either.
 
 ## Facts syntax
 
@@ -277,13 +290,18 @@ Built-in safety limits prevent runaway queries:
 - **Intermediate results:** 10,000 row limit during joins.
 - **Result limit:** configurable via `MAX_RESULTS` (default 5000).
 
-## What BeingDB does NOT support
+## What the core query language does NOT support
 
-- **Negation:** no `NOT` operator.
-- **Aggregation:** no `COUNT`, `SUM`, `GROUP BY`.
-- **Arithmetic:** no `Y = X + 1`.
-- **Recursion:** no transitive closure or path queries.
-- **Disjunction:** no OR operator (use separate queries).
+The patterns/joins/comparisons above are the whole core language. It has
+no projection, ordering, negation, disjunction, or deduplication of its
+own -- those are provided by the expressive query language (below),
+which lowers into extra clause shapes (`optional`, `either`/`or`, `not`)
+that the *same* core AST, planner, and executor already understand.
+
+- **Aggregation:** no `COUNT`, `SUM`, `GROUP BY`, in either language.
+- **Arithmetic:** no `Y = X + 1`, in either language.
+- **Recursion:** no transitive closure or path queries, in either
+  language.
 - **Functions:** no computed values or transformations.
 - **Uncertain dates or date intervals.**
 - **A user-authored schema** -- types are always inferred, never
@@ -369,6 +387,253 @@ curl -X POST http://localhost:8080/query \
 4. **Keep predicates simple** -- one relationship type per predicate.
 5. **Consistent arity** -- all facts for a predicate must have the same
    number of arguments.
+
+## Expressive Query Language
+
+The expressive query language is a line-oriented `find`/`where` syntax
+intended for programmatic use, interactive querying, and LLM-driven RAG
+workflows. It reuses exactly the same predicate patterns, literals, and
+comparisons documented above, and lowers into the same core AST that the
+one planner and executor already run -- it adds projection, optional
+matches, alternatives, negation, ordering, deduplication, and pagination,
+plus dataset-aware validation (unknown predicates, arity, literal type
+checks) with helpful error messages.
+
+### Syntax
+
+```
+find [distinct] Var, Var, ...
+where
+  <clause>
+  <clause>
+  optional
+    <clause>*
+  either
+    <clause>*
+  or
+    <clause>*
+  not
+    <clause>*
+order by Var [ascending|descending], ...
+limit N
+offset N
+```
+
+- `find` lists the variables to project, in order; `distinct` deduplicates
+  the projected rows.
+- `where` introduces the clause list: predicate patterns, comparisons, and
+  `between ... and ...`, exactly as in the core language.
+- `optional` is a left join: clauses inside it may fail to match without
+  discarding the row -- unmatched variables come back unbound (`null` in
+  JSON).
+- `either` / `or` is disjunction: at least one branch must match; each
+  branch's bindings contribute a row (a union, not a join, across
+  branches).
+- `not` is negation-as-failure: the enclosing row is kept only if the
+  nested clauses produce *no* matches. Every variable used inside `not`
+  must also be bound by a positive clause elsewhere in the query (a
+  variable that is *only* ever mentioned inside a negation is rejected as
+  an `unsafe_negation` validation error, since its value would otherwise
+  be unconstrained).
+- `order by`, `limit`, and `offset` apply to the final, projected result
+  set (after `optional`/`either`/`not` have been resolved), not to any one
+  clause.
+- Blank lines and lines starting with `%` or `#` are ignored.
+- Year literals need the `@` prefix (`@1972`), exactly as in the core
+  language -- a bare `1972` is an integer, not a year, and comparing it
+  against a `year`-typed argument is a validation error.
+
+### Example
+
+```
+find Artist, Work, Nationality
+where
+  artist(Artist)
+  created(Artist, Work)
+  optional
+    nationality(Artist, Nationality)
+  not
+    withdrawn(Work)
+order by Artist ascending
+limit 20
+```
+
+### More examples
+
+Disjunction with `either`/`or` -- a row is kept if any branch matches:
+
+```
+find Work
+where
+  either
+    uses_medium(Work, video)
+  or
+    uses_medium(Work, video_installation)
+```
+
+`distinct` to deduplicate the projected rows:
+
+```
+find distinct Medium
+where
+  uses_medium(_, Medium)
+```
+
+A comparison alongside a join, ordered and paginated:
+
+```
+find Work, Year
+where
+  created_in_year(Work, Year)
+  Year >= 1980
+order by Year descending
+limit 10
+offset 0
+```
+
+### Validation
+
+Every expressive query is validated against a **query environment**
+built from the compiled store's inferred per-predicate schema (arity,
+per-argument-position observed types, fact counts, and a few bounded
+examples) -- no user-authored schema is read or required. Validation
+reports *every* problem found, not just the first, as a list of
+structured errors:
+
+| Error code | Meaning |
+|---|---|
+| `syntax_error` | Malformed `find`/`where`/clause/`order by`/`limit`/`offset` syntax. |
+| `unknown_predicate` | Predicate not found in the store; includes ranked name suggestions (edit distance + token overlap, no embeddings). |
+| `arity_mismatch` | Predicate used with the wrong number of arguments. |
+| `literal_type_mismatch` | A literal's type never occurs at that argument position in the compiled data. |
+| `unbound_projection` | A `find` variable never appears in `where`. |
+| `unbound_order_variable` | An `order by` variable never appears in `where`. |
+| `unsafe_negation` | A `not` block uses a variable not bound by any positive clause elsewhere in the query. |
+
+A query whose argument position has *more than one* observed type (a
+heterogeneous column) but whose literal matches one of them is not an
+error -- it produces a `heterogeneous_position` **warning** instead,
+since the query is well-formed but only targets part of that column.
+
+### HTTP: `POST /query` with `language` and `action`
+
+The same endpoint used for the core language accepts two additional
+optional fields:
+
+- `"language"`: `"core"` (default) or `"dsl"`.
+- `"action"`: `"execute"` (default), `"validate"` (check without
+  running), or `"explain"` (show the chosen access plan without running).
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "language": "dsl",
+    "query": "find Artist, Work\nwhere\n  artist(Artist)\n  created(Artist, Work)\nlimit 10"
+  }'
+```
+
+A successful `execute` response looks like the core language's, plus any
+advisory `warnings`:
+
+```json
+{
+  "variables": ["Artist", "Work"],
+  "results": [
+    { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
+  ],
+  "count": 1,
+  "warnings": []
+}
+```
+
+A query that fails validation (for either `execute` or `validate`)
+returns HTTP 400 with the structured error list directly as the response
+body (not wrapped in an `"error"` field):
+
+```json
+{
+  "valid": false,
+  "errors": [
+    { "code": "unknown_predicate", "message": "Unknown predicate 'artst'; did you mean: artist?", "line": 2, "predicate": "artst", "suggestions": ["artist"] }
+  ],
+  "warnings": []
+}
+```
+
+`action: "explain"` returns the projection, ordering, limit/offset, and
+the plan text, without executing the query.
+
+### Predicate introspection: `GET /predicates?detailed=true`
+
+Returns each predicate's argument type signature, fact count, and a few
+bounded examples, plus the query environment's fingerprint:
+
+```bash
+curl 'http://localhost:8080/predicates?detailed=true&q=creat'
+```
+
+```json
+{
+  "predicates": [
+    {
+      "name": "created",
+      "arity": 2,
+      "count": 3,
+      "arguments": [
+        { "position": 0, "types": ["atom"] },
+        { "position": 1, "types": ["atom"] }
+      ],
+      "examples": [[{ "type": "atom", "value": "tina_keane" }, { "type": "atom", "value": "she" }]]
+    }
+  ],
+  "fingerprint": "md5:3aa13057aa16d1340adbd77e02d266ab",
+  "language_version": "beingdb-dsl/1"
+}
+```
+
+`q` filters by case-insensitive substring match on the predicate name;
+`names` filters to an exact comma-separated set of names. The
+fingerprint changes whenever the compiled predicates' shape or the
+expressive-language version changes -- useful for cache invalidation in
+LLM prompts built from this introspection data.
+
+### REPL
+
+The REPL (`beingdb repl` / `beingdb-repl`) has three modes, switched with
+`:core`, `:dsl`, and `:auto` (the default): `:auto` detects the
+expressive language when a query starts with `find`, and otherwise uses
+the core language. In `:dsl` mode (or when auto-detected as `dsl`), the
+REPL keeps reading lines until a blank line finishes the query, since the
+expressive syntax spans multiple lines.
+
+```
+beingdb> :environment
+predicates: 6
+fingerprint: md5:3aa13057aa16d1340adbd77e02d266ab
+language_version: beingdb-dsl/1
+mode: auto
+beingdb> :describe created
+created/2  (3 facts)
+  arg 0: atom
+  arg 1: atom
+  examples:
+    created(tina_keane, she)
+beingdb> find Work
+where
+  created(_, Work)
+limit 3
+
+{
+  "variables": [ "Work" ],
+  "results": [ { "Work": { "type": "atom", "value": "she" } } ],
+  "count": 1,
+  "warnings": []
+}
+```
+
+`:validate` reads a query the same way (blank line to finish) and reports
+validation results without executing it.
 
 ## Further reading
 

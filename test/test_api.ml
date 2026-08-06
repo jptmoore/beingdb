@@ -434,6 +434,60 @@ let test_query_missing_predicate () =
     Lwt.return ()
   )
 
+(** Test: POST /query with language=dsl, action=execute *)
+let test_post_query_dsl_execute () =
+  let pack, test_dir = create_test_pack "post_dsl_execute" in
+  let app = create_app pack 1000 in
+  let body = {|{"query":"find Artist\nwhere\n  artist(Artist)\n","language":"dsl"}|} in
+  let request = Dream.request ~target:"/query" ~method_:`POST body in
+  let response = Dream.test app request in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* resp_body = Dream.body response in
+     let json = Yojson.Safe.from_string resp_body in
+     let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
+     Alcotest.(check int) "2 artists" 2 (List.length results);
+     let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+     let _ = Unix.system cmd in
+     Lwt.return ())
+
+(** Test: POST /query with language=dsl, action=validate, unknown predicate *)
+let test_post_query_dsl_validate_invalid () =
+  let pack, test_dir = create_test_pack "post_dsl_validate" in
+  let app = create_app pack 1000 in
+  let body = {|{"query":"find X\nwhere\n  artst(X)\n","language":"dsl","action":"validate"}|} in
+  let request = Dream.request ~target:"/query" ~method_:`POST body in
+  let response = Dream.test app request in
+  Alcotest.(check int) "status 400" 400 (Dream.status_to_int (Dream.status response));
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* resp_body = Dream.body response in
+     let json = Yojson.Safe.from_string resp_body in
+     Alcotest.(check bool) "valid false" false Yojson.Safe.Util.(json |> member "valid" |> to_bool);
+     let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+     let _ = Unix.system cmd in
+     Lwt.return ())
+
+(** Test: GET /predicates?detailed=true includes schema + fingerprint *)
+let test_list_predicates_detailed () =
+  let pack, test_dir = create_test_pack "predicates_detailed" in
+  let app = create_app pack 1000 in
+  let response = Dream.test app (Dream.request ~target:"/predicates?detailed=true" "") in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* body = Dream.body response in
+     let json = Yojson.Safe.from_string body in
+     let open Yojson.Safe.Util in
+     let fingerprint = json |> member "fingerprint" |> to_string in
+     Alcotest.(check bool) "fingerprint is md5-tagged" true (String.length fingerprint > 4 && String.sub fingerprint 0 4 = "md5:");
+     let predicates = json |> member "predicates" |> to_list in
+     let created = List.find (fun p -> p |> member "name" |> to_string = "created") predicates in
+     let arguments = created |> member "arguments" |> to_list in
+     Alcotest.(check int) "created has 2 argument positions" 2 (List.length arguments);
+     let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+     let _ = Unix.system cmd in
+     Lwt.return ())
+
 let () =
   Alcotest.run "BeingDB API" [
     "Basic Endpoints", [
@@ -443,6 +497,7 @@ let () =
     "List Predicates", [
       Alcotest.test_case "GET /predicates" `Quick test_list_predicates;
       Alcotest.test_case "GET /predicates?samples=5" `Quick test_list_predicates_with_samples;
+      Alcotest.test_case "GET /predicates?detailed=true" `Quick test_list_predicates_detailed;
     ];
     "Single Predicate Query", [
       Alcotest.test_case "GET /query/:predicate" `Quick test_query_single_predicate;
@@ -453,6 +508,10 @@ let () =
       Alcotest.test_case "POST /query simple" `Quick test_post_query_simple;
       Alcotest.test_case "POST /query join" `Quick test_post_query_join;
       Alcotest.test_case "POST /query pagination" `Quick test_post_query_pagination;
+    ];
+    "Expressive Query Language", [
+      Alcotest.test_case "POST /query language=dsl execute" `Quick test_post_query_dsl_execute;
+      Alcotest.test_case "POST /query language=dsl validate invalid" `Quick test_post_query_dsl_validate_invalid;
     ];
     "Error Handling", [
       Alcotest.test_case "invalid JSON" `Quick test_post_query_invalid_json;

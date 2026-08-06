@@ -67,6 +67,9 @@ Lists all available predicates in the pack store with their arities.
 
 **Query Parameters:**
 - `samples` (optional, integer, max 1000) - Include N sample facts for each predicate
+- `detailed` (optional, `true`/`1`) - Return full schema detail instead: per-argument observed types, fact counts, bounded typed examples, and the query-environment fingerprint (see below); mutually exclusive with `samples`
+- `q` (optional, string, only with `detailed`) - Filter to predicates whose name contains this substring (case-insensitive)
+- `names` (optional, comma-separated string, only with `detailed`) - Filter to an exact set of predicate names
 
 **Response (without samples):**
 ```json
@@ -113,12 +116,43 @@ curl http://localhost:8080/predicates
 
 # List predicates with 20 sample facts each
 curl http://localhost:8080/predicates?samples=20
+
+# Full schema detail, filtered by name substring
+curl 'http://localhost:8080/predicates?detailed=true&q=creat'
 ```
+
+**Response (`detailed=true`):**
+```json
+{
+  "predicates": [
+    {
+      "name": "created",
+      "arity": 2,
+      "count": 3,
+      "arguments": [
+        {"position": 0, "types": ["atom"]},
+        {"position": 1, "types": ["atom"]}
+      ],
+      "examples": [
+        [{"type": "atom", "value": "tina_keane"}, {"type": "atom", "value": "she"}]
+      ]
+    }
+  ],
+  "fingerprint": "md5:3aa13057aa16d1340adbd77e02d266ab",
+  "language_version": "beingdb-dsl/1"
+}
+```
+
+The fingerprint is deterministic (MD5 over sorted predicate names,
+arities, observed argument types, and the expressive query-language
+version) and changes whenever any of those change -- useful for
+invalidating cached prompts or schema descriptions built from this
+endpoint.
 
 **Use cases:** 
 - Discovery and autocomplete (without samples)
-- Schema exploration and validation (with samples)
-- Bot/LLM predicate caching with example facts
+- Schema exploration and validation (with samples, or `detailed=true` for typed argument signatures)
+- Bot/LLM predicate caching with example facts and a cache-invalidation fingerprint
 
 **Performance note:** Using `samples` parameter is optimized for large datasets and prevents file descriptor exhaustion by limiting reads per predicate.
 
@@ -163,7 +197,8 @@ curl http://localhost:8080/query/created
 POST /query
 ```
 
-Execute pattern matching queries with joins and pagination.
+Execute pattern matching queries with joins and pagination, in either
+the core or the expressive query language.
 
 **Request Body:**
 ```json
@@ -175,9 +210,15 @@ Execute pattern matching queries with joins and pagination.
 ```
 
 **Body Parameters:**
-- `query` (string, required) - Query pattern(s) in Prolog-style syntax
-- `offset` (integer, optional) - Start position for pagination (default: 0)
-- `limit` (integer, optional) - Maximum results to return (default: server's `MAX_RESULTS`)
+- `query` (string, required) - Query text: core language pattern(s), or (with `"language": "dsl"`) an expressive `find`/`where` query
+- `offset` (integer, optional) - Start position for pagination (default: 0); core language only
+- `limit` (integer, optional) - Maximum results to return (default: server's `MAX_RESULTS`); core language only -- for the expressive language, use `limit`/`offset` inside the query text itself
+- `language` (string, optional) - `"core"` (default) or `"dsl"`
+- `action` (string, optional) - `"execute"` (default), `"validate"` (check without running), or `"explain"` (show the access plan without running)
+
+See [Query Language](query-language.md#expressive-query-language) for
+the full `find`/`where` syntax, validation error shapes, and REPL
+equivalents.
 
 **Response (without pagination):**
 ```json
@@ -251,6 +292,33 @@ String literals:
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
   -d '{"query": "keyword(Doc, \"neural networks\")"}'
+```
+
+Expressive query language:
+```bash
+curl -X POST http://localhost:8080/query \
+  -H "Content-Type: application/json" \
+  -d '{"language": "dsl", "query": "find Artist, Work\nwhere\n  created(Artist, Work)\nlimit 10"}'
+```
+
+Validate without executing:
+```bash
+curl -X POST http://localhost:8080/query \
+  -H "Content-Type: application/json" \
+  -d '{"language": "dsl", "action": "validate", "query": "find X\nwhere\n  artst(X)"}'
+```
+
+A query that fails validation (`execute` or `validate`, either language)
+returns HTTP 400 with the structured error list directly as the body
+(not wrapped in `"error"`):
+```json
+{
+  "valid": false,
+  "errors": [
+    {"code": "unknown_predicate", "message": "Unknown predicate 'artst'; did you mean: artist?", "line": 2, "predicate": "artst", "suggestions": ["artist"]}
+  ],
+  "warnings": []
+}
 ```
 
 ---

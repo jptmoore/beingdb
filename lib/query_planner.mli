@@ -17,13 +17,20 @@ type access =
   | Range_index of { position : int; lower : (Value.t * bool) option; upper : (Value.t * bool) option }
   | Full_scan
 
-type step = { predicate : string; args : arg_plan list; access : access }
+type pattern_step = { predicate : string; args : arg_plan list; access : access }
 
-type t = { steps : step list; post_filters : Query_ast.clause list; variables : string list }
+type step =
+  | Pattern_step of pattern_step
+  | Optional_step of t
+  | Alternatives_step of t list
+  | Not_exists_step of t
+
+and t = { steps : step list; post_filters : Query_ast.clause list; variables : string list }
 
 (** Build an execution plan from a parsed query. Pure: does not touch the
     store. *)
 val plan : Query_ast.query -> t
 
-(** Human-readable explanation of the chosen access method per step. *)
+(** Human-readable, indented explanation of the chosen access method per
+    step, including nested optional/alternative/negation groups. *)
 val explain : t -> string

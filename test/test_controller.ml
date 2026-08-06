@@ -404,6 +404,116 @@ let test_typed_json_uri () =
      cleanup test_dir;
      Lwt.return ())
 
+(* --- run_query: unified language/action dispatch --- *)
+
+let test_run_query_core_execute () =
+  let store, test_dir = create_test_pack "run_core_exec" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* outcome = Controller.run_query ~max_results:100 store "created(Artist, Work)" ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Success json ->
+         let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
+         Alcotest.(check bool) "has results" true (List.length results > 0)
+     | Controller.Invalid _ -> Alcotest.fail "expected Success, got Invalid"
+     | Controller.Failure msg -> Alcotest.fail ("expected Success, got Failure: " ^ msg));
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_run_query_core_validate () =
+  let store, test_dir = create_test_pack "run_core_validate" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* outcome = Controller.run_query ~max_results:100 ~action:"validate" store "created(Artist, Work)" ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Success json -> Alcotest.(check bool) "valid true" true (Yojson.Safe.Util.(json |> member "valid" |> to_bool))
+     | _ -> Alcotest.fail "expected Success");
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_run_query_core_explain () =
+  let store, test_dir = create_test_pack "run_core_explain" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* outcome = Controller.run_query ~max_results:100 ~action:"explain" store "created(Artist, Work)" ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Success json -> Alcotest.(check bool) "has plan" true (String.length Yojson.Safe.Util.(json |> member "plan" |> to_string) > 0)
+     | _ -> Alcotest.fail "expected Success");
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_run_query_dsl_execute () =
+  let store, test_dir = create_test_pack "run_dsl_exec" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let query = "find Artist\nwhere\n  artist(Artist)\n" in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Success json ->
+         let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
+         Alcotest.(check int) "2 artists" 2 (List.length results)
+     | Controller.Invalid j -> Alcotest.fail ("expected Success, got Invalid: " ^ Yojson.Safe.to_string j)
+     | Controller.Failure msg -> Alcotest.fail ("expected Success, got Failure: " ^ msg));
+     cleanup test_dir;
+     Lwt.return ())
+
+(** Regression: a query whose ENTIRE where-clause is a group (no
+    top-level pattern -- every pattern nested inside `either`/`or`) must
+    still pass the safety validator's "has at least one pattern" check,
+    which must recurse into nested groups rather than only look at
+    top-level clauses. *)
+let test_run_query_dsl_execute_top_level_alternatives () =
+  let store, test_dir = create_test_pack "run_dsl_top_alt" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let query = "find Artist\nwhere\n  either\n    artist(Artist)\n  or\n    artist(Artist)\n" in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Success json ->
+         let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
+         Alcotest.(check bool) "has results" true (List.length results > 0)
+     | Controller.Invalid j -> Alcotest.fail ("expected Success, got Invalid: " ^ Yojson.Safe.to_string j)
+     | Controller.Failure msg -> Alcotest.fail ("expected Success, got Failure: " ^ msg));
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_run_query_dsl_validate_unknown_predicate () =
+  let store, test_dir = create_test_pack "run_dsl_validate" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let query = "find X\nwhere\n  artst(X)\n" in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"validate" store query ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Invalid json ->
+         Alcotest.(check bool) "valid false" false (Yojson.Safe.Util.(json |> member "valid" |> to_bool));
+         let errors = Yojson.Safe.Util.(json |> member "errors" |> to_list) in
+         Alcotest.(check bool) "has errors" true (List.length errors > 0)
+     | Controller.Success _ -> Alcotest.fail "expected Invalid"
+     | Controller.Failure msg -> Alcotest.fail ("expected Invalid, got Failure: " ^ msg));
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_run_query_dsl_explain () =
+  let store, test_dir = create_test_pack "run_dsl_explain" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let query = "find Artist\nwhere\n  artist(Artist)\n" in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"explain" store query ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Success json -> Alcotest.(check bool) "has plan" true (String.length Yojson.Safe.Util.(json |> member "plan" |> to_string) > 0)
+     | _ -> Alcotest.fail "expected Success");
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_run_query_unknown_language () =
+  let store, test_dir = create_test_pack "run_unknown_lang" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"sparql" store "created(A, W)" ~offset:None ~limit:None in
+     (match outcome with Controller.Failure _ -> () | _ -> Alcotest.fail "expected Failure");
+     cleanup test_dir;
+     Lwt.return ())
+
 let () =
   Alcotest.run "BeingDB Controller" [
     "List Predicates", [
@@ -431,5 +541,15 @@ let () =
       Alcotest.test_case "instant normalized output" `Quick test_typed_json_instant;
       Alcotest.test_case "language-tagged string output" `Quick test_typed_json_lang_string;
       Alcotest.test_case "uri output" `Quick test_typed_json_uri;
+    ];
+    "Run Query dispatch", [
+      Alcotest.test_case "core execute" `Quick test_run_query_core_execute;
+      Alcotest.test_case "core validate" `Quick test_run_query_core_validate;
+      Alcotest.test_case "core explain" `Quick test_run_query_core_explain;
+      Alcotest.test_case "dsl execute" `Quick test_run_query_dsl_execute;
+      Alcotest.test_case "dsl execute top-level alternatives" `Quick test_run_query_dsl_execute_top_level_alternatives;
+      Alcotest.test_case "dsl validate unknown predicate" `Quick test_run_query_dsl_validate_unknown_predicate;
+      Alcotest.test_case "dsl explain" `Quick test_run_query_dsl_explain;
+      Alcotest.test_case "unknown language" `Quick test_run_query_unknown_language;
     ];
   ]

@@ -42,11 +42,19 @@ let handle_list_predicates pack_store req =
         | Some n when n > 0 && n <= 100 -> Some n
         | _ -> None
   in
-  
-  Controller.list_predicates ~samples pack_store
-  >>= function
-  | Ok json -> json_response json
-  | Error msg -> error_response msg
+  let detailed = match Dream.query req "detailed" with Some "true" | Some "1" -> true | _ -> false in
+  if detailed then
+    let q = Dream.query req "q" in
+    let names = Option.map (fun s -> String.split_on_char ',' s |> List.map String.trim |> List.filter (( <> ) "")) (Dream.query req "names") in
+    Controller.list_predicates_detailed ?q ?names pack_store
+    >>= function
+    | Ok json -> json_response json
+    | Error msg -> error_response msg
+  else
+    Controller.list_predicates ~samples pack_store
+    >>= function
+    | Ok json -> json_response json
+    | Error msg -> error_response msg
 
 (** Get all facts for a predicate *)
 let handle_query max_results pack_store predicate _req =
@@ -56,7 +64,9 @@ let handle_query max_results pack_store predicate _req =
   | Ok json -> json_response json
   | Error msg -> error_response msg
 
-(** Execute a query with joins *)
+(** Execute a query with joins. Accepts optional ["language"] ("core"
+    (default) or "dsl") and ["action"] ("execute" (default), "validate",
+    or "explain") fields, dispatched via {!Controller.run_query}. *)
 let handle_query_language max_results pack_store req =
   let open Lwt.Infix in
   Dream.body req
@@ -80,11 +90,13 @@ let handle_query_language max_results pack_store req =
                 | Some (`Int n) -> Some n
                 | _ -> None
               in
-              
-              Controller.execute_query ~max_results pack_store query_str ~offset ~limit
+              let language = match List.assoc_opt "language" fields with Some (`String s) -> Some s | _ -> None in
+              let action = match List.assoc_opt "action" fields with Some (`String s) -> Some s | _ -> None in
+              Controller.run_query ~max_results ?language ?action pack_store query_str ~offset ~limit
               >>= (function
-                | Ok json -> json_response json
-                | Error msg -> error_response msg)
+                | Controller.Success json -> json_response json
+                | Controller.Invalid json -> Dream.json ~status:`Bad_Request (Yojson.Safe.to_string json)
+                | Controller.Failure msg -> error_response msg)
           | _ -> error_response "Missing 'query' field")
       | _ -> error_response "Expected JSON object"
 
