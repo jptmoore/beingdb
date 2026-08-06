@@ -286,12 +286,40 @@ beingdb> created(Artist, Work)
 }
 ```
 
+The REPL has three query-language modes, switched with `:core`, `:dsl`,
+and `:auto` (the default, which detects the expressive language when a
+query starts with `find`). In `:dsl` mode (or when auto-detected as
+`dsl`), keep entering lines and finish with a blank line, since the
+expressive syntax spans multiple lines:
+
+```
+beingdb> :dsl
+mode: dsl
+beingdb> find Artist, Work
+where
+  created(Artist, Work)
+limit 5
+
+{
+  "variables": [ "Artist", "Work" ],
+  "results": [
+    { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
+  ],
+  "count": 1,
+  "warnings": []
+}
+```
+
 A line starting with `:` is a REPL command rather than a query:
 
 | Command | Effect |
 |---|---|
 | `:predicates` | List predicates and their arities |
-| `:explain <query>` | Show the chosen query plan without executing it |
+| `:describe <predicate>` | Show a predicate's argument types, fact count, and examples |
+| `:environment` | Show predicate count, fingerprint, language version, and current mode |
+| `:explain <query>` | Show the chosen query plan without executing it (single-line only) |
+| `:validate` | Enter a query (blank line to finish) and validate it without executing |
+| `:core` / `:dsl` / `:auto` | Switch the query-language mode |
 | `:load <file>` | Load facts (`.pl`, `.pro`, `.facts`) or run each line as a query (any other extension) |
 | `:loadfacts <file>` | Force-load a file as facts, written directly into the open Pack store |
 | `:loadqueries <file>` | Force-run every non-blank, non-comment line of a file as a query |
@@ -304,5 +332,8 @@ REPL-only convenience for quick, local experimentation. This does not
 go through the Git-first compile workflow, so anything loaded this way
 is not reflected in the source repository and will be lost the next
 time the store is recompiled from Git.
+
+See [Query Language](query-language.md#expressive-query-language) for
+the full `find`/`where` syntax reference.
 
 

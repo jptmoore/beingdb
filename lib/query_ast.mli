@@ -14,6 +14,9 @@ type clause =
   | Pattern of { predicate : string; arguments : term list }
   | Compare of { left : term; operator : comparison_operator; right : term }
   | Between of { value : term; lower : term; upper : term }
+  | Optional of clause list
+  | Alternatives of clause list list
+  | Not_exists of clause list
 
 type query = { clauses : clause list; variables : string list }
 
@@ -24,3 +27,7 @@ val variables_of_term : term -> string list
 
 (** All distinct variables referenced anywhere in the clause list, sorted. *)
 val extract_variables : clause list -> string list
+
+(** Every [Pattern] anywhere in the clause tree, including inside nested
+    groups; each result is [(predicate, arguments)]. *)
+val all_patterns : clause list -> (string * term list) list
