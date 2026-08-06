@@ -1,5 +1,5 @@
 (test
- (name test_beingdb)
+ (name test_storage)
  (libraries beingdb alcotest lwt lwt.unix)
  (modes native))
 
@@ -25,5 +25,10 @@
 
 (test
  (name test_controller)
+ (libraries beingdb alcotest lwt lwt.unix yojson)
+ (modes native))
+
+(test
+ (name test_repl_support)
  (libraries beingdb alcotest lwt lwt.unix yojson)
  (modes native))

@@ -4,17 +4,17 @@
 type predicate = {
   name: string;
   arity: int;
-  sample_facts: Types.arg_value list list option;
+  sample_facts: Fact.t list option;
 }
 
 (** Fact represents a single instance of a predicate *)
-type fact = {
+type fact = Fact.t = {
   predicate: string;
-  arguments: Types.arg_value list;
+  arguments: Value.t list;
 }
 
-(** Query result binding *)
-type binding = (string * string) list
+(** Typed variable binding *)
+type binding = (string * Value.t) list
 
 (** Query result *)
 type query_result = {
@@ -29,7 +29,7 @@ let make_predicate ?(samples=None) name arity =
 
 (** Create fact from predicate name and arguments *)
 let make_fact predicate arguments =
-  { predicate; arguments }
+  Fact.make predicate arguments
 
 (** Create query result *)
 let make_query_result variables bindings total_count =
@@ -53,7 +53,7 @@ let validate_predicate_name name =
     Ok ()
 
 (** Validate fact arity matches predicate *)
-let validate_fact_arity predicate fact =
+let validate_fact_arity predicate (fact : Fact.t) =
   if List.length fact.arguments <> predicate.arity then
     Error (Printf.sprintf "Expected %d arguments, got %d" 
       predicate.arity (List.length fact.arguments))
@@ -85,11 +85,6 @@ let list_predicates_with_samples ~samples store =
 (** Query facts for a predicate *)
 let query_predicate ~limit store predicate_name =
   Db.query_predicate ~limit store predicate_name
-  >>= fun facts_tuples ->
-  let facts = List.map (fun args ->
-    make_fact predicate_name args
-  ) facts_tuples in
-  Lwt.return facts
 
 (** Check if predicate exists *)
 let predicate_exists store predicate_name =
@@ -98,11 +93,14 @@ let predicate_exists store predicate_name =
 (** Execute query *)
 let execute_query store query =
   Db.execute_query store query
-  >>= fun result ->
-  Lwt.return (of_query_engine_result result)
+  >>= function
+  | Ok result -> Lwt.return (Ok (of_query_engine_result result))
+  | Error e -> Lwt.return (Error e)
 
 (** Execute query with streaming *)
 let execute_query_streaming store query ~offset ~limit =
   Db.execute_query_streaming store query ~offset ~limit
-  >>= fun result ->
-  Lwt.return (of_query_engine_result result)
+  >>= function
+  | Ok result -> Lwt.return (Ok (of_query_engine_result result))
+  | Error e -> Lwt.return (Error e)
+

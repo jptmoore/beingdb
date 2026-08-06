@@ -1,4 +1,7 @@
-(** Unit tests for Controller layer *)
+(** Unit tests for Controller layer: JSON serialization and query
+    execution, including the typed JSON result format. *)
+
+open Beingdb
 
 (** Helper: Create test Pack store *)
 let create_test_pack name =
@@ -10,20 +13,34 @@ let create_test_pack name =
   
   Lwt_main.run (
     let open Lwt.Syntax in
-    let* store = Beingdb.Pack_backend.init ~fresh:true test_dir in
+    let* store = Pack_backend.init ~fresh:true test_dir in
     
     (* Add test data *)
-    let facts = [
-      ("created", [Beingdb.Types.Atom "tina_keane"; Beingdb.Types.Atom "she"]);
-      ("created", [Beingdb.Types.Atom "lynn_hershman"; Beingdb.Types.Atom "lorna"]);
-      ("shown_in", [Beingdb.Types.Atom "she"; Beingdb.Types.Atom "rewind_1995"]);
-      ("artist", [Beingdb.Types.Atom "tina_keane"]);
-      ("artist", [Beingdb.Types.Atom "lynn_hershman"]);
-    ] in
-    
-    let* () = Lwt_list.iter_s (fun (pred, args) ->
-      Beingdb.Pack_backend.write_fact store pred args
-    ) facts in
+    let by_predicate =
+      [
+        ("created", [ Fact.make "created" [ Value.Atom "tina_keane"; Value.Atom "she" ];
+                      Fact.make "created" [ Value.Atom "lynn_hershman"; Value.Atom "lorna" ] ]);
+        ("shown_in", [ Fact.make "shown_in" [ Value.Atom "she"; Value.Atom "rewind_1995" ] ]);
+        ("artist", [ Fact.make "artist" [ Value.Atom "tina_keane" ]; Fact.make "artist" [ Value.Atom "lynn_hershman" ] ]);
+        ( "label",
+          [ Fact.make "label" [ Value.Atom "org_1"; Value.Lang_string { value = "National Archives"; language = "en" } ] ] );
+        ("confidence", [ Fact.make "confidence" [ Value.Atom "assertion_1"; Value.Decimal (Decimal.make 92L 2) ] ]);
+        ( "captured_at",
+          [
+            Fact.make "captured_at"
+              [
+                Value.Atom "capture_1";
+                (match Calendar.parse_instant "2026-08-06T12:15:00Z" with Ok t -> Value.Instant t | Error e -> failwith e);
+              ];
+          ] );
+        ("homepage", [ Fact.make "homepage" [ Value.Atom "org_1"; Value.Uri "https://example.org/" ] ]);
+      ]
+    in
+    let* () =
+      Lwt_list.iter_s
+        (fun (pred, facts) -> Pack_backend.write_predicate_batch store pred facts (Printf.sprintf "compile %s" pred))
+        by_predicate
+    in
     Lwt.return (store, test_dir)
   )
 
@@ -331,6 +348,62 @@ let test_execute_query_json_structure () =
         Alcotest.fail ("Query failed: " ^ err)
   )
 
+(* --- typed JSON serialization --- *)
+
+let json_value_field predicate store field =
+  let open Lwt.Syntax in
+  let* result = Controller.execute_query ~max_results:100 store predicate ~offset:None ~limit:None in
+  match result with
+  | Error e -> Alcotest.fail e
+  | Ok json ->
+      let open Yojson.Safe.Util in
+      let first_result = json |> member "results" |> to_list |> List.hd in
+      Lwt.return (first_result |> member field)
+
+let test_typed_json_decimal () =
+  let (store, test_dir) = create_test_pack "typed_json_decimal" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* value = json_value_field "confidence(Assertion, Score)" store "Score" in
+     let open Yojson.Safe.Util in
+     Alcotest.(check string) "type is decimal" "decimal" (value |> member "type" |> to_string);
+     Alcotest.(check string) "exact decimal string" "0.92" (value |> member "value" |> to_string);
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_typed_json_instant () =
+  let (store, test_dir) = create_test_pack "typed_json_instant" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* value = json_value_field "captured_at(Capture, When)" store "When" in
+     let open Yojson.Safe.Util in
+     Alcotest.(check string) "type is instant" "instant" (value |> member "type" |> to_string);
+     Alcotest.(check string) "normalized UTC instant" "2026-08-06T12:15:00Z" (value |> member "value" |> to_string);
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_typed_json_lang_string () =
+  let (store, test_dir) = create_test_pack "typed_json_lang" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* value = json_value_field "label(Org, Label)" store "Label" in
+     let open Yojson.Safe.Util in
+     Alcotest.(check string) "type is lang_string" "lang_string" (value |> member "type" |> to_string);
+     Alcotest.(check string) "value includes language tag" "National Archives@en" (value |> member "value" |> to_string);
+     cleanup test_dir;
+     Lwt.return ())
+
+let test_typed_json_uri () =
+  let (store, test_dir) = create_test_pack "typed_json_uri" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* value = json_value_field "homepage(Org, Url)" store "Url" in
+     let open Yojson.Safe.Util in
+     Alcotest.(check string) "type is uri" "uri" (value |> member "type" |> to_string);
+     Alcotest.(check string) "uri value" "https://example.org/" (value |> member "value" |> to_string);
+     cleanup test_dir;
+     Lwt.return ())
+
 let () =
   Alcotest.run "BeingDB Controller" [
     "List Predicates", [
@@ -352,5 +425,11 @@ let () =
     "Validation", [
       Alcotest.test_case "execute_query empty" `Quick test_execute_query_empty;
       Alcotest.test_case "execute_query invalid" `Quick test_execute_query_invalid;
+    ];
+    "Typed JSON", [
+      Alcotest.test_case "decimal preserved exactly as string" `Quick test_typed_json_decimal;
+      Alcotest.test_case "instant normalized output" `Quick test_typed_json_instant;
+      Alcotest.test_case "language-tagged string output" `Quick test_typed_json_lang_string;
+      Alcotest.test_case "uri output" `Quick test_typed_json_uri;
     ];
   ]

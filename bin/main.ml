@@ -3,37 +3,6 @@
 open Cmdliner
 
 let () =
-  (* Load subcommand modules *)
-  let clone_cmd = 
-    let doc = "Clone remote Git repository into Irmin Git (shallow)" in
-    let info = Cmd.info "clone" ~version:"0.1.0" ~doc in
-    Cmd.v info (Term.ret (Term.const (`Help (`Auto, None))))
-  in
-  
-  let pull_cmd =
-    let doc = "Pull updates from remote and merge into Irmin Git" in
-    let info = Cmd.info "pull" ~version:"0.1.0" ~doc in
-    Cmd.v info (Term.ret (Term.const (`Help (`Auto, None))))
-  in
-  
-  let import_cmd =
-    let doc = "Import flat files into Irmin Git (development tool)" in
-    let info = Cmd.info "import" ~version:"0.1.0" ~doc in
-    Cmd.v info (Term.ret (Term.const (`Help (`Auto, None))))
-  in
-  
-  let compile_cmd =
-    let doc = "Compile predicates from Irmin Git HEAD to Pack store" in
-    let info = Cmd.info "compile" ~version:"0.1.0" ~doc in
-    Cmd.v info (Term.ret (Term.const (`Help (`Auto, None))))
-  in
-  
-  let serve_cmd =
-    let doc = "Serve queries from Pack store" in
-    let info = Cmd.info "serve" ~version:"0.1.0" ~doc in
-    Cmd.v info (Term.ret (Term.const (`Help (`Auto, None))))
-  in
-  
   let default_cmd =
     let doc = "Logic-based knowledge store with Git and Pack backends" in
     let man = [
@@ -46,9 +15,21 @@ let () =
       `P "import - Import flat files (dev only)";
       `P "compile - Compile Git to Pack";
       `P "serve - Serve queries from Pack";
+      `P "repl - Interactive query REPL against a Pack store";
     ] in
     let info = Cmd.info "beingdb" ~version:"0.1.0" ~doc ~man in
-    Cmd.group info [clone_cmd; pull_cmd; import_cmd; compile_cmd; serve_cmd]
+    Cmd.group info
+      [
+        Beingdb.Cli_clone.cmd;
+        Beingdb.Cli_pull.cmd;
+        Beingdb.Cli_import.cmd;
+        Beingdb.Cli_compile.cmd;
+        Beingdb.Cli_serve.cmd;
+        Beingdb.Cli_repl.cmd;
+      ]
   in
   
   exit (Cmd.eval default_cmd)
+
+
+

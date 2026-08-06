@@ -4,17 +4,17 @@
 type predicate = {
   name: string;
   arity: int;
-  sample_facts: Types.arg_value list list option;
+  sample_facts: Fact.t list option;
 }
 
 (** Fact represents a single instance of a predicate *)
-type fact = {
+type fact = Fact.t = {
   predicate: string;
-  arguments: Types.arg_value list;
+  arguments: Value.t list;
 }
 
-(** Query result binding *)
-type binding = (string * string) list
+(** Typed variable binding *)
+type binding = (string * Value.t) list
 
 (** Query result *)
 type query_result = {
@@ -24,10 +24,10 @@ type query_result = {
 }
 
 (** Create predicate from database tuple *)
-val make_predicate : ?samples:Types.arg_value list list option -> string -> int -> predicate
+val make_predicate : ?samples:Fact.t list option -> string -> int -> predicate
 
 (** Create fact from predicate name and arguments *)
-val make_fact : string -> Types.arg_value list -> fact
+val make_fact : string -> Value.t list -> fact
 
 (** Create query result *)
 val make_query_result : string list -> binding list -> int -> query_result
@@ -56,8 +56,8 @@ val query_predicate : limit:int -> Db.t -> string -> fact list Lwt.t
 val predicate_exists : Db.t -> string -> bool Lwt.t
 
 (** Execute query *)
-val execute_query : Db.t -> Query_parser.query -> query_result Lwt.t
+val execute_query : Db.t -> Query_ast.query -> (query_result, string) result Lwt.t
 
 (** Execute query with streaming *)
-val execute_query_streaming : 
-  Db.t -> Query_parser.query -> offset:int -> limit:int -> query_result Lwt.t
+val execute_query_streaming :
+  Db.t -> Query_ast.query -> offset:int -> limit:int -> (query_result, string) result Lwt.t

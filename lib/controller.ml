@@ -2,9 +2,12 @@
 
 open Lwt.Infix
 
-(** Convert fact arguments to JSON *)
-let fact_to_json args =
-  `List (List.map (fun arg -> `String (Types.arg_to_string arg)) args)
+(** Convert fact arguments to typed JSON: a list of [{"type":..,"value":..}]. *)
+let fact_to_json (args : Value.t list) = `List (List.map Value.to_json args)
+
+(** Convert a single typed binding to JSON: [{"Var": {"type":..,"value":..}, ...}]. *)
+let binding_to_json (binding : Model.binding) =
+  `Assoc (List.map (fun (var, value) -> (var, Value.to_json value)) binding)
 
 (** Convert query result to JSON *)
 let query_result_to_json ?offset ?limit result =
@@ -20,12 +23,7 @@ let query_result_to_json ?offset ?limit result =
     |> (fun l -> List.filteri (fun i _ -> i < limit_val) l)
   in
   
-  let bindings_json = List.map (fun binding ->
-    let pairs = List.map (fun (var, value) ->
-      (var, `String value)
-    ) binding in
-    `Assoc pairs
-  ) paginated_bindings in
+  let bindings_json = List.map binding_to_json paginated_bindings in
   
   let response = [
     "variables", `List (List.map (fun v -> `String v) result.Model.variables);
@@ -73,7 +71,7 @@ let list_predicates ~samples store =
         | None -> `Assoc base
         | Some sample_facts ->
             `Assoc (base @ [
-              "samples", `List (List.map fact_to_json sample_facts);
+              "samples", `List (List.map (fun (f : Fact.t) -> fact_to_json f.arguments) sample_facts);
               "sample_count", `Int (List.length sample_facts)
             ])
       ) predicates in
@@ -93,7 +91,7 @@ let query_predicate ~max_results store predicate =
       >>= fun facts ->
       let json = `Assoc [
         "predicate", `String predicate;
-        "facts", `List (List.map (fun fact -> fact_to_json fact.Model.arguments) facts);
+        "facts", `List (List.map (fun (fact : Fact.t) -> fact_to_json fact.arguments) facts);
         "count", `Int (List.length facts);
         "limited", `Bool true;
         "max_results", `Int max_results
@@ -103,9 +101,9 @@ let query_predicate ~max_results store predicate =
 (** Execute query with timeout and validation *)
 let execute_query ~max_results store query_str ~offset ~limit =
   (* Parse query *)
-  match Query_parser.parse_query query_str with
-  | None -> Lwt.return (Error (Query_validation.error_message Query_validation.InvalidSyntax))
-  | Some query ->
+  match Query_parser.parse_query_result query_str with
+  | Error msg -> Lwt.return (Error msg)
+  | Ok query ->
       (* Validate query structure and parameters *)
       match Query_validation.validate_query query offset limit with
       | Error err -> Lwt.return (Error (Query_validation.error_message err))
@@ -118,7 +116,11 @@ let execute_query ~max_results store query_str ~offset ~limit =
           in
           
           (* Determine execution strategy *)
-          let is_join = List.length query.Query_parser.patterns > 1 in
+          let pattern_count =
+            List.length
+              (List.filter (function Query_ast.Pattern _ -> true | _ -> false) query.Query_ast.clauses)
+          in
+          let is_join = pattern_count > 1 in
           let use_streaming = is_join && Option.is_some limit_to_use in
           
           (* Execute with timeout *)
@@ -130,22 +132,20 @@ let execute_query ~max_results store query_str ~offset ~limit =
                   let limit_val = Option.get limit_to_use in
                   
                   Model.execute_query_streaming store query ~offset:offset_val ~limit:limit_val
-                  >>= fun result ->
-                  let result_json = `Assoc [
-                    "results", `List (List.map (fun binding ->
-                      `Assoc [
-                        "bindings", `List (List.map (fun (var, value) ->
-                          `Assoc ["variable", `String var; "value", `String value]
-                        ) binding)
-                      ]
-                    ) result.Model.bindings);
-                    "variables", `List (List.map (fun v -> `String v) result.Model.variables);
-                  ] in
-                  Lwt.return (Ok result_json)
+                  >>= (function
+                  | Error msg -> Lwt.return (Error msg)
+                  | Ok result ->
+                      let result_json = `Assoc [
+                        "variables", `List (List.map (fun v -> `String v) result.Model.variables);
+                        "results", `List (List.map binding_to_json result.Model.bindings);
+                        "count", `Int (List.length result.Model.bindings);
+                      ] in
+                      Lwt.return (Ok result_json))
                 else
                   Model.execute_query store query
-                  >>= fun result ->
-                  Lwt.return (Ok (query_result_to_json ?offset:valid_offset ?limit:limit_to_use result))
+                  >>= (function
+                  | Error msg -> Lwt.return (Error msg)
+                  | Ok result -> Lwt.return (Ok (query_result_to_json ?offset:valid_offset ?limit:limit_to_use result)))
               )
             )
             (function
@@ -156,3 +156,4 @@ let execute_query ~max_results store query_str ~offset ~limit =
               | exn ->
                   Lwt.return (Error (Printf.sprintf "Query error: %s" (Printexc.to_string exn)))
             )
+
