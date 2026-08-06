@@ -164,6 +164,28 @@ let order_compare a b =
   | Instant a, Instant b -> Ok (Calendar.compare_instant a b)
   | _ -> order_error a b
 
+(** Must mirror the type combinations handled by {!order_compare} above
+    (kept in sync manually; there is no sample value available here to
+    dispatch on, only type names). *)
+let order_compatible_types left_type right_type =
+  match (left_type, right_type) with
+  | ("integer" | "decimal" | "year"), ("integer" | "decimal" | "year") -> true
+  | "year_month", "year_month" -> true
+  | "date", "date" -> true
+  | "instant", "instant" -> true
+  | _ -> false
+
+let comparison_suggestion ~left_type ~right_type =
+  match (left_type, right_type) with
+  | "date", ("integer" | "decimal" | "year") | ("integer" | "decimal" | "year"), "date" ->
+      Some "Use a date literal such as @1970-01-01."
+  | "instant", ("integer" | "decimal" | "year") | ("integer" | "decimal" | "year"), "instant" ->
+      Some "Use an instant literal such as @1970-01-01T00:00:00Z."
+  | "year_month", ("integer" | "decimal" | "year") | ("integer" | "decimal" | "year"), "year_month" ->
+      Some "Use a year-month literal such as @1970-01."
+  | "date", "instant" | "instant", "date" -> Some "Dates and instants are not comparable; use the same temporal type on both sides."
+  | _ -> None
+
 let to_json v =
   `Assoc [ ("type", `String (type_name v)); ("value", `String (canonical_string v)) ]
 

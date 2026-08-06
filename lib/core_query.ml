@@ -29,10 +29,9 @@ let projected_variables t = match t.projection with Some vs -> vs | None -> t.qu
 let compare_values a b = match Value.order_compare a b with Ok c -> c | Error _ -> String.compare (Value.canonical_string a) (Value.canonical_string b)
 
 (** Missing values (a variable left unbound by an unmatched [optional]
-    branch) sort before any present value, consistently. *)
-let compare_opt a b =
-  match (a, b) with None, None -> 0 | None, Some _ -> -1 | Some _, None -> 1 | Some x, Some y -> compare_values x y
-
+    branch) always sort after any present value -- "nulls last" -- for
+    both [ascending] and [descending], per the documented ordering
+    policy (see docs/query-language.md). *)
 let apply_order_by order_by (bindings : Query_engine.binding list) =
   if order_by = [] then bindings
   else
@@ -40,8 +39,15 @@ let apply_order_by order_by (bindings : Query_engine.binding list) =
       let rec go = function
         | [] -> 0
         | (item : order_item) :: rest ->
-            let c = compare_opt (List.assoc_opt item.variable b1) (List.assoc_opt item.variable b2) in
-            let c = match item.direction with Ascending -> c | Descending -> -c in
+            let c =
+              match (List.assoc_opt item.variable b1, List.assoc_opt item.variable b2) with
+              | None, None -> 0
+              | None, Some _ -> 1
+              | Some _, None -> -1
+              | Some x, Some y -> (
+                  let base = compare_values x y in
+                  match item.direction with Ascending -> base | Descending -> -base)
+            in
             if c <> 0 then c else go rest
       in
       go order_by

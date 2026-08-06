@@ -4,9 +4,9 @@
     clauses so {!Dsl_lower} can produce precise error locations. *)
 
 type surface_clause =
-  | Pattern of { predicate : string; arguments : Query_ast.term list; line : int }
-  | Compare of { left : Query_ast.term; operator : Query_ast.comparison_operator; right : Query_ast.term; line : int }
-  | Between of { value : Query_ast.term; lower : Query_ast.term; upper : Query_ast.term; line : int }
+  | Pattern of { predicate : string; arguments : Query_ast.term list; line : int; column : int }
+  | Compare of { left : Query_ast.term; operator : Query_ast.comparison_operator; right : Query_ast.term; line : int; column : int }
+  | Between of { value : Query_ast.term; lower : Query_ast.term; upper : Query_ast.term; line : int; column : int }
   | Optional of surface_clause list
   | Alternatives of surface_clause list list
   | Negation of surface_clause list

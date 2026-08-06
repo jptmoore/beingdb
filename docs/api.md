@@ -138,16 +138,18 @@ curl 'http://localhost:8080/predicates?detailed=true&q=creat'
       ]
     }
   ],
-  "fingerprint": "md5:3aa13057aa16d1340adbd77e02d266ab",
-  "language_version": "beingdb-dsl/1"
+  "environmentFingerprint": "sha256:3a1f...c9",
+  "languageVersion": "beingdb-dsl/1"
 }
 ```
 
-The fingerprint is deterministic (MD5 over sorted predicate names,
+The fingerprint is deterministic (SHA-256 over sorted predicate names,
 arities, observed argument types, and the expressive query-language
-version) and changes whenever any of those change -- useful for
-invalidating cached prompts or schema descriptions built from this
-endpoint.
+version; formatted as `"sha256:<lowercase hex digest>"`) and changes
+whenever any of those change -- useful for invalidating cached prompts
+or schema descriptions built from this endpoint. The same fingerprint
+is exposed, under the same `environmentFingerprint` key, in REPL
+startup and every `validate`/`explain` response.
 
 **Use cases:** 
 - Discovery and autocomplete (without samples)
@@ -310,71 +312,99 @@ curl -X POST http://localhost:8080/query \
 
 A query that fails validation (`execute` or `validate`, either language)
 returns HTTP 400 with the structured error list directly as the body
-(not wrapped in `"error"`):
+(not wrapped in `"error"`) -- see [Error response shapes](#error-response-shapes):
 ```json
 {
   "valid": false,
   "errors": [
-    {"code": "unknown_predicate", "message": "Unknown predicate 'artst'; did you mean: artist?", "line": 2, "predicate": "artst", "suggestions": ["artist"]}
+    {"code": "unknown_predicate", "message": "Unknown predicate 'artst'; did you mean: artist?", "line": 2, "column": 3, "predicate": "artst", "suggestions": ["artist"]}
   ],
-  "warnings": []
+  "warnings": [],
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
 
 ---
 
-## Error Responses
+## Error response shapes
 
-All errors return JSON with an `error` field:
+BeingDB distinguishes two error families, never mixing a string and an
+object under the same `"error"` key:
+
+**Query-invalid** -- the request itself was fine, but the query is
+invalid (syntax error, unknown predicate, arity/type mismatch,
+disconnected query, unsafe negation, unbound projection/ordering
+variable, ...). Returned by `POST /query` for `action: "validate"`, for
+`action: "explain"` when lowering fails, and for `action: "execute"` 
+(either language) when the query fails validation. Always:
 
 ```json
 {
-  "error": "Error message here"
+  "valid": false,
+  "errors": [ { "code": "...", "message": "..." } ],
+  "warnings": [],
+  "language": "core",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:..."
 }
 ```
+
+See [Query Language](query-language.md#validation) for the full list of
+error codes.
+
+**Request/runtime failure** -- malformed JSON, a missing required field,
+a query timeout, an internal error, or an unrecognized `language`/
+`action` value. Unrelated to whether the query text is valid. Always:
+
+```json
+{ "error": { "code": "malformed_request", "message": "The request body is not valid JSON." } }
+```
+
+`code` is one of: `malformed_request`, `invalid_request` (the simpler
+endpoints that don't yet carry a specific code), `timeout`,
+`internal_error`, `execution_error`, `unknown_language`,
+`unknown_action`.
 
 ### Common Errors
 
-**400 Bad Request - Invalid Query Syntax**
+**400 Bad Request - Invalid JSON body**
 ```json
-{
-  "error": "Parse error: unexpected token at line 1, column 15"
-}
-```
-
-**400 Bad Request - Invalid Predicate Name**
-```json
-{
-  "error": "Invalid predicate name 'Work|Person'. Predicate names can only contain lowercase letters, digits, and underscores."
-}
-```
-
-**400 Bad Request - Query Timeout**
-```json
-{
-  "error": "Query timeout: exceeded 5 second limit"
-}
-```
-
-**400 Bad Request - Too Many Intermediate Results**
-```json
-{
-  "error": "Intermediate result limit exceeded (max: 10000)"
-}
+{ "error": { "code": "malformed_request", "message": "The request body is not valid JSON." } }
 ```
 
 **400 Bad Request - Missing Query Field**
 ```json
+{ "error": { "code": "malformed_request", "message": "Missing 'query' field" } }
+```
+
+**400 Bad Request - Query Timeout**
+```json
+{ "error": { "code": "timeout", "message": "Query timeout after 5 seconds - query too expensive. Try limiting predicates or adding more specific constraints." } }
+```
+
+**400 Bad Request - Disconnected query (query-invalid, not a runtime error)**
+```json
 {
-  "error": "Missing 'query' field"
+  "valid": false,
+  "errors": [
+    {
+      "code": "disconnected_query",
+      "message": "The query contains disconnected pattern groups and would produce a Cartesian product.",
+      "groups": [ ["person(Person)"], ["organisation(Organisation)"] ]
+    }
+  ],
+  "warnings": [],
+  "language": "core",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:..."
 }
 ```
 
-**400 Bad Request - Invalid JSON**
+**400 Bad Request - Invalid Predicate Name (GET /predicates, GET /query/:predicate)**
 ```json
-{
-  "error": "Expected JSON object"
-}
+{ "error": { "code": "invalid_request", "message": "Invalid predicate name 'Work|Person'. Predicate names must contain only lowercase letters, numbers, and underscores." } }
 ```
 
 ---

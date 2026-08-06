@@ -38,14 +38,23 @@ val execute_query :
 
 (** {2 Expressive query language and unified query dispatch} *)
 
-(** Outcome of {!run_query}: a well-formed successful response, a
-    well-formed but invalid query (structured validation errors), or a
-    hard failure (parse error, unsafe query, execution error, or a bad
-    [language]/[action] parameter). *)
+(** Outcome of {!run_query}:
+    - [Success json]: executed/validated/explained successfully.
+    - [Invalid json]: a well-formed request whose *query* is invalid --
+      [json] always has the shape [{"valid": false, "errors": [...],
+      "warnings": [...], "language", "languageVersion",
+      "environmentFingerprint"}] (for [validate]/[explain]), or the same
+      shape without the explain/validate-specific extras (for
+      [execute]). Covers syntax errors, unknown predicates, arity/type
+      mismatches, disconnected queries, unsafe negation, and unbound
+      projections/ordering, for both languages and all three actions.
+    - [Failure { code; message }]: a transport or runtime failure
+      unrelated to the query's validity (timeout, internal error, or a
+      bad [language]/[action] parameter). *)
 type query_outcome =
   | Success of Yojson.Safe.t
   | Invalid of Yojson.Safe.t
-  | Failure of string
+  | Failure of { code : string; message : string }
 
 (** Unified entry point for [POST /query] and the REPL's query commands.
     [language] is ["core"] (default) or ["dsl"]; [action] is ["execute"]

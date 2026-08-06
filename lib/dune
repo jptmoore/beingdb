@@ -1,6 +1,6 @@
 (library
  (name beingdb)
- (libraries irmin.unix irmin-git.unix irmin-pack.unix dream lwt lwt.unix logs logs.lwt logs.fmt fmt fmt.tty yojson cmdliner linenoise))
+ (libraries irmin.unix irmin-git.unix irmin-pack.unix dream lwt lwt.unix logs logs.lwt logs.fmt fmt fmt.tty yojson cmdliner linenoise digestif))
 
 (rule
  (target version.ml)
