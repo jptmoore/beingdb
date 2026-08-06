@@ -1,5 +1,7 @@
 (** HTTP API tests for BeingDB *)
 
+open Beingdb
+
 (** Helper: Create test Pack store *)
 let create_test_pack name =
   let test_dir = Filename.concat (Filename.get_temp_dir_name ()) 
@@ -11,21 +13,28 @@ let create_test_pack name =
   
   Lwt_main.run (
     let open Lwt.Syntax in
-    let* store = Beingdb.Pack_backend.init ~fresh:true test_dir in
+    let* store = Pack_backend.init ~fresh:true test_dir in
     
     (* Add some test data *)
-    let facts = [
-      ("created", [Beingdb.Types.Atom "tina_keane"; Beingdb.Types.Atom "she"]);
-      ("created", [Beingdb.Types.Atom "lynn_hershman"; Beingdb.Types.Atom "lorna"]);
-      ("shown_in", [Beingdb.Types.Atom "she"; Beingdb.Types.Atom "rewind_1995"]);
-      ("shown_in", [Beingdb.Types.Atom "lorna"; Beingdb.Types.Atom "rewind_1995"]);
-      ("artist", [Beingdb.Types.Atom "tina_keane"]);
-      ("artist", [Beingdb.Types.Atom "lynn_hershman"]);
-    ] in
+    let by_predicate =
+      [
+        ( "created",
+          [
+            Fact.make "created" [ Value.Atom "tina_keane"; Value.Atom "she" ];
+            Fact.make "created" [ Value.Atom "lynn_hershman"; Value.Atom "lorna" ];
+          ] );
+        ( "shown_in",
+          [
+            Fact.make "shown_in" [ Value.Atom "she"; Value.Atom "rewind_1995" ];
+            Fact.make "shown_in" [ Value.Atom "lorna"; Value.Atom "rewind_1995" ];
+          ] );
+        ("artist", [ Fact.make "artist" [ Value.Atom "tina_keane" ]; Fact.make "artist" [ Value.Atom "lynn_hershman" ] ]);
+      ]
+    in
     
-    let* () = Lwt_list.iter_s (fun (pred, args) ->
-      Beingdb.Pack_backend.write_fact store pred args
-    ) facts in
+    let* () = Lwt_list.iter_s (fun (pred, facts) ->
+      Pack_backend.write_predicate_batch store pred facts (Printf.sprintf "compile %s" pred)
+    ) by_predicate in
     Lwt.return (store, test_dir)
   )
 

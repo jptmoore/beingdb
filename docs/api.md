@@ -88,16 +88,16 @@ Lists all available predicates in the pack store with their arities.
       "name": "created",
       "arity": 2,
       "samples": [
-        ["tina_keane", "she"],
-        ["tina_keane", "faded_wallpaper"]
+        [{"type": "atom", "value": "tina_keane"}, {"type": "atom", "value": "she"}],
+        [{"type": "atom", "value": "tina_keane"}, {"type": "atom", "value": "faded_wallpaper"}]
       ],
       "sample_count": 2
     },
     {
-      "name": "shown_in",
+      "name": "birth_year",
       "arity": 2,
       "samples": [
-        ["she", "rewind_exhibition_1995"]
+        [{"type": "atom", "value": "tina_keane"}, {"type": "year", "value": "1951"}]
       ],
       "sample_count": 1
     }
@@ -140,9 +140,8 @@ Retrieves all facts for a specific predicate.
 {
   "predicate": "created",
   "facts": [
-    ["tina_keane", "she"],
-    ["tina_keane", "faded_wallpaper"],
-    ["tina_keane", "shadow_of_a_journey"]
+    [{"type": "atom", "value": "tina_keane"}, {"type": "atom", "value": "she"}],
+    [{"type": "atom", "value": "tina_keane"}, {"type": "atom", "value": "faded_wallpaper"}]
   ]
 }
 ```
@@ -185,10 +184,14 @@ Execute pattern matching queries with joins and pagination.
 {
   "variables": ["Artist", "Work", "Exhibition"],
   "results": [
-    ["tina_keane", "she", "rewind_exhibition_1995"],
-    ["tina_keane", "faded_wallpaper", "ica_london_2010"]
+    {
+      "Artist": {"type": "atom", "value": "tina_keane"},
+      "Work": {"type": "atom", "value": "she"},
+      "Exhibition": {"type": "atom", "value": "rewind_exhibition_1995"}
+    }
   ],
-  "count": 2
+  "count": 1,
+  "total": 1
 }
 ```
 
@@ -197,8 +200,8 @@ Execute pattern matching queries with joins and pagination.
 {
   "variables": ["Artist", "Work"],
   "results": [
-    ["tina_keane", "she"],
-    ["tina_keane", "faded_wallpaper"]
+    { "Artist": {"type": "atom", "value": "tina_keane"}, "Work": {"type": "atom", "value": "she"} },
+    { "Artist": {"type": "atom", "value": "tina_keane"}, "Work": {"type": "atom", "value": "faded_wallpaper"} }
   ],
   "count": 2,
   "total": 156,
@@ -206,6 +209,11 @@ Execute pattern matching queries with joins and pagination.
   "limit": 10
 }
 ```
+
+Each value in a result is a typed object, `{"type": ..., "value": ...}`
+(see [query-language.md](query-language.md#json-result-format)). Exact
+decimal values are always encoded as JSON strings to avoid precision
+loss.
 
 **Response Fields:**
 - `variables` - Array of variable names in order

@@ -48,8 +48,12 @@ let validate_limit = function
   | Some n -> Ok (Some n)
 
 (** Check for duplicate predicates (Cartesian product pattern) *)
-let check_cartesian_product query =
-  let predicate_names = List.map (fun p -> p.Query_parser.name) query.Query_parser.patterns in
+let check_cartesian_product (query : Query_ast.query) =
+  let predicate_names =
+    List.filter_map
+      (function Query_ast.Pattern { predicate; _ } -> Some predicate | _ -> None)
+      query.clauses
+  in
   let unique_predicates = List.sort_uniq String.compare predicate_names in
   if List.length predicate_names <> List.length unique_predicates then
     Error CartesianProduct
@@ -71,15 +75,22 @@ let validate_predicate_name name =
     Ok ()
 
 (** Validate all predicate names in query *)
-let validate_predicate_names query =
+let validate_predicate_names (query : Query_ast.query) =
   let rec check = function
     | [] -> Ok ()
-    | p :: rest ->
-        match validate_predicate_name p.Query_parser.name with
+    | Query_ast.Pattern { predicate; _ } :: rest -> (
+        match validate_predicate_name predicate with
         | Error _ as e -> e
-        | Ok () -> check rest
+        | Ok () -> check rest)
+    | _ :: rest -> check rest
   in
-  check query.Query_parser.patterns
+  check query.clauses
+
+(** A query must contain at least one predicate pattern; comparisons alone
+    have no facts to bind variables from. *)
+let validate_has_pattern (query : Query_ast.query) =
+  if List.exists (function Query_ast.Pattern _ -> true | _ -> false) query.clauses then Ok ()
+  else Error InvalidSyntax
 
 (** Validate query structure and parameters *)
 let validate_query query offset limit =
@@ -93,5 +104,8 @@ let validate_query query offset limit =
           | Error _ as e -> e
           | Ok () ->
           match check_cartesian_product query with
+          | Error _ as e -> e
+          | Ok () ->
+          match validate_has_pattern query with
           | Error _ as e -> e
           | Ok () -> Ok (valid_offset, valid_limit)

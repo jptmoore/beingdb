@@ -39,6 +39,14 @@ shown_in(she, rewind_exhibition_1995).
 shown_in(faded_wallpaper, ica_london_2010).
 ```
 
+Types are inferred directly from literal syntax -- no schema file is
+needed. See [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
+for a worked example covering every literal type (strings,
+language-tagged strings, integers, decimals, booleans, years,
+year-months, dates, instants, and URIs), and
+[query-language.md](query-language.md) for the full typed syntax and
+comparison operators.
+
 **Complete example repository:** [beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
 
 ## Local Development Workflow
@@ -120,8 +128,8 @@ Response:
     {"name": "created", "arity": 2},
     {"name": "shown_in", "arity": 2},
     {"name": "held_at", "arity": 2},
-    {"name": "artist", "arity": 1},
-    {"name": "work", "arity": 1}
+    {"name": "year_created", "arity": 2},
+    {"name": "condition_rating", "arity": 2}
   ]
 }
 ```
@@ -143,13 +151,17 @@ Response:
 {
   "variables": ["Artist", "Work"],
   "results": [
-    ["tina_keane", "she"],
-    ["tina_keane", "faded_wallpaper"],
-    ["tina_keane", "shadow_of_a_journey"]
+    { "Artist": {"type": "atom", "value": "tina_keane"}, "Work": {"type": "atom", "value": "she"} },
+    { "Artist": {"type": "atom", "value": "tina_keane"}, "Work": {"type": "atom", "value": "faded_wallpaper"} },
+    { "Artist": {"type": "atom", "value": "tina_keane"}, "Work": {"type": "atom", "value": "shadow_of_a_journey"} }
   ],
-  "count": 3
+  "count": 3,
+  "total": 3
 }
 ```
+
+Each value is a typed object (`{"type": ..., "value": ...}`); see
+[query-language.md](query-language.md#json-result-format).
 
 **Join query:**
 ```bash
@@ -248,5 +260,49 @@ beingdb-serve --pack ./pack_store &
 # 4. Verify
 curl http://localhost:8080/predicates
 ```
+
+## Interactive REPL
+
+`beingdb repl` (equivalently, the standalone `beingdb-repl`) opens a
+compiled Pack store and reads queries from the terminal, one per line,
+printing typed JSON results -- useful for exploring a store or trying
+out query syntax without an HTTP server:
+
+```bash
+beingdb repl --pack ./pack_store
+# or: beingdb-repl --pack ./pack_store
+```
+
+```
+beingdb> created(Artist, Work)
+{
+  "variables": [ "Artist", "Work" ],
+  "results": [
+    { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
+  ],
+  "count": 1,
+  "total": 1,
+  "limit": 1000
+}
+```
+
+A line starting with `:` is a REPL command rather than a query:
+
+| Command | Effect |
+|---|---|
+| `:predicates` | List predicates and their arities |
+| `:explain <query>` | Show the chosen query plan without executing it |
+| `:load <file>` | Load facts (`.pl`, `.pro`, `.facts`) or run each line as a query (any other extension) |
+| `:loadfacts <file>` | Force-load a file as facts, written directly into the open Pack store |
+| `:loadqueries <file>` | Force-run every non-blank, non-comment line of a file as a query |
+| `:limit <n>` | Set the default max rows shown per query for the rest of the session |
+| `:help` | List commands |
+| `:quit` / `:exit` | Leave the REPL |
+
+`:load`/`:loadfacts` write straight into the open Pack store -- a
+REPL-only convenience for quick, local experimentation. This does not
+go through the Git-first compile workflow, so anything loaded this way
+is not reflected in the source repository and will be lost the next
+time the store is recompiled from Git.
 
 

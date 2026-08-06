@@ -26,5 +26,6 @@
   (fmt (>= 0.9.0))
   (yojson (>= 2.0.0))
   (cmdliner (>= 1.1.0))
+  (linenoise (>= 1.0.0))
   (alcotest (and (>= 1.7.0) :with-test))
   (alcotest-lwt (and (>= 1.7.0) :with-test))))
