@@ -45,7 +45,7 @@ let show_predicates store =
   |> List.iter (fun (name, arity) -> Printf.printf "  %s/%d\n" name arity)
 
 let describe_predicate store name =
-  let env = Lwt_main.run (Query_environment.build store) in
+  let env = Lwt_main.run (Query_environment.load_or_build store) in
   match Query_environment.find env name with
   | None -> Printf.printf "Unknown predicate: %s\n" name
   | Some p ->
@@ -61,9 +61,9 @@ let describe_predicate store name =
           p.Query_environment.examples)
 
 let show_environment store mode =
-  let env = Lwt_main.run (Query_environment.build store) in
+  let env = Lwt_main.run (Query_environment.load_or_build store) in
   Printf.printf "predicates: %d\n" (List.length env.Query_environment.predicates);
-  Printf.printf "fingerprint: %s\n" env.Query_environment.fingerprint;
+  Printf.printf "environment_fingerprint: %s\n" env.Query_environment.fingerprint;
   Printf.printf "language_version: %s\n" env.Query_environment.language_version;
   Printf.printf "mode: %s\n" (mode_name !mode)
 
@@ -98,7 +98,7 @@ let load_queries store limit file =
     error message. *)
 let print_outcome = function
   | Controller.Success json | Controller.Invalid json -> print_endline (Yojson.Safe.pretty_to_string json)
-  | Controller.Failure msg -> Printf.printf "Error: %s\n" msg
+  | Controller.Failure { code; message } -> Printf.printf "Error [%s]: %s\n" code message
 
 let run_query_language ~language ~action store limit query_text =
   print_outcome (Lwt_main.run (Controller.run_query ~max_results:limit ~language ~action store query_text ~offset:None ~limit:None))
@@ -177,7 +177,7 @@ let run_repl pack_path default_limit history_file =
     in
     go []
   in
-  let env = Lwt_main.run (Query_environment.build store) in
+  let env = Lwt_main.run (Query_environment.load_or_build store) in
   Printf.printf "BeingDB REPL. %d predicates, fingerprint %s, %s, mode %s. Type :help for commands, :quit to exit.\n"
     (List.length env.Query_environment.predicates) env.Query_environment.fingerprint env.Query_environment.language_version
     (mode_name !mode);

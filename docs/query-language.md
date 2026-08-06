@@ -223,6 +223,14 @@ Right value: 1979
 Did you mean @1979 (year only) or @1979-04-01 (full date)?
 ```
 
+The expressive query language additionally catches many of these
+**statically**, at validation time, whenever a variable's type can be
+inferred from the predicate patterns that bind it (see
+[Validation](#validation) below) -- so a query comparing a `date`-typed
+variable against an integer literal is rejected with a structured
+`comparison_type_mismatch` error before it ever runs, not just when a
+matching row happens to be evaluated.
+
 ## Query planning
 
 BeingDB does not fall back to "scan everything, then filter" whenever a
@@ -289,6 +297,35 @@ Built-in safety limits prevent runaway queries:
 - **Timeout:** 5 seconds maximum execution time.
 - **Intermediate results:** 10,000 row limit during joins.
 - **Result limit:** configurable via `MAX_RESULTS` (default 5000).
+- **Connectivity:** a query's predicate patterns must form a single
+  connected component -- every pattern must be reachable from every
+  other one through a shared variable, a shared constant, or a
+  comparison that references both. This applies to *both* languages.
+
+  Repeated predicates are always fine, including self-joins and
+  multi-hop chains:
+
+  ```prolog
+  parent(Person, Parent), parent(Parent, Grandparent)
+  ```
+
+  What's rejected is a genuinely **disconnected** query -- one that
+  would compute an unconstrained Cartesian product because two pattern
+  groups share nothing:
+
+  ```prolog
+  person(Person), organisation(Organisation)   % rejected: no join between them
+  ```
+
+  ```prolog
+  person(Person), works_for(Person, Organisation), organisation(Organisation)   % fine: joined
+  ```
+
+  An `optional`/`either`-`or`/`not` group counts as connected if it
+  shares a variable with the rest of the query; each `either`/`or`
+  branch is additionally checked for its own internal connectivity. A
+  disconnected query is rejected with a `disconnected_query` error (see
+  [Validation](#validation)).
 
 ## What the core query language does NOT support
 
@@ -443,6 +480,25 @@ offset N
   language -- a bare `1972` is an integer, not a year, and comparing it
   against a `year`-typed argument is a validation error.
 
+### Unbound optional variables: one stable JSON shape
+
+Every projected variable appears as a key in every result row, whether
+or not an `optional` branch actually matched -- an unmatched variable is
+`null`, it is never simply omitted from the row:
+
+```json
+{ "Person": { "type": "atom", "value": "alice" }, "Label": null }
+```
+
+This is the same shape everywhere a result row is produced: `execute`
+responses for both languages, and the REPL's printed JSON. `distinct`
+treats two `null`s in the same position as equal (so rows differing
+only by an unmatched optional variable are still deduplicated
+together). `order by` on a variable that's `null` in some rows uses a
+fixed policy -- **nulls last**, for both `ascending` and `descending` --
+so ordering is deterministic regardless of how many rows have an
+unmatched optional value.
+
 ### Example
 
 ```
@@ -498,7 +554,8 @@ built from the compiled store's inferred per-predicate schema (arity,
 per-argument-position observed types, fact counts, and a few bounded
 examples) -- no user-authored schema is read or required. Validation
 reports *every* problem found, not just the first, as a list of
-structured errors:
+structured errors, each with a stable `code` and a human-readable
+`message`, plus `line`/`column` where applicable:
 
 | Error code | Meaning |
 |---|---|
@@ -506,6 +563,8 @@ structured errors:
 | `unknown_predicate` | Predicate not found in the store; includes ranked name suggestions (edit distance + token overlap, no embeddings). |
 | `arity_mismatch` | Predicate used with the wrong number of arguments. |
 | `literal_type_mismatch` | A literal's type never occurs at that argument position in the compiled data. |
+| `comparison_type_mismatch` | A `<`/`<=`/`>`/`>=`/`between` comparison can never succeed for the inferred types on both sides (e.g. `date` vs `integer`); includes `leftType`, `rightType`, and a `suggestion` when one applies. |
+| `disconnected_query` | The query's patterns split into more than one connected component (see [Query protections](#query-protections)); includes `groups`, one entry per disconnected component. |
 | `unbound_projection` | A `find` variable never appears in `where`. |
 | `unbound_order_variable` | An `order by` variable never appears in `where`. |
 | `unsafe_negation` | A `not` block uses a variable not bound by any positive clause elsewhere in the query. |
@@ -522,7 +581,7 @@ optional fields:
 
 - `"language"`: `"core"` (default) or `"dsl"`.
 - `"action"`: `"execute"` (default), `"validate"` (check without
-  running), or `"explain"` (show the chosen access plan without running).
+  running), or `"explain"` (show the structured plan without running).
 
 ```bash
 curl -X POST http://localhost:8080/query \
@@ -547,22 +606,67 @@ advisory `warnings`:
 }
 ```
 
-A query that fails validation (for either `execute` or `validate`)
-returns HTTP 400 with the structured error list directly as the response
-body (not wrapped in an `"error"` field):
+**Two distinct error families** (see also [API Reference](api.md#error-response-shapes)):
+
+- **Query-invalid** (the request was well-formed, but the query itself
+  is invalid) -- for `validate`/`explain`, or `execute` on an invalid
+  query, either language returns HTTP 400 with `"valid": false` and the
+  structured error list directly as the response body:
+
+  ```json
+  {
+    "valid": false,
+    "errors": [
+      { "code": "unknown_predicate", "message": "Unknown predicate 'artst'; did you mean: artist?", "line": 2, "column": 3, "predicate": "artst", "suggestions": ["artist"] }
+    ],
+    "warnings": [],
+    "language": "dsl",
+    "languageVersion": "beingdb-dsl/1",
+    "environmentFingerprint": "sha256:..."
+  }
+  ```
+
+- **Request/runtime failure** (malformed JSON, timeout, an internal
+  error, or a bad `language`/`action` value) -- always
+  `{"error": {"code": ..., "message": ...}}`, an object, never a bare
+  string:
+
+  ```json
+  { "error": { "code": "malformed_request", "message": "The request body is not valid JSON." } }
+  ```
+
+`action: "explain"` returns both a structured `plan` (a list of typed
+operation objects: `predicate_scan`, `exact_index_lookup`,
+`range_index_lookup`, `join`, `optional_join`, `union`, `not_exists`,
+`filter`, `project`, `distinct`, `sort`, `offset`, `limit`) and a
+human-readable `planText`, alongside `normalizedCoreQuery` (the lowered
+query's patterns and comparisons as strings), without executing the
+query:
 
 ```json
 {
-  "valid": false,
-  "errors": [
-    { "code": "unknown_predicate", "message": "Unknown predicate 'artst'; did you mean: artist?", "line": 2, "predicate": "artst", "suggestions": ["artist"] }
+  "valid": true,
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:...",
+  "projection": ["Person"],
+  "distinct": true,
+  "normalizedCoreQuery": {
+    "patterns": ["director_of(Person, Organisation)", "founded(Organisation, Year)"],
+    "comparisons": ["Year > 1950"]
+  },
+  "plan": [
+    { "operation": "range_index_lookup", "predicate": "founded", "argumentPosition": 1, "constraints": [ { "operator": ">", "value": { "type": "integer", "value": "1950" } } ] },
+    { "operation": "join", "predicate": "director_of", "argumentPosition": 0, "joinVariables": ["Organisation"] },
+    { "operation": "project", "variables": ["Person"] },
+    { "operation": "distinct", "variables": ["Person"] }
   ],
-  "warnings": []
+  "planText": "founded: range_index(position=1, lower=exclusive:1950)\ndirector_of: equality_index_on_variable(position=1, var=Organisation)"
 }
 ```
 
-`action: "explain"` returns the projection, ordering, limit/offset, and
-the plan text, without executing the query.
+The plan is deterministic, typed, and independent of Irmin/Pack
+filesystem details -- no storage paths appear in it.
 
 ### Predicate introspection: `GET /predicates?detailed=true`
 
@@ -587,16 +691,20 @@ curl 'http://localhost:8080/predicates?detailed=true&q=creat'
       "examples": [[{ "type": "atom", "value": "tina_keane" }, { "type": "atom", "value": "she" }]]
     }
   ],
-  "fingerprint": "md5:3aa13057aa16d1340adbd77e02d266ab",
-  "language_version": "beingdb-dsl/1"
+  "environmentFingerprint": "sha256:3a1f...c9",
+  "languageVersion": "beingdb-dsl/1"
 }
 ```
 
 `q` filters by case-insensitive substring match on the predicate name;
 `names` filters to an exact comma-separated set of names. The
-fingerprint changes whenever the compiled predicates' shape or the
-expressive-language version changes -- useful for cache invalidation in
-LLM prompts built from this introspection data.
+fingerprint (SHA-256 of a canonical, sort-order-independent encoding of
+every predicate's name, arity, and observed argument types, plus the
+expressive-language version) changes whenever any of those change --
+useful for cache invalidation in LLM prompts built from this
+introspection data. It is exposed consistently, under the same
+`environmentFingerprint` key, in `/predicates`, REPL startup, and every
+`validate`/`explain` response.
 
 ### REPL
 
@@ -610,7 +718,7 @@ expressive syntax spans multiple lines.
 ```
 beingdb> :environment
 predicates: 6
-fingerprint: md5:3aa13057aa16d1340adbd77e02d266ab
+environment_fingerprint: sha256:3a1f2b7c9e4d5a6f8091b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b
 language_version: beingdb-dsl/1
 mode: auto
 beingdb> :describe created

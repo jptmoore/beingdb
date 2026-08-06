@@ -31,14 +31,17 @@ let canonical_predicate_string (p : predicate_signature) =
   Printf.sprintf "%s/%d[%s]" p.name p.arity (String.concat "," arg_str)
 
 (** Deterministic fingerprint over canonical predicate metadata and the
-    query-language generation version. Implemented with the stdlib
-    [Digest] (MD5) rather than SHA-256 -- deterministic and
-    dependency-free, consistent with how fact IDs are computed
-    ({!Fact.fact_id}); not intended for adversarial contexts. *)
+    query-language generation version: SHA-256 of a canonical string
+    built from sorted predicate names, arities, and observed argument
+    types (so it is independent of any hash-table/map iteration order),
+    plus the expressive-language version. Formatted as
+    ["sha256:<lowercase hex digest>"]. Any change to a predicate's
+    arity, observed argument types, or the language version changes the
+    fingerprint; the same environment always produces the same one. *)
 let compute_fingerprint predicates =
   let sorted = List.sort (fun (a : predicate_signature) b -> String.compare a.name b.name) predicates in
   let canonical = String.concat ";" (List.map canonical_predicate_string sorted) ^ "|" ^ language_version in
-  "md5:" ^ Digest.to_hex (Digest.string canonical)
+  "sha256:" ^ Digestif.SHA256.to_hex (Digestif.SHA256.digest_string canonical)
 
 let build ?(examples = 3) store =
   let* names = Pack_backend.list_predicates store in

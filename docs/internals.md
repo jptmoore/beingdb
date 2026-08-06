@@ -341,27 +341,46 @@ Pipeline, module by module:
   both the core parser and the expressive parser accept identical
   literal/clause syntax with no duplication.
 - `lib/surface_ast.ml` -- the parsed form of the expressive syntax,
-  before validation: leaf clauses carry a source line number (for error
-  messages), alongside `Optional`/`Alternatives`/`Negation` group
-  variants.
+  before validation: leaf clauses carry a source line number and column
+  (for precise error locations), alongside `Optional`/`Alternatives`/
+  `Negation` group variants.
 - `lib/dsl_parser.ml` -- a line-oriented parser for `find`/`where`/
   `optional`/`either`/`or`/`not`/`order by`/`limit`/`offset`, producing
-  a `Surface_ast.surface_query`.
+  a `Surface_ast.surface_query`. Tracks each significant line's 1-based
+  line number and the 1-based column of its first non-whitespace
+  character, threaded onto every leaf clause.
 - `lib/query_environment.ml` -- dataset-aware predicate metadata used
   for validation and introspection, built deterministically from the
   compiled store's per-predicate manifests (section 7) via
   `Pack_backend.list_predicates`/`get_manifest`/`sample_facts` -- no
   separate cache or user-authored schema. Includes a fingerprint:
-  `"md5:" ^ Digest.to_hex (Digest.string canonical)` over sorted
-  predicate names, arities, observed argument types, and the
-  expressive-language version string (`Query_environment.language_version`,
-  currently `"beingdb-dsl/1"`) -- MD5 for the same reason fact IDs use
-  it (deterministic, dependency-free, not for adversarial contexts), not
-  a cryptographic guarantee.
+  `"sha256:" ^ Digestif.SHA256.to_hex (Digestif.SHA256.digest_string
+  canonical)` over sorted predicate names, arities, observed argument
+  types, and the expressive-language version string
+  (`Query_environment.language_version`, currently `"beingdb-dsl/1"`).
+  `digestif` (already present transitively via `irmin-git`) is used
+  directly rather than hand-rolling SHA-256; this is a deliberate,
+  narrow exception to the "no new hashing dependency" precedent set by
+  fact IDs (which stay on `Digest`/MD5 -- see section 2 -- since nothing
+  about them required changing here).
 - `lib/predicate_suggest.ml` -- deterministic "did you mean" suggestions
   for an unknown predicate name (normalized-name equality, Levenshtein
   edit distance, underscore-token overlap, arity compatibility) -- no
   embeddings or external calls.
+- `lib/query_connectivity.ml` -- checks that a query's positive
+  (non-negated) pattern clauses form a single connected component,
+  replacing an earlier, cruder rule that rejected any repeated
+  predicate. Two top-level clauses are connected when they share a
+  variable, share an identical literal constant, or are both referenced
+  by one comparison/between clause; `Optional`/`Alternatives`/
+  `Not_exists` groups are each one node (keyed by every variable used
+  anywhere inside), and are additionally checked for their own internal
+  connectivity recursively (each `either`/`or` branch independently).
+  Used by both `Query_validation.validate_query` (so raw core-language
+  text is protected too) and `Dsl_lower.lower` (for the structured
+  `disconnected_query` error). Self-joins and multi-hop chains sharing a
+  variable (`parent(A, B), parent(B, C)`) are always connected and never
+  rejected.
 - `lib/dsl_lower.ml` -- validates a `Surface_ast.surface_query` against
   a `Query_environment.t` and, if there are no errors, lowers it into a
   `Core_query.t`. Collects *every* problem found (not just the first).
@@ -370,28 +389,60 @@ Pipeline, module by module:
   position anywhere in the compiled data is a hard error; a
   heterogeneous position where the literal matches one of several
   observed types is only a warning), unbound `find`/`order by`
-  variables, and "safe negation" (every variable used inside a `not`
-  block must be bound by some positive clause elsewhere in the query --
-  otherwise its value would be unconstrained). It does not attempt full
-  cross-variable type inference for `Compare`/`Between` between two
-  joined variables; that is still caught at execution time by
-  `Query_engine`'s existing type-checked comparison evaluator, exactly
-  as for the core language.
+  variables, "safe negation" (every variable used inside a `not` block
+  must be bound by some positive clause elsewhere in the query),
+  connectivity (via `Query_connectivity`), and -- for `<`/`<=`/`>`/`>=`/
+  `between` only, never `=`/`!=`, which are always well-defined across
+  types -- static comparison-type mismatches: every variable's possible
+  type set is inferred as the union of observed types at every argument
+  position it's used in (via `Query_environment`), and a comparison is
+  flagged if *no* combination of the two sides' types could ever be
+  ordered (`Value.order_compatible_types`, a type-name-only mirror of
+  `Value.order_compare`'s cases). A variable whose type can't be
+  inferred (never bound by a recognized pattern) is left unchecked here,
+  deferred to `Query_engine`'s runtime type-checked comparison
+  evaluator, exactly as cross-variable comparisons already are.
 - `lib/validation_error.ml` -- the structured error/warning type shared
   by validation failures, with `to_json`/`warning_to_json` for the HTTP
-  and REPL surfaces.
+  and REPL surfaces. JSON field names are camelCase (`leftType`,
+  `rightType`, `argumentPosition`, `expectedTypes`, `receivedType`) to
+  match the rest of the normalized `/query` response envelope; the
+  `code` *value* itself stays a stable snake_case string.
+- `lib/explain_plan.ml` -- builds the structured, machine-readable
+  `plan` array for `action: "explain"`: the planner's steps (recursively
+  for nested groups) mapped to stable operation names
+  (`predicate_scan`/`exact_index_lookup`/`range_index_lookup`/`join`/
+  `optional_join`/`union`/`not_exists`/`filter`), followed by the
+  post-execution pipeline's own operations
+  (`project`/`distinct`/`sort`/`offset`/`limit`) -- independent of any
+  Irmin/Pack filesystem detail. `Query_engine.explain`'s existing prose
+  remains available in parallel as `planText`, and
+  `normalized_core_query_json` renders the lowered query's patterns and
+  comparisons as strings for the explain response's
+  `normalizedCoreQuery` field.
 - `lib/core_query.ml` -- `Core_query.apply` runs the post-execution
   pipeline over a raw `Query_engine.result`: order by full binding
   (`Value.order_compare`, falling back to canonical-string comparison
   for unordered types so `order by` always produces *some* deterministic
-  order), project to the requested variables, `distinct`-dedupe on the
-  projected tuple (via `Value.equal`, across the whole result set, not
-  just adjacent rows), then offset/limit.
+  order; a variable left unbound by an unmatched `optional` branch
+  always sorts last, for both `ascending` and `descending`), project to
+  the requested variables, `distinct`-dedupe on the projected tuple (via
+  `Value.equal`, across the whole result set, not just adjacent rows,
+  treating two `null`s in the same position as equal), then
+  offset/limit.
 - `lib/controller.ml`'s `run_query` is the single dispatch point for
   both languages and all three actions (`execute`/`validate`/`explain`),
   used identically by `Api.ml` (`POST /query`) and `Cli_repl.ml` (the
   REPL's query commands) -- neither surface re-implements any part of
-  this pipeline.
+  this pipeline, and both build the query environment via the same
+  `Query_environment.load_or_build`. `run_query`'s result type
+  distinguishes *query-invalid* (`Invalid` -- a `{"valid": false,
+  "errors": [...], "language", "languageVersion",
+  "environmentFingerprint"}` envelope, for both languages and all three
+  actions) from a genuine *request/runtime* `Failure { code; message }`
+  (malformed request, timeout, internal error, or a bad
+  `language`/`action` parameter) -- `Api.ml` renders the latter as
+  `{"error": {"code": ..., "message": ...}}`, never a bare string.
 
 ## 7. Schema inference
 

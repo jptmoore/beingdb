@@ -478,8 +478,8 @@ let test_list_predicates_detailed () =
      let* body = Dream.body response in
      let json = Yojson.Safe.from_string body in
      let open Yojson.Safe.Util in
-     let fingerprint = json |> member "fingerprint" |> to_string in
-     Alcotest.(check bool) "fingerprint is md5-tagged" true (String.length fingerprint > 4 && String.sub fingerprint 0 4 = "md5:");
+     let fingerprint = json |> member "environmentFingerprint" |> to_string in
+     Alcotest.(check bool) "fingerprint is sha256-tagged" true (String.length fingerprint > 7 && String.sub fingerprint 0 7 = "sha256:");
      let predicates = json |> member "predicates" |> to_list in
      let created = List.find (fun p -> p |> member "name" |> to_string = "created") predicates in
      let arguments = created |> member "arguments" |> to_list in

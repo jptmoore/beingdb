@@ -17,17 +17,24 @@ end
 type validation_error =
   | InvalidOffset of int
   | InvalidLimit of int
-  | CartesianProduct
+  | DisconnectedQuery of string list list
   | InvalidSyntax
   | InvalidPredicateName of string
+
+let error_code = function
+  | InvalidOffset _ -> "invalid_offset"
+  | InvalidLimit _ -> "invalid_limit"
+  | DisconnectedQuery _ -> "disconnected_query"
+  | InvalidSyntax -> "invalid_syntax"
+  | InvalidPredicateName _ -> "invalid_predicate_name"
 
 let error_message = function
   | InvalidOffset n ->
       Printf.sprintf "Invalid offset: must be >= 0 (got %d)" n
   | InvalidLimit n ->
       Printf.sprintf "Invalid limit: must be > 0 (got %d)" n
-  | CartesianProduct ->
-      "Query contains Cartesian product (same predicate appears multiple times). This creates exponential combinations and is not supported. Consider restructuring your query or querying incrementally."
+  | DisconnectedQuery _ ->
+      "The query contains disconnected pattern groups and would produce a Cartesian product. Join the groups with a shared variable, or query them separately."
   | InvalidSyntax ->
       "Invalid query syntax. Please check your query format."
   | InvalidPredicateName name when name = "" ->
@@ -47,18 +54,13 @@ let validate_limit = function
   | Some n when n <= 0 -> Error (InvalidLimit n)
   | Some n -> Ok (Some n)
 
-(** Check for duplicate predicates (Cartesian product pattern) *)
-let check_cartesian_product (query : Query_ast.query) =
-  let predicate_names =
-    List.filter_map
-      (function Query_ast.Pattern { predicate; _ } -> Some predicate | _ -> None)
-      query.clauses
-  in
-  let unique_predicates = List.sort_uniq String.compare predicate_names in
-  if List.length predicate_names <> List.length unique_predicates then
-    Error CartesianProduct
-  else
-    Ok ()
+(** A query's positive patterns must form a single connected component
+    (see {!Query_connectivity}); otherwise it would execute as an
+    unconstrained Cartesian product. Repeated use of the same predicate
+    (self-joins, multi-hop chains) is fine as long as the repeats are
+    connected via a shared variable. *)
+let check_connectivity (query : Query_ast.query) =
+  match Query_connectivity.check_query query with Ok () -> Ok () | Error groups -> Error (DisconnectedQuery groups)
 
 (** Validate predicate name syntax *)
 let validate_predicate_name name =
@@ -103,7 +105,7 @@ let validate_query query offset limit =
           match validate_predicate_names query with
           | Error _ as e -> e
           | Ok () ->
-          match check_cartesian_product query with
+          match check_connectivity query with
           | Error _ as e -> e
           | Ok () ->
           match validate_has_pattern query with

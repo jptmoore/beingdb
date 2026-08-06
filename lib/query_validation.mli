@@ -17,9 +17,13 @@ end
 type validation_error =
   | InvalidOffset of int      (** Offset was negative *)
   | InvalidLimit of int        (** Limit was zero or negative *)
-  | CartesianProduct          (** Same predicate appears multiple times *)
+  | DisconnectedQuery of string list list  (** Positive patterns form more than one connected component; each element is one component's clause strings *)
   | InvalidSyntax             (** Query syntax is invalid *)
   | InvalidPredicateName of string  (** Predicate name contains invalid characters *)
+
+(** Stable machine-readable code for a validation error, e.g.
+    ["disconnected_query"], for structured JSON error responses. *)
+val error_code : validation_error -> string
 
 (** Get user-friendly error message for a validation error *)
 val error_message : validation_error -> string
@@ -36,7 +40,9 @@ val validate_predicate_name : string -> (unit, validation_error) result
     This is the main validation entry point. It checks:
     - Offset is >= 0
     - Limit is > 0
-    - No duplicate predicates (Cartesian product check)
+    - Predicate names are well-formed
+    - Positive patterns form a single connected component (see {!Query_connectivity})
+    - The query contains at least one predicate pattern
     
     Returns Ok (valid_offset, valid_limit) on success, or Error with validation_error.
 *)

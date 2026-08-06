@@ -13,10 +13,15 @@
 let json_response data =
   Dream.json (Yojson.Safe.to_string data)
 
-(** Error response helper *)
-let error_response msg =
-  Dream.json ~status:`Bad_Request 
-    (Yojson.Safe.to_string (`Assoc ["error", `String msg]))
+(** Error response helper. Always the object shape [{"error": {"code":
+    ..., "message": ...}}] -- never a bare string under ["error"] --
+    distinguishing transport/runtime failures from query-invalid
+    responses (which use [{"valid": false, "errors": [...] }], see
+    {!handle_query_language}). [code] defaults to a generic
+    ["invalid_request"] for the simpler endpoints that only ever surface
+    a plain message. *)
+let error_response ?(code = "invalid_request") message =
+  Dream.json ~status:`Bad_Request (Yojson.Safe.to_string (`Assoc [ ("error", `Assoc [ ("code", `String code); ("message", `String message) ]) ]))
 
 (** Health check endpoint *)
 let handle_root _req =
@@ -74,7 +79,7 @@ let handle_query_language max_results pack_store req =
   
   (* Parse JSON request *)
   match Yojson.Safe.from_string body with
-  | exception _ -> error_response "Invalid JSON"
+  | exception _ -> error_response ~code:"malformed_request" "The request body is not valid JSON."
   | json ->
       match json with
       | `Assoc fields ->
@@ -96,9 +101,9 @@ let handle_query_language max_results pack_store req =
               >>= (function
                 | Controller.Success json -> json_response json
                 | Controller.Invalid json -> Dream.json ~status:`Bad_Request (Yojson.Safe.to_string json)
-                | Controller.Failure msg -> error_response msg)
-          | _ -> error_response "Missing 'query' field")
-      | _ -> error_response "Expected JSON object"
+                | Controller.Failure { code; message } -> error_response ~code message)
+          | _ -> error_response ~code:"malformed_request" "Missing 'query' field")
+      | _ -> error_response ~code:"malformed_request" "Expected a JSON object"
 
 (** Start the API server *)
 let serve max_results pack_store port =

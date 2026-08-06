@@ -416,7 +416,7 @@ let test_run_query_core_execute () =
          let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
          Alcotest.(check bool) "has results" true (List.length results > 0)
      | Controller.Invalid _ -> Alcotest.fail "expected Success, got Invalid"
-     | Controller.Failure msg -> Alcotest.fail ("expected Success, got Failure: " ^ msg));
+     | Controller.Failure { message; _ } -> Alcotest.fail ("expected Success, got Failure: " ^ message));
      cleanup test_dir;
      Lwt.return ())
 
@@ -437,7 +437,9 @@ let test_run_query_core_explain () =
     (let open Lwt.Syntax in
      let* outcome = Controller.run_query ~max_results:100 ~action:"explain" store "created(Artist, Work)" ~offset:None ~limit:None in
      (match outcome with
-     | Controller.Success json -> Alcotest.(check bool) "has plan" true (String.length Yojson.Safe.Util.(json |> member "plan" |> to_string) > 0)
+     | Controller.Success json ->
+         Alcotest.(check bool) "has plan steps" true (List.length Yojson.Safe.Util.(json |> member "plan" |> to_list) > 0);
+         Alcotest.(check bool) "has planText" true (String.length Yojson.Safe.Util.(json |> member "planText" |> to_string) > 0)
      | _ -> Alcotest.fail "expected Success");
      cleanup test_dir;
      Lwt.return ())
@@ -453,7 +455,7 @@ let test_run_query_dsl_execute () =
          let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
          Alcotest.(check int) "2 artists" 2 (List.length results)
      | Controller.Invalid j -> Alcotest.fail ("expected Success, got Invalid: " ^ Yojson.Safe.to_string j)
-     | Controller.Failure msg -> Alcotest.fail ("expected Success, got Failure: " ^ msg));
+     | Controller.Failure { message; _ } -> Alcotest.fail ("expected Success, got Failure: " ^ message));
      cleanup test_dir;
      Lwt.return ())
 
@@ -473,7 +475,7 @@ let test_run_query_dsl_execute_top_level_alternatives () =
          let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
          Alcotest.(check bool) "has results" true (List.length results > 0)
      | Controller.Invalid j -> Alcotest.fail ("expected Success, got Invalid: " ^ Yojson.Safe.to_string j)
-     | Controller.Failure msg -> Alcotest.fail ("expected Success, got Failure: " ^ msg));
+     | Controller.Failure { message; _ } -> Alcotest.fail ("expected Success, got Failure: " ^ message));
      cleanup test_dir;
      Lwt.return ())
 
@@ -489,7 +491,7 @@ let test_run_query_dsl_validate_unknown_predicate () =
          let errors = Yojson.Safe.Util.(json |> member "errors" |> to_list) in
          Alcotest.(check bool) "has errors" true (List.length errors > 0)
      | Controller.Success _ -> Alcotest.fail "expected Invalid"
-     | Controller.Failure msg -> Alcotest.fail ("expected Invalid, got Failure: " ^ msg));
+     | Controller.Failure { message; _ } -> Alcotest.fail ("expected Invalid, got Failure: " ^ message));
      cleanup test_dir;
      Lwt.return ())
 
@@ -500,7 +502,9 @@ let test_run_query_dsl_explain () =
      let query = "find Artist\nwhere\n  artist(Artist)\n" in
      let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"explain" store query ~offset:None ~limit:None in
      (match outcome with
-     | Controller.Success json -> Alcotest.(check bool) "has plan" true (String.length Yojson.Safe.Util.(json |> member "plan" |> to_string) > 0)
+     | Controller.Success json ->
+         Alcotest.(check bool) "has plan steps" true (List.length Yojson.Safe.Util.(json |> member "plan" |> to_list) > 0);
+         Alcotest.(check bool) "has planText" true (String.length Yojson.Safe.Util.(json |> member "planText" |> to_string) > 0)
      | _ -> Alcotest.fail "expected Success");
      cleanup test_dir;
      Lwt.return ())

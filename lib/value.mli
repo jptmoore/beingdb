@@ -37,6 +37,20 @@ val equal : t -> t -> bool
     atoms, which is not currently supported). *)
 val order_compare : t -> t -> (int, string) result
 
+(** Statically decide, from type names alone (as returned by
+    {!type_name}), whether two values of those types could ever be
+    ordered against each other by {!order_compare} -- mirrors
+    [order_compare]'s cases without needing sample values. Used by the
+    expressive query language's validator to catch cross-type ordering
+    comparisons (e.g. a date compared with an integer) before execution. *)
+val order_compatible_types : string -> string -> bool
+
+(** A short, human-readable suggestion for fixing an ordering comparison
+    between two incompatible types, e.g. ["Use a date literal such as
+    @1970-01-01."] for a [date]/[integer] mismatch. Returns [None] when
+    no specific suggestion applies. *)
+val comparison_suggestion : left_type:string -> right_type:string -> string option
+
 (** Canonical human-readable string form of a value (not type-tagged).
     Used for JSON payloads and as the readable component of fact
     encoding. Distinct canonical values always canonicalize identically
