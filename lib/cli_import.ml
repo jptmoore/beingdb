@@ -94,5 +94,5 @@ let cmd =
       `Pre "  beingdb-import --input ./test_data --git ./git-store";
     ]
   in
-  let info = Cmd.info "import" ~version:"0.1.0" ~doc ~man in
+  let info = Cmd.info "import" ~version:Version.version ~doc ~man in
   Cmd.v info Term.(const import_directory $ input_dir $ git_path)

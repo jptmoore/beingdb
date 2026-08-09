@@ -45,8 +45,8 @@ let info message = Store_info.v ~author:"beingdb" "%s" message
 type t = Store.t
 type repo = Store.Repo.t
 
-let pack_config ?(fresh = false) path =
-  Irmin_pack.config path ~fresh ~indexing_strategy:Irmin_pack.Indexing_strategy.minimal
+let pack_config ?(fresh = false) ?(readonly = false) path =
+  Irmin_pack.config path ~fresh ~readonly ~indexing_strategy:Irmin_pack.Indexing_strategy.minimal
 
 let create ~fname =
   Lwt_main.run
@@ -54,8 +54,8 @@ let create ~fname =
      let* repo = Store.Repo.v config in
      Store.main repo)
 
-let init ?(fresh = false) path =
-  let config = pack_config ~fresh path in
+let init ?(fresh = false) ?(readonly = false) path =
+  let config = pack_config ~fresh ~readonly path in
   let* repo = Store.Repo.v config in
   Store.main repo
 

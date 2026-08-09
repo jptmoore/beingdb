@@ -136,5 +136,5 @@ let cmd =
       `Pre "  beingdb-clone https://github.com/org/beingdb-facts.git --git ./my-db";
     ]
   in
-  let info = Cmd.info "clone" ~version:"0.1.0" ~doc ~man in
+  let info = Cmd.info "clone" ~version:Version.version ~doc ~man in
   Cmd.v info Term.(const clone_repo $ repo_url $ git_path $ force_flag)
