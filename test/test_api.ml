@@ -29,6 +29,7 @@ let create_test_pack name =
             Fact.make "shown_in" [ Value.Atom "lorna"; Value.Atom "rewind_1995" ];
           ] );
         ("artist", [ Fact.make "artist" [ Value.Atom "tina_keane" ]; Fact.make "artist" [ Value.Atom "lynn_hershman" ] ]);
+        ("title", [ Fact.make "title" [ Value.Atom "she"; Value.String "Smith, Jones and Brown" ] ]);
       ]
     in
     
@@ -267,6 +268,95 @@ let test_post_query_join () =
     let _ = Unix.system cmd in
     Lwt.return ()
   )
+
+(** Test: POST /query -- a multiline, comma-separated query produces the
+    same results as its single-line equivalent (whitespace, including
+    newlines, is insignificant). *)
+let test_post_query_multiline_matches_single_line () =
+  let (pack, test_dir) = create_test_pack "post_multiline" in
+  let app = create_app pack 1000 in
+
+  let run query =
+    let body = Yojson.Safe.to_string (`Assoc [ ("query", `String query) ]) in
+    let request = Dream.request ~target:"/query" ~method_:`POST body in
+    let response = Dream.test app request in
+    Lwt_main.run (
+      let open Lwt.Syntax in
+      let* resp_body = Dream.body response in
+      Lwt.return (Yojson.Safe.from_string resp_body)
+    )
+  in
+  let count json = Yojson.Safe.Util.member "count" json |> Yojson.Safe.Util.to_int in
+
+  let single_line = run "created(Artist, Work), shown_in(Work, Event)" in
+  let multi_line = run "created(Artist, Work),\nshown_in(Work, Event)" in
+  let broken_across_lines = run "created(\n Artist,\n Work\n),\nshown_in(\n Work,\n Event\n)" in
+
+  Alcotest.(check int) "multi-line matches single-line" (count single_line) (count multi_line);
+  Alcotest.(check int) "broken-across-lines matches single-line" (count single_line) (count broken_across_lines);
+  Alcotest.(check bool) "has results" true (count single_line > 0);
+
+  (* Cleanup *)
+  let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+  let _ = Unix.system cmd in
+  ()
+
+(** Test: POST /query -- a quoted string containing a comma is not split
+    into extra clauses. *)
+let test_post_query_string_with_comma () =
+  let (pack, test_dir) = create_test_pack "post_string_comma" in
+  let app = create_app pack 1000 in
+
+  let body = {|{"query":"title(Work, \"Smith, Jones and Brown\")"}|} in
+  let request = Dream.request ~target:"/query" ~method_:`POST body in
+  let response = Dream.test app request in
+
+  Lwt_main.run (
+    let open Lwt.Syntax in
+    let* resp_body = Dream.body response in
+    let json = Yojson.Safe.from_string resp_body in
+    let results = Yojson.Safe.Util.member "results" json |> Yojson.Safe.Util.to_list in
+    Alcotest.(check int) "one match" 1 (List.length results);
+
+    (* Cleanup *)
+    let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+    let _ = Unix.system cmd in
+    Lwt.return ()
+  )
+
+(** Test: POST /query -- a duplicate comma separator fails predictably. *)
+let test_post_query_duplicate_separator () =
+  let (pack, test_dir) = create_test_pack "post_duplicate_comma" in
+  let app = create_app pack 1000 in
+
+  let body = {|{"query":"created(Artist, Work),\n,\nshown_in(Work, Exhibition)"}|} in
+  let request = Dream.request ~target:"/query" ~method_:`POST body in
+  let response = Dream.test app request in
+  let status = Dream.status response in
+
+  Alcotest.(check int) "status 400 for duplicate separator" 400 (Dream.status_to_int status);
+
+  (* Cleanup *)
+  let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+  let _ = Unix.system cmd in
+  ()
+
+(** Test: POST /query -- an unmatched parenthesis fails predictably. *)
+let test_post_query_unmatched_paren () =
+  let (pack, test_dir) = create_test_pack "post_unmatched_paren" in
+  let app = create_app pack 1000 in
+
+  let body = {|{"query":"created(Artist, Work"}|} in
+  let request = Dream.request ~target:"/query" ~method_:`POST body in
+  let response = Dream.test app request in
+  let status = Dream.status response in
+
+  Alcotest.(check int) "status 400 for unmatched parenthesis" 400 (Dream.status_to_int status);
+
+  (* Cleanup *)
+  let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+  let _ = Unix.system cmd in
+  ()
 
 (** Test: POST /query with offset and limit *)
 let test_post_query_pagination () =
@@ -508,6 +598,8 @@ let () =
       Alcotest.test_case "POST /query simple" `Quick test_post_query_simple;
       Alcotest.test_case "POST /query join" `Quick test_post_query_join;
       Alcotest.test_case "POST /query pagination" `Quick test_post_query_pagination;
+      Alcotest.test_case "POST /query multi-line matches single-line" `Quick test_post_query_multiline_matches_single_line;
+      Alcotest.test_case "POST /query string containing a comma" `Quick test_post_query_string_with_comma;
     ];
     "Expressive Query Language", [
       Alcotest.test_case "POST /query language=dsl execute" `Quick test_post_query_dsl_execute;
@@ -517,6 +609,8 @@ let () =
       Alcotest.test_case "invalid JSON" `Quick test_post_query_invalid_json;
       Alcotest.test_case "missing query field" `Quick test_post_query_missing_field;
       Alcotest.test_case "invalid query syntax" `Quick test_post_query_invalid_syntax;
+      Alcotest.test_case "duplicate comma separator" `Quick test_post_query_duplicate_separator;
+      Alcotest.test_case "unmatched parenthesis" `Quick test_post_query_unmatched_paren;
       Alcotest.test_case "negative offset" `Quick test_post_query_negative_offset;
       Alcotest.test_case "cartesian product" `Quick test_post_query_cartesian_product;
     ];

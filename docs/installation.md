@@ -50,11 +50,13 @@ dune install
 ## Available Binaries
 
 After installation, the following binaries will be available:
+- `beingdb` - Combined CLI with `clone`/`pull`/`import`/`compile`/`serve`/`repl` subcommands
 - `beingdb-clone` - Clone a Git repository of facts
 - `beingdb-pull` - Pull updates from remote Git
 - `beingdb-import` - Import local predicate files (dev/testing)
 - `beingdb-compile` - Compile Git store to optimized Pack format
 - `beingdb-serve` - Start HTTP query server
+- `beingdb-repl` - Interactive query REPL against a Pack store
 
 ## Troubleshooting
 

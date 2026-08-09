@@ -75,13 +75,19 @@ beingdb-compile --git ./git_store --pack ./pack_store
 
 Output:
 ```
-beingdb-compile: [INFO] BeingDB Compile
-beingdb-compile: [INFO] Source: Irmin Git (./git_store)
-beingdb-compile: [INFO] Target: Pack (./pack_store)
-beingdb-compile: [INFO] Found 10 predicates in Git HEAD
-beingdb-compile: [INFO] Compilation complete!
-beingdb-compile: [INFO]   Predicates: 10
-beingdb-compile: [INFO]   Total facts: 45147
+BeingDB Compile
+Source: Irmin Git (./git_store)
+Target: Pack (./pack_store)
+
+Found 10 predicates
+
+✓ created (45 facts)
+✓ shown_in (32 facts)
+...
+
+Compilation complete!
+Predicates: 10
+Total facts: 45147
 ```
 
 The pack store is read-only and immutable, optimized for fast queries.
@@ -91,27 +97,25 @@ The pack store is read-only and immutable, optimized for fast queries.
 Run the query server pointing at your pack store:
 
 ```bash
-# Default settings (port 8080, max results 1000, max concurrent 20)
+# Default settings (port 8080, max results 1000)
 beingdb-serve --pack ./pack_store
 
 # Custom settings
-beingdb-serve --pack ./pack_store --port 8080 --max-results 5000 --max-concurrent 40
+beingdb-serve --pack ./pack_store --port 8080 --max-results 5000
 ```
 
 **Server options:**
-- `--pack` - Path to pack store directory (required)
+- `--pack` - Path to pack store directory (default: `./pack`)
 - `--port` - HTTP port (default: 8080)
-- `--max-results` - Maximum results per query (default: 1000)
-- `--max-concurrent` - Maximum concurrent queries (default: 20, prevents file descriptor exhaustion)
+- `--max-results` - Maximum results per query, a hard limit (default: 1000)
 
 Server starts with:
 ```
-beingdb-serve: [INFO] BeingDB Server
-beingdb-serve: [INFO] Pack store: ./pack_store
-beingdb-serve: [INFO] Starting API server on port 8080
-beingdb-serve: [INFO] Max results per query: 1000
-beingdb-serve: [INFO] Max concurrent queries: 20
-17.01.26 12:00:00.000                Running at http://localhost:8080
+BeingDB Server
+Pack store: ./pack_store
+Starting API server on port 8080
+Max results per query: 1000
+Running at http://localhost:8080
 ```
 
 ### 4. Query Your Facts

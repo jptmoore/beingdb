@@ -138,6 +138,33 @@ let test_execute_query_streaming () =
       | Ok r -> Alcotest.(check bool) "respects limit" true (List.length r.Query_engine.bindings <= 1); Lwt.return_unit
       | Error e -> Alcotest.fail e)
 
+(* --- whitespace-insensitive formatting: single-line, one-clause-per-line,
+   and arguments spread across several lines must all execute identically --- *)
+
+let sorted_bindings bindings =
+  bindings
+  |> List.map (fun b -> List.sort (fun (v1, _) (v2, _) -> String.compare v1 v2) b)
+  |> List.map (fun b -> String.concat ";" (List.map (fun (v, value) -> v ^ "=" ^ Value.canonical_string value) b))
+  |> List.sort String.compare
+
+let test_execute_query_multiline_matches_single_line () =
+  with_pack "multiline_join" (fun store ->
+      let single_line = parse_query_exn "created(Artist, Work), shown_in(Work, Event)" in
+      let multi_line = parse_query_exn "created(Artist, Work),\nshown_in(Work, Event)" in
+      let broken_across_lines = parse_query_exn "created(\n Artist,\n Work\n),\nshown_in(\n Work,\n Event\n)" in
+      let* single_result = Db.execute_query store single_line in
+      let* multi_result = Db.execute_query store multi_line in
+      let* broken_result = Db.execute_query store broken_across_lines in
+      match (single_result, multi_result, broken_result) with
+      | Ok s, Ok m, Ok b ->
+          Alcotest.(check (list string))
+            "multi-line matches single-line" (sorted_bindings s.Query_engine.bindings) (sorted_bindings m.Query_engine.bindings);
+          Alcotest.(check (list string))
+            "broken-across-lines matches single-line" (sorted_bindings s.Query_engine.bindings)
+            (sorted_bindings b.Query_engine.bindings);
+          Lwt.return_unit
+      | Error e, _, _ | _, Error e, _ | _, _, Error e -> Alcotest.fail e)
+
 (* --- exact typed-literal matching --- *)
 
 let test_exact_typed_literal_match () =
@@ -258,6 +285,11 @@ let () =
           Alcotest.test_case "simple pattern" `Quick test_execute_simple_pattern_query;
           Alcotest.test_case "streaming pagination" `Quick test_execute_query_streaming;
           Alcotest.test_case "exact typed literal" `Quick test_exact_typed_literal_match;
+        ] );
+      ( "Whitespace formatting",
+        [
+          Alcotest.test_case "multi-line/broken-across-lines match single-line" `Quick
+            test_execute_query_multiline_matches_single_line;
         ] );
       ( "Comparisons",
         [

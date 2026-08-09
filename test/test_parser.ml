@@ -207,6 +207,69 @@ let test_fact_encode_decode_roundtrip () =
       Alcotest.(check bool) "args equal" true (List.for_all2 Value.equal f.arguments f'.arguments)
   | Error e -> Alcotest.fail e
 
+(* --- core query language: whitespace, joins, comparisons, invalid syntax ---
+
+   The core query language is parsed by {!Query_parser} (tokens from
+   {!Lexer}, clauses split/parsed by {!Clause_parser}): whitespace,
+   including newlines, is skipped by the tokenizer, so a query's
+   formatting (single line, one clause per line, or arguments spread
+   across several lines) never changes its meaning -- only commas
+   separate clauses/arguments. This is the same parser used by the REST
+   API, the REPL, and the CLI, so no consumer needs to normalize
+   newlines. *)
+
+let parse_query_ok s =
+  match Query_parser.parse_query_result s with Ok q -> q | Error e -> Alcotest.failf "parse error: %s (%s)" e s
+
+let test_query_whitespace_insensitive () =
+  let single_line = parse_query_ok "created(A, W), shown_in(W, E)" in
+  let multi_line = parse_query_ok "created(A, W),\nshown_in(W, E)" in
+  let broken_across_lines = parse_query_ok "created(\n A,\n W\n),\nshown_in(\n W,\n E\n)" in
+  let canonical q = Query_ast.query_to_string q in
+  Alcotest.(check string) "multi-line matches single-line" (canonical single_line) (canonical multi_line);
+  Alcotest.(check string) "broken-across-lines matches single-line" (canonical single_line) (canonical broken_across_lines);
+  Alcotest.(check (list string)) "same variables" single_line.Query_ast.variables multi_line.Query_ast.variables
+
+let test_query_single_line_three_joins () =
+  let q = parse_query_ok "created(A, W), shown_in(W, E), held_at(E, V)" in
+  Alcotest.(check int) "three clauses" 3 (List.length q.Query_ast.clauses);
+  Alcotest.(check (list string)) "variables" [ "A"; "E"; "V"; "W" ] q.Query_ast.variables
+
+let test_query_comparison () =
+  let q = parse_query_ok "created(A, W), year_created(W, Y), Y >= 1970" in
+  match q.Query_ast.clauses with
+  | [ Query_ast.Pattern _; Query_ast.Pattern _; Query_ast.Compare { operator; _ } ] ->
+      Alcotest.(check bool) "operator is >=" true (operator = Query_ast.Ge)
+  | _ -> Alcotest.fail "expected pattern, pattern, compare"
+
+let test_query_string_with_comma () =
+  let q = parse_query_ok {|title(W, "Smith, Jones and Brown")|} in
+  match q.Query_ast.clauses with
+  | [ Query_ast.Pattern { predicate; arguments = [ Query_ast.Variable "W"; Query_ast.Literal (Value.String s) ] } ] ->
+      Alcotest.(check string) "predicate" "title" predicate;
+      Alcotest.(check string) "string value" "Smith, Jones and Brown" s
+  | _ -> Alcotest.fail "expected a single title(...) pattern"
+
+let test_query_invalid_double_comma () =
+  match Query_parser.parse_query_result "created(Artist, Work),\n,\nshown_in(Work, Exhibition)" with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected a syntax error for a duplicate separator"
+
+let test_query_invalid_unmatched_paren () =
+  match Query_parser.parse_query_result "created(Artist, Work" with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected a syntax error for an unmatched parenthesis"
+
+let test_query_invalid_malformed_predicate () =
+  match Query_parser.parse_query_result "created(Artist Work)" with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected a syntax error for a malformed predicate argument list"
+
+let test_query_invalid_incomplete_comparison () =
+  match Query_parser.parse_query_result "created(A, W), Y >=" with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected a syntax error for an incomplete comparison"
+
 let () =
   Alcotest.run "BeingDB Parser"
     [
@@ -247,6 +310,18 @@ let () =
           Alcotest.test_case "fact id deterministic" `Quick test_fact_id_deterministic;
           Alcotest.test_case "fact id type distinct" `Quick test_fact_id_type_distinct;
           Alcotest.test_case "fact encode/decode roundtrip" `Quick test_fact_encode_decode_roundtrip;
+        ] );
+      ( "Query language",
+        [
+          Alcotest.test_case "whitespace insensitive (single/multi-line/broken-across-lines)" `Quick
+            test_query_whitespace_insensitive;
+          Alcotest.test_case "single-line three-way join" `Quick test_query_single_line_three_joins;
+          Alcotest.test_case "comparison" `Quick test_query_comparison;
+          Alcotest.test_case "string containing a comma" `Quick test_query_string_with_comma;
+          Alcotest.test_case "invalid: duplicate comma separator" `Quick test_query_invalid_double_comma;
+          Alcotest.test_case "invalid: unmatched parenthesis" `Quick test_query_invalid_unmatched_paren;
+          Alcotest.test_case "invalid: malformed predicate arguments" `Quick test_query_invalid_malformed_predicate;
+          Alcotest.test_case "invalid: incomplete comparison" `Quick test_query_invalid_incomplete_comparison;
         ] );
     ]
 

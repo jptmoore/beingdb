@@ -101,6 +101,55 @@ intervals.
 
 ## Query patterns
 
+### Whitespace and formatting
+
+Whitespace (spaces, tabs, newlines) between tokens is insignificant.
+Commas are what combine clauses and predicate arguments. A query may
+therefore be written on one line, one clause per line, or with a
+predicate's arguments spread across several lines -- all of the
+following are equivalent:
+
+```prolog
+created(Artist, Work), shown_in(Work, Exhibition)
+```
+
+```prolog
+created(Artist, Work),
+shown_in(Work, Exhibition)
+```
+
+```prolog
+created(
+  Artist,
+  Work
+),
+shown_in(
+  Work,
+  Exhibition
+)
+```
+
+This makes single-line queries convenient for REST clients, which never
+need to escape or inject newlines:
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)"}'
+```
+
+The core parser (used by the REST API, the REPL, and the CLI -- there
+is no separate parsing path for any of them) only treats whitespace as
+significant inside quoted strings, so a comma inside a string literal
+is never mistaken for a clause separator:
+
+```prolog
+title(Work, "Smith, Jones and Brown")
+```
+
+Malformed input (unmatched parentheses, duplicate separators, or an
+incomplete comparison) is rejected with a descriptive parse error
+rather than being silently misinterpreted.
+
 ### Single pattern
 
 ```bash

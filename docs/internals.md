@@ -272,6 +272,33 @@ and semantics. In summary:
   (see section 6). The core predicate-pattern parser never produces
   these directly; only `Dsl_lower` does, so the core language's surface
   syntax is unchanged.
+- The core language's grammar (approximately):
+
+  ```
+  query       := clause ("," clause)*
+  clause      := pattern | comparison | between
+  pattern     := IDENT "(" (term ("," term)*)? ")"
+  comparison  := term OP term            OP ::= = | != | < | <= | > | >=
+  between     := term "between" term "and" term
+  term        := VARIABLE | "_" | literal
+  ```
+
+  Tokenization (`lib/lexer.ml`) and clause-level parsing
+  (`lib/clause_parser.ml`, shared with the expressive language) are
+  separate passes: the lexer turns the input into a flat token stream
+  first, skipping `[' ' '\t' '\r' '\n']+` between tokens (so formatting
+  never affects meaning), then `Query_parser` splits that stream on
+  top-level commas (commas nested inside a pattern's own parentheses
+  are not top-level) and parses each group into a `clause`. Whitespace
+  is only ever significant inside a quoted string literal, where the
+  lexer consumes characters (including commas) up to the closing `"`
+  before resuming normal tokenization -- this is what lets
+  `title(Work, "Smith, Jones and Brown")` parse as a single two-argument
+  pattern rather than being split on the embedded comma.
+  `Query_parser.parse_query_result : string -> (query, string) result`
+  is the single entry point used by the REST API (`Controller`), the
+  REPL (`Cli_repl`), and the CLI -- there is no separate parsing path
+  per consumer.
 - `lib/query_planner.ml` is pure (it never touches the store): it
   collects every `Compare`/`Between` clause that constrains a variable
   with a literal (normalizing `literal OP variable` to `variable OP'
