@@ -144,6 +144,10 @@ let query_predicate ~max_results store predicate =
 
 (** Execute query with timeout and validation *)
 let execute_query ~max_results store query_str ~offset ~limit =
+  (* Reject oversized payloads before even tokenizing/parsing *)
+  match Query_validation.check_query_length query_str with
+  | Error err -> Lwt.return (Error (Query_validation.error_message err))
+  | Ok () -> (
   (* Parse query *)
   match Query_parser.parse_query_result query_str with
   | Error msg -> Lwt.return (Error msg)
@@ -170,7 +174,7 @@ let execute_query ~max_results store query_str ~offset ~limit =
           (* Execute with timeout *)
           Lwt.catch
             (fun () ->
-              Lwt_unix.with_timeout Query_validation.Config.query_timeout (fun () ->
+              Lwt_unix.with_timeout !Query_validation.Config.query_timeout (fun () ->
                 if use_streaming then
                   let offset_val = Option.value valid_offset ~default:0 in
                   let limit_val = Option.get limit_to_use in
@@ -195,11 +199,11 @@ let execute_query ~max_results store query_str ~offset ~limit =
             (function
               | Lwt_unix.Timeout ->
                   let msg = Printf.sprintf "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints." 
-                    Query_validation.Config.query_timeout in
+                    !Query_validation.Config.query_timeout in
                   Lwt.return (Error msg)
               | exn ->
                   Lwt.return (Error (Printf.sprintf "Query error: %s" (Printexc.to_string exn)))
-            )
+            ))
 
 (** {2 Expressive query language and unified query dispatch}
 
@@ -420,7 +424,7 @@ let execute_dsl ~max_results store query_str =
                    ]))
       in
       Lwt.catch
-        (fun () -> Lwt_unix.with_timeout Query_validation.Config.query_timeout run_body)
+        (fun () -> Lwt_unix.with_timeout !Query_validation.Config.query_timeout run_body)
         (function
           | Lwt_unix.Timeout ->
               Lwt.return
@@ -430,14 +434,19 @@ let execute_dsl ~max_results store query_str =
                      message =
                        Printf.sprintf
                          "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints."
-                         Query_validation.Config.query_timeout;
+                         !Query_validation.Config.query_timeout;
                    })
           | exn -> Lwt.return (Failure { code = "internal_error"; message = Printf.sprintf "Query error: %s" (Printexc.to_string exn) }))
 
 (** Unified query entry point: dispatches on [language] ("core" | "dsl",
     default "core") and [action] ("execute" | "validate" | "explain",
-    default "execute"). *)
+    default "execute"). Rejects an oversized raw query string up front,
+    before either language's parser runs, so this one guard covers both
+    languages and all three actions. *)
 let run_query ~max_results ?(language = "core") ?(action = "execute") store query_str ~offset ~limit =
+  match Query_validation.check_query_length query_str with
+  | Error err -> Lwt.return (Failure { code = Query_validation.error_code err; message = Query_validation.error_message err })
+  | Ok () -> (
   match (language, action) with
   | "core", "execute" -> execute_core_structured ~max_results store query_str ~offset ~limit
   | "core", "validate" -> validate_core store query_str
@@ -448,5 +457,5 @@ let run_query ~max_results ?(language = "core") ?(action = "execute") store quer
   | _, ("execute" | "validate" | "explain") ->
       Lwt.return (Failure { code = "unknown_language"; message = Printf.sprintf "Unknown language '%s' (expected 'core' or 'dsl')" language })
   | _, _ ->
-      Lwt.return (Failure { code = "unknown_action"; message = Printf.sprintf "Unknown action '%s' (expected 'execute', 'validate', or 'explain')" action })
+      Lwt.return (Failure { code = "unknown_action"; message = Printf.sprintf "Unknown action '%s' (expected 'execute', 'validate', or 'explain')" action }))
 

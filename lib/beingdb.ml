@@ -1,5 +1,6 @@
 (** BeingDB: Logic-based knowledge store with Git and Pack backends *)
 
+module Version = Version
 module Decimal = Decimal
 module Calendar = Calendar
 module Value = Value
@@ -16,6 +17,7 @@ module Parse_predicate = Parse_predicate
 module Query_parser = Query_parser
 module Query_engine = Query_engine
 module Query_validation = Query_validation
+module Server_config = Server_config
 module Query_environment = Query_environment
 module Predicate_suggest = Predicate_suggest
 module Surface_ast = Surface_ast

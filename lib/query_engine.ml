@@ -165,7 +165,7 @@ let execute store query =
   in
   run_group p [] (fun bindings ->
       incr result_count;
-      if !result_count > Query_validation.Config.max_intermediate_results then (
+      if !result_count > !Query_validation.Config.max_intermediate_results then (
         aborted := true;
         Lwt.return_unit)
       else (
@@ -189,7 +189,7 @@ let execute_streaming store query ~offset ~limit =
   let aborted = ref false in
   let error = ref None in
   let should_stop () =
-    List.length !collected >= limit || !processed > Query_validation.Config.max_intermediate_results || !aborted
+    List.length !collected >= limit || !processed > !Query_validation.Config.max_intermediate_results || !aborted
   in
   let rec run_group (g : Query_planner.t) bindings k =
     run_steps g.steps bindings (fun bindings' ->

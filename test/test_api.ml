@@ -40,7 +40,8 @@ let create_test_pack name =
   )
 
 (** Helper: Create Dream test app *)
-let create_app pack max_results =
+let create_app_with_config pack config =
+  let max_results = config.Beingdb.Server_config.max_results in
   let router = Dream.router [
     Dream.get "/" (fun _req -> Dream.respond "OK");
     Dream.get "/version" (fun _req -> 
@@ -49,9 +50,11 @@ let create_app pack max_results =
     Dream.get "/query/:predicate" (fun req ->
       let predicate = Dream.param req "predicate" in
       Beingdb.Api.handle_query max_results pack predicate req);
-    Dream.post "/query" (Beingdb.Api.handle_query_language max_results pack);
+    Dream.post "/query" (Beingdb.Api.handle_query_language config pack);
   ] in
   router
+
+let create_app pack max_results = create_app_with_config pack { Beingdb.Server_config.default with max_results }
 
 (** Test: GET / health check *)
 let test_health_check () =
@@ -469,6 +472,57 @@ let test_post_query_cartesian_product () =
   let _ = Unix.system cmd in
   ()
 
+(** Test: POST /query -- a query longer than the configured
+    [max_query_length] is rejected with 413, before it is even parsed.
+    [handle_query_language] applies [config] to the process-wide
+    {!Beingdb.Query_validation.Config} refs on every call, so this test
+    only needs to restore those refs afterwards. *)
+let test_post_query_too_long () =
+  let (pack, test_dir) = create_test_pack "post_too_long" in
+  let config = { Beingdb.Server_config.default with max_query_length = 10 } in
+  let app = create_app_with_config pack config in
+
+  let saved_timeout = !Beingdb.Query_validation.Config.query_timeout in
+  let saved_intermediate = !Beingdb.Query_validation.Config.max_intermediate_results in
+  let saved_length = !Beingdb.Query_validation.Config.max_query_length in
+  Fun.protect
+    ~finally:(fun () ->
+      Beingdb.Query_validation.Config.query_timeout := saved_timeout;
+      Beingdb.Query_validation.Config.max_intermediate_results := saved_intermediate;
+      Beingdb.Query_validation.Config.max_query_length := saved_length;
+      let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+      let _ = Unix.system cmd in
+      ())
+    (fun () ->
+      let body = {|{"query":"created(Artist, Work), shown_in(Work, Exhibition)"}|} in
+      let request = Dream.request ~target:"/query" ~method_:`POST body in
+      let response = Dream.test app request in
+      let status = Dream.status response in
+      Alcotest.(check int) "status 413 for oversized query" 413 (Dream.status_to_int status))
+
+(** Test: POST /query -- rejected with 429 once [max_concurrent_queries]
+    requests are already in flight. Simulated by pre-setting the
+    in-flight counter directly (real concurrency isn't observable through
+    [Dream.test]'s synchronous request/response cycle), always restored
+    afterwards since it is process-wide mutable state. *)
+let test_post_query_concurrency_limit () =
+  let (pack, test_dir) = create_test_pack "post_concurrency" in
+  let app = create_app_with_config pack { Beingdb.Server_config.default with max_concurrent_queries = 1 } in
+
+  Beingdb.Api.in_flight_queries := 1;
+  Fun.protect
+    ~finally:(fun () ->
+      Beingdb.Api.in_flight_queries := 0;
+      let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
+      let _ = Unix.system cmd in
+      ())
+    (fun () ->
+      let body = {|{"query":"created(Artist, Work)"}|} in
+      let request = Dream.request ~target:"/query" ~method_:`POST body in
+      let response = Dream.test app request in
+      let status = Dream.status response in
+      Alcotest.(check int) "status 429 when at concurrency limit" 429 (Dream.status_to_int status))
+
 (** Test: Result limiting enforcement *)
 let test_result_limit_enforcement () =
   let (pack, test_dir) = create_test_pack "result_limit" in
@@ -613,6 +667,8 @@ let () =
       Alcotest.test_case "unmatched parenthesis" `Quick test_post_query_unmatched_paren;
       Alcotest.test_case "negative offset" `Quick test_post_query_negative_offset;
       Alcotest.test_case "cartesian product" `Quick test_post_query_cartesian_product;
+      Alcotest.test_case "query too long" `Quick test_post_query_too_long;
+      Alcotest.test_case "concurrency limit" `Quick test_post_query_concurrency_limit;
     ];
     "Result Limiting", [
       Alcotest.test_case "max_results enforcement" `Quick test_result_limit_enforcement;

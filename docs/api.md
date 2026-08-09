@@ -214,7 +214,7 @@ the core or the expressive query language.
 **Body Parameters:**
 - `query` (string, required) - Query text: core language pattern(s), or (with `"language": "dsl"`) an expressive `find`/`where` query
 - `offset` (integer, optional) - Start position for pagination (default: 0); core language only
-- `limit` (integer, optional) - Maximum results to return (default: server's `MAX_RESULTS`); core language only -- for the expressive language, use `limit`/`offset` inside the query text itself
+- `limit` (integer, optional) - Maximum results to return (default: server's `max_results`, see [Safety limits](#safety-limits)); core language only -- for the expressive language, use `limit`/`offset` inside the query text itself
 - `language` (string, optional) - `"core"` (default) or `"dsl"`
 - `action` (string, optional) - `"execute"` (default), `"validate"` (check without running), or `"explain"` (show the access plan without running)
 
@@ -365,7 +365,8 @@ a query timeout, an internal error, or an unrecognized `language`/
 `code` is one of: `malformed_request`, `invalid_request` (the simpler
 endpoints that don't yet carry a specific code), `timeout`,
 `internal_error`, `execution_error`, `unknown_language`,
-`unknown_action`.
+`unknown_action`, `query_too_long` (HTTP 413), `server_busy` (HTTP 429).
+See [Safety limits](#safety-limits) for the last two.
 
 ### Common Errors
 
@@ -407,13 +408,41 @@ endpoints that don't yet carry a specific code), `timeout`,
 { "error": { "code": "invalid_request", "message": "Invalid predicate name 'Work|Person'. Predicate names must contain only lowercase letters, numbers, and underscores." } }
 ```
 
+**413 Payload Too Large - Query Too Long**
+```json
+{ "error": { "code": "query_too_long", "message": "Query is too long: 25000 bytes (maximum 20000). Try splitting it into smaller queries." } }
+```
+
+**429 Too Many Requests - Server Busy**
+```json
+{ "error": { "code": "server_busy", "message": "Too many concurrent queries; please retry shortly." } }
+```
+
 ---
 
-## Rate Limiting
+## Safety limits
 
-Not built into BeingDB directly. Use a reverse proxy (nginx, Caddy) for production rate limiting.
+`beingdb-serve` enforces sensible defaults to guard against expensive or
+malicious queries, overridable via an optional `--config <file.json>`
+(missing fields fall back to the defaults below):
 
-Example nginx config included in repository provides 10 requests/second limit.
+| Field | Default | Effect |
+|---|---|---|
+| `max_results` | 1000 | Hard cap on results returned per query |
+| `query_timeout` | 5.0 | Seconds before an executing query is aborted (`timeout`) |
+| `max_intermediate_results` | 10000 | Cap on intermediate join rows before aborting |
+| `max_query_length` | 20000 | Cap, in bytes, on a raw query string, rejected before parsing (`query_too_long`, HTTP 413) |
+| `max_concurrent_queries` | 20 | Cap on simultaneously in-flight `POST /query` requests; further requests get `server_busy` (HTTP 429) until one finishes |
+
+```bash
+beingdb-serve --pack ./pack_store --config ./beingdb.config.json
+```
+
+The `--max-results` CLI flag, if given, overrides the config file's
+`max_results`. These limits guard a single BeingDB process; per-client
+rate limiting still belongs in front of BeingDB, e.g. a reverse proxy
+(nginx, Caddy) -- the example nginx config in the repository provides a
+10 requests/second limit.
 
 ---
 

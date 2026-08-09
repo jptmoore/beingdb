@@ -341,11 +341,18 @@ Response includes pagination metadata:
 
 ## Query protections
 
-Built-in safety limits prevent runaway queries:
+Built-in safety limits prevent runaway or malicious queries, all
+configurable per-server without recompiling (see
+[Safety limits](api.md#safety-limits) for the config file and defaults):
 
-- **Timeout:** 5 seconds maximum execution time.
-- **Intermediate results:** 10,000 row limit during joins.
-- **Result limit:** configurable via `MAX_RESULTS` (default 5000).
+- **Timeout:** 5 seconds maximum execution time by default.
+- **Intermediate results:** 10,000 row limit during joins by default.
+- **Result limit:** 1000 by default, via `--max-results` or the config
+  file's `max_results`.
+- **Query length:** 20,000 bytes by default; longer raw query strings
+  are rejected (`query_too_long`, HTTP 413) before parsing.
+- **Concurrency:** 20 simultaneously in-flight queries by default;
+  further requests get `server_busy` (HTTP 429) until one finishes.
 - **Connectivity:** a query's predicate patterns must form a single
   connected component -- every pattern must be reachable from every
   other one through a shared variable, a shared constant, or a

@@ -17,7 +17,7 @@ let () =
       `P "serve - Serve queries from Pack";
       `P "repl - Interactive query REPL against a Pack store";
     ] in
-    let info = Cmd.info "beingdb" ~version:"0.1.0" ~doc ~man in
+    let info = Cmd.info "beingdb" ~version:Beingdb.Version.version ~doc ~man in
     Cmd.group info
       [
         Beingdb.Cli_clone.cmd;

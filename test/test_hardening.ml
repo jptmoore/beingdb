@@ -336,6 +336,96 @@ let test_repl_and_server_share_environment () =
           | _ -> Alcotest.fail "expected both to lower successfully"));
       Lwt.return_unit)
 
+(* --- 8. server config / resource-exhaustion guards --- *)
+
+let contains_substring haystack needle =
+  let hl = String.length haystack and nl = String.length needle in
+  if nl = 0 then true
+  else
+    let rec go i = i + nl <= hl && (String.sub haystack i nl = needle || go (i + 1)) in
+    go 0
+
+(** Temporarily override the process-wide query-safety limits for the
+    duration of an Lwt computation, restoring the previous values
+    afterwards regardless of outcome -- these are global mutable refs
+    shared by every test in this executable. *)
+let with_temporary_limits ?query_timeout ?max_intermediate_results ?max_query_length f =
+  let saved_timeout = !Query_validation.Config.query_timeout in
+  let saved_intermediate = !Query_validation.Config.max_intermediate_results in
+  let saved_length = !Query_validation.Config.max_query_length in
+  Option.iter (fun v -> Query_validation.Config.query_timeout := v) query_timeout;
+  Option.iter (fun v -> Query_validation.Config.max_intermediate_results := v) max_intermediate_results;
+  Option.iter (fun v -> Query_validation.Config.max_query_length := v) max_query_length;
+  Lwt.finalize f (fun () ->
+      Query_validation.Config.query_timeout := saved_timeout;
+      Query_validation.Config.max_intermediate_results := saved_intermediate;
+      Query_validation.Config.max_query_length := saved_length;
+      Lwt.return_unit)
+
+let test_server_config_default_matches_previous_hardcoded_values () =
+  Alcotest.(check int) "max_results" 1000 Server_config.default.Server_config.max_results;
+  Alcotest.(check (float 0.001)) "query_timeout" 5.0 Server_config.default.Server_config.query_timeout;
+  Alcotest.(check int) "max_intermediate_results" 10_000 Server_config.default.Server_config.max_intermediate_results;
+  Alcotest.(check int) "max_query_length" 20_000 Server_config.default.Server_config.max_query_length;
+  Alcotest.(check int) "max_concurrent_queries" 20 Server_config.default.Server_config.max_concurrent_queries
+
+let test_server_config_partial_json_overlays_default () =
+  match Server_config.of_json (`Assoc [ ("max_results", `Int 50); ("query_timeout", `Int 2) ]) with
+  | Error e -> Alcotest.failf "unexpected error: %s" e
+  | Ok cfg ->
+      Alcotest.(check int) "max_results overridden" 50 cfg.Server_config.max_results;
+      Alcotest.(check (float 0.001)) "query_timeout overridden (int coerced to float)" 2.0 cfg.Server_config.query_timeout;
+      Alcotest.(check int) "max_intermediate_results falls back to default" Server_config.default.Server_config.max_intermediate_results
+        cfg.Server_config.max_intermediate_results
+
+let test_server_config_rejects_wrong_type () =
+  match Server_config.of_json (`Assoc [ ("max_results", `String "lots") ]) with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected an error for a non-integer max_results"
+
+let test_server_config_rejects_non_positive () =
+  match Server_config.of_json (`Assoc [ ("max_concurrent_queries", `Int 0) ]) with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected an error for a non-positive max_concurrent_queries"
+
+let test_server_config_rejects_non_object () =
+  match Server_config.of_json (`List []) with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected an error for a non-object JSON value"
+
+let test_server_config_load_missing_file () =
+  match Server_config.load_file "/nonexistent/path/to/beingdb-config.json" with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected an error for a missing config file"
+
+let test_check_query_length_rejects_oversized_query () =
+  let saved = !Query_validation.Config.max_query_length in
+  Query_validation.Config.max_query_length := 5;
+  let result = Query_validation.check_query_length "abcdef" in
+  Query_validation.Config.max_query_length := saved;
+  match result with
+  | Error (Query_validation.QueryTooLong 6) -> ()
+  | Error _ -> Alcotest.fail "expected QueryTooLong 6"
+  | Ok () -> Alcotest.fail "expected the oversized query to be rejected"
+
+let test_check_query_length_accepts_within_limit () =
+  let saved = !Query_validation.Config.max_query_length in
+  Query_validation.Config.max_query_length := 20;
+  let result = Query_validation.check_query_length "created(A, W)" in
+  Query_validation.Config.max_query_length := saved;
+  match result with
+  | Ok () -> ()
+  | Error _ -> Alcotest.fail "expected a short query to be accepted"
+
+let test_execute_query_rejects_oversized_query_string () =
+  with_pack "query_too_long" (fun store ->
+      with_temporary_limits ~max_query_length:10 (fun () ->
+          let* result = Controller.execute_query ~max_results:100 store "person(P), works_for(P, O)" ~offset:None ~limit:None in
+          (match result with
+          | Error msg -> Alcotest.(check bool) "mentions 'too long'" true (contains_substring msg "too long")
+          | Ok _ -> Alcotest.fail "expected the oversized query to be rejected");
+          Lwt.return_unit))
+
 let () =
   Alcotest.run "BeingDB Hardening"
     [
@@ -383,4 +473,16 @@ let () =
           Alcotest.test_case "order by nulls last (asc and desc)" `Quick test_order_by_nulls_last_ascending_and_descending;
         ] );
       ("Shared query-environment lifecycle", [ Alcotest.test_case "REPL and server share environment" `Quick test_repl_and_server_share_environment ]);
+      ( "Server config / resource-exhaustion guards",
+        [
+          Alcotest.test_case "default matches previous hardcoded values" `Quick test_server_config_default_matches_previous_hardcoded_values;
+          Alcotest.test_case "partial JSON overlays default" `Quick test_server_config_partial_json_overlays_default;
+          Alcotest.test_case "rejects wrong type" `Quick test_server_config_rejects_wrong_type;
+          Alcotest.test_case "rejects non-positive value" `Quick test_server_config_rejects_non_positive;
+          Alcotest.test_case "rejects non-object JSON" `Quick test_server_config_rejects_non_object;
+          Alcotest.test_case "load_file: missing file" `Quick test_server_config_load_missing_file;
+          Alcotest.test_case "check_query_length: rejects oversized query" `Quick test_check_query_length_rejects_oversized_query;
+          Alcotest.test_case "check_query_length: accepts within limit" `Quick test_check_query_length_accepts_within_limit;
+          Alcotest.test_case "execute_query rejects oversized query string" `Quick test_execute_query_rejects_oversized_query_string;
+        ] );
     ]

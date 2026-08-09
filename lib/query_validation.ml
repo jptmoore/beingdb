@@ -4,13 +4,23 @@
     resource exhaustion from expensive or malicious queries.
 *)
 
-(** Configuration for query protection *)
+(** Configuration for query protection.
+
+    These start at sensible built-in defaults and may be overridden once,
+    at process startup, from a server config file (see {!Server_config});
+    everything else in this module reads through these refs so a single
+    {!Server_config.apply} call takes effect everywhere. *)
 module Config = struct
   (** Query timeout in seconds - abort queries that run too long *)
-  let query_timeout = 5.0
-  
+  let query_timeout = ref 5.0
+
   (** Maximum intermediate results before aborting (prevents Cartesian explosion) *)
-  let max_intermediate_results = 10_000
+  let max_intermediate_results = ref 10_000
+
+  (** Maximum accepted length (in bytes) of a raw query string, checked
+      before parsing -- guards against oversized payloads wasting
+      lexing/parsing work. *)
+  let max_query_length = ref 20_000
 end
 
 (** Validation errors *)
@@ -20,6 +30,7 @@ type validation_error =
   | DisconnectedQuery of string list list
   | InvalidSyntax
   | InvalidPredicateName of string
+  | QueryTooLong of int
 
 let error_code = function
   | InvalidOffset _ -> "invalid_offset"
@@ -27,6 +38,7 @@ let error_code = function
   | DisconnectedQuery _ -> "disconnected_query"
   | InvalidSyntax -> "invalid_syntax"
   | InvalidPredicateName _ -> "invalid_predicate_name"
+  | QueryTooLong _ -> "query_too_long"
 
 let error_message = function
   | InvalidOffset n ->
@@ -41,6 +53,14 @@ let error_message = function
       "Invalid query structure. Each predicate must have a valid name before parentheses. Note: OR/disjunction (|, ;) is not supported - use separate queries instead."
   | InvalidPredicateName name ->
       "Invalid predicate name '" ^ name ^ "'. Predicate names must contain only lowercase letters, numbers, and underscores."
+  | QueryTooLong length ->
+      Printf.sprintf "Query is too long: %d bytes (maximum %d). Try splitting it into smaller queries." length !Config.max_query_length
+
+(** Reject a raw query string before it is even tokenized/parsed, so an
+    oversized payload cannot waste lexing/parsing work. *)
+let check_query_length query_str =
+  let length = String.length query_str in
+  if length > !Config.max_query_length then Error (QueryTooLong length) else Ok ()
 
 (** Validate offset parameter *)
 let validate_offset = function

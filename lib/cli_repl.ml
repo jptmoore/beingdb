@@ -225,5 +225,5 @@ let cmd =
       `Pre "  beingdb-repl --pack ./pack_store";
     ]
   in
-  let info = Cmd.info "repl" ~version:"0.1.0" ~doc ~man in
+  let info = Cmd.info "repl" ~version:Version.version ~doc ~man in
   Cmd.v info Term.(const run_repl $ pack_arg $ limit_arg $ history_arg)

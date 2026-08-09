@@ -156,5 +156,5 @@ let cmd =
       `Pre "  beingdb compile --git ./git-store --pack ./pack-store";
     ]
   in
-  let info = Cmd.info "compile" ~version:"0.1.0" ~doc ~man in
+  let info = Cmd.info "compile" ~version:Version.version ~doc ~man in
   Cmd.v info Term.(const compile_all $ git_path $ pack_path)

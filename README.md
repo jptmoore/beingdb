@@ -214,6 +214,7 @@ without requiring those relationships to be reconstructed from unstructured text
 - Predicate/vocabulary discovery
 - Designed for use with LLM and RAG systems
 - Lightweight deployment model
+- Configurable safety limits (timeouts, result caps, query size, concurrency) to guard against expensive or malicious queries
 
 ## Example facts
 

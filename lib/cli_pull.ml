@@ -103,5 +103,5 @@ let cmd =
       `Pre "  beingdb pull --remote upstream --branch develop";
     ]
   in
-  let info = Cmd.info "pull" ~version:"0.1.0" ~doc ~man in
+  let info = Cmd.info "pull" ~version:Version.version ~doc ~man in
   Cmd.v info Term.(const pull_updates $ git_path $ remote $ branch)
