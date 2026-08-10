@@ -129,7 +129,7 @@ let max_inline_key_length = 200
 let index_key v =
   let s = match sortable_string v with Some k -> k | None -> canonical_string v in
   if String.length s <= max_inline_key_length then s
-  else "h:" ^ Digest.to_hex (Digest.string s)
+  else "h:" ^ Digestif.SHA256.to_hex (Digestif.SHA256.digest_string s)
 
 (* Ordering is only defined for compatible types; Integer/Decimal support
    numeric promotion. All other types (atoms, strings, lang-strings,

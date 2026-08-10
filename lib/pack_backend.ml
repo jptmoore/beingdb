@@ -9,10 +9,10 @@
       /meta/<predicate>                                 -> JSON schema manifest
     ]}
 
-    A fact ID is the MD5 hex digest of the canonical typed proposition
-    (predicate + arity + type-tagged canonical arguments), so identical
-    facts always collapse to the same entry and type differences produce
-    different IDs (see {!Fact.fact_id}).
+    A fact ID is the SHA-256 hex digest of the canonical typed
+    proposition (predicate + arity + type-tagged canonical arguments), so
+    identical facts always collapse to the same entry and type differences
+    produce different IDs (see {!Fact.fact_id}).
 
     Range queries enumerate every distinct index key within the relevant
     type branch(es) (not a full predicate scan), then fetch and decode
