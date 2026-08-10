@@ -166,6 +166,19 @@ curl -X POST http://localhost:8080/query \
   -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)"}'
 ```
 
+Joins can chain across more than two patterns, following a variable
+through several relationships:
+
+```prolog
+created(Artist, Work),
+shown_in(Work, Exhibition),
+held_at(Exhibition, Venue)
+```
+
+This follows the factual chain `Artist -> Work -> Exhibition -> Venue`
+without requiring those relationships to be reconstructed from
+unstructured text.
+
 ### Typed literals in patterns
 
 ```prolog
