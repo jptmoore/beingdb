@@ -201,7 +201,7 @@ let default_history_path =
 
 let pack_arg =
   let doc = "Pack store directory to open (read for queries; written to only via :load on a facts file)" in
-  Arg.(required & opt (some string) None & info [ "pack"; "p" ] ~docv:"DIR" ~doc)
+  Arg.(value & opt string "./pack_store" & info [ "pack"; "p" ] ~docv:"DIR" ~doc)
 
 let limit_arg =
   let doc = "Default maximum rows returned per query (override interactively with :limit N)" in

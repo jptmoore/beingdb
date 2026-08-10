@@ -7,7 +7,7 @@ test-unit:
 test: test-unit
 
 clean:
-	rm -rf git-store pack-store examples/data _build
+	rm -rf git_store pack_store examples/data _build
 
 help:
 	@echo "BeingDB Makefile:"

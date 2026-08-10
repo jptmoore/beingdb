@@ -21,6 +21,8 @@ Thumbs.db
 test_data/
 git-store/
 pack-store/
+git_store/
+pack_store/
 data/
 
 # Logs

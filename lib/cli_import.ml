@@ -81,7 +81,7 @@ let input_dir =
 
 let git_path =
   let doc = "Irmin Git store directory" in
-  Arg.(value & opt string "./git-store" & info [ "git"; "g" ] ~docv:"DIR" ~doc)
+  Arg.(value & opt string "./git_store" & info [ "git"; "g" ] ~docv:"DIR" ~doc)
 
 let cmd =
   let doc = "Import flat predicate files into Irmin Git (development tool)" in

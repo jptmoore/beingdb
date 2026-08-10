@@ -60,7 +60,7 @@ let serve pack_path port max_results_override config_path =
 
 let pack_path =
   let doc = "Path to Pack store directory" in
-  Arg.(value & opt string "./pack" & info [ "pack"; "p" ] ~docv:"DIR" ~doc)
+  Arg.(value & opt string "./pack_store" & info [ "pack"; "p" ] ~docv:"DIR" ~doc)
 
 let port =
   let doc = "Server port" in
@@ -84,7 +84,7 @@ let cmd =
       `S Manpage.s_description;
       `P "Starts a read-only query server backed by Irmin Pack store.";
       `P "Example:";
-      `Pre "  beingdb serve --pack ./pack --port 8080 --max-results 5000";
+      `Pre "  beingdb serve --pack ./pack_store --port 8080 --max-results 5000";
       `P "Example with a config file guarding against expensive/malicious queries:";
       `Pre "  beingdb serve --pack ./pack --config ./beingdb.config.json";
     ]

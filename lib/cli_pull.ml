@@ -81,7 +81,7 @@ let pull_updates git_path remote branch =
 
 let git_path =
   let doc = "Local Irmin Git store directory" in
-  Arg.(value & opt string "./git-store" & info [ "git"; "g" ] ~docv:"DIR" ~doc)
+  Arg.(value & opt string "./git_store" & info [ "git"; "g" ] ~docv:"DIR" ~doc)
 
 let remote =
   let doc = "Remote name" in

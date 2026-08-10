@@ -105,7 +105,7 @@ beingdb-serve --pack ./pack_store --port 8080 --max-results 5000
 ```
 
 **Server options:**
-- `--pack` - Path to pack store directory (default: `./pack`)
+- `--pack` - Path to pack store directory (default: `./pack_store`)
 - `--port` - HTTP port (default: 8080)
 - `--max-results` - Maximum results per query, a hard limit (default: 1000); overrides the config file's `max_results` if given
 - `--config` - Path to a JSON config file with safety limits guarding against expensive/malicious queries (`max_results`, `query_timeout`, `max_intermediate_results`, `max_query_length`, `max_concurrent_queries`); see [API Reference](api.md#safety-limits)

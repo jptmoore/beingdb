@@ -31,4 +31,4 @@ for file in data/*; do
 done
 echo
 echo "Ready to import! Run:"
-echo "  dune exec beingdb-import -- --input examples/data --git ./git-store"
+echo "  dune exec beingdb-import -- --input examples/data --git ./git_store"

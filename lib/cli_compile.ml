@@ -138,11 +138,11 @@ let compile_all git_path pack_path =
 
 let git_path =
   let doc = "Irmin Git store directory" in
-  Arg.(value & opt string "./git-store" & info [ "git"; "g" ] ~docv:"DIR" ~doc)
+  Arg.(value & opt string "./git_store" & info [ "git"; "g" ] ~docv:"DIR" ~doc)
 
 let pack_path =
   let doc = "Output Pack store directory" in
-  Arg.(value & opt string "./pack-store" & info [ "pack"; "p" ] ~docv:"DIR" ~doc)
+  Arg.(value & opt string "./pack_store" & info [ "pack"; "p" ] ~docv:"DIR" ~doc)
 
 let cmd =
   let doc = "Compile predicates from Irmin Git HEAD to Pack store" in
