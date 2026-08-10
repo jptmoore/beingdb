@@ -65,7 +65,23 @@ beingdb-clone https://github.com/your-org/your-facts.git --git ./git_store
 
 This creates a `git_store/` directory with your facts in Git format.
 
-### 2. Compile to Pack Format
+### 2. Pull Later Updates
+
+`git_store` is a bare Irmin-managed store with no configured remote, so
+plain `git pull` won't work inside it. Use `beingdb-pull` instead,
+giving the same remote URL each time (Irmin doesn't remember it):
+
+```bash
+beingdb-pull https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
+
+# Pull a specific branch
+beingdb-pull https://github.com/your-org/your-facts.git --git ./git_store --branch develop
+```
+
+This fetches and merges the remote branch into `git_store`; recompile
+afterwards (step 3 below) to pick up the changes in the pack store.
+
+### 3. Compile to Pack Format
 
 Transform Git facts into an optimized pack store:
 
@@ -92,7 +108,7 @@ Total facts: 45147
 
 The pack store is read-only and immutable, optimized for fast queries.
 
-### 3. Start the Server
+### 4. Start the Server
 
 Run the query server pointing at your pack store:
 
@@ -123,7 +139,7 @@ Max concurrent queries: 20
 Running at http://localhost:8080
 ```
 
-### 4. Query Your Facts
+### 5. Query Your Facts
 
 **List available predicates:**
 ```bash
@@ -255,7 +271,7 @@ When facts change in your Git repository:
 
 ```bash
 # 1. Pull latest changes
-cd git_store && git pull && cd ..
+beingdb-pull https://github.com/your-org/your-facts.git --git ./git_store
 
 # 2. Recompile pack store
 beingdb-compile --git ./git_store --pack ./pack_store_new

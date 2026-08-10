@@ -62,15 +62,30 @@ let run_clone ~repo_url ~git_path ~force =
     (fun exn ->
       let error_msg = Printexc.to_string exn in
 
+      let is_repo_not_found =
+        try Str.search_forward (Str.regexp_case_fold "repository not found") (String.lowercase_ascii error_msg) 0 >= 0
+        with Not_found -> false
+      in
+
       (* Detect network/connectivity errors *)
       let is_network_error =
         String.lowercase_ascii error_msg |> fun msg ->
         List.exists
           (fun pattern -> try Str.search_forward (Str.regexp_case_fold pattern) msg 0 >= 0 with Not_found -> false)
-          [ "handshake"; "not found"; "not reachable"; "connection"; "timeout"; "network" ]
+          [ "handshake"; "could not resolve"; "not reachable"; "connection"; "timeout"; "network" ]
       in
 
-      if is_network_error then (
+      if is_repo_not_found then (
+        (* Wrong URL, or repo is private/missing -- not a network problem *)
+        let* () = Lwt_io.eprintl "Repository not found" in
+        let* () = Lwt_io.eprintl "" in
+        let* () = Lwt_io.eprintlf "GitHub reports no repository at: %s" repo_url in
+        let* () = Lwt_io.eprintl "" in
+        let* () = Lwt_io.eprintl "Check:" in
+        let* () = Lwt_io.eprintl "1. The URL is correct (organization/user and repo name)" in
+        let* () = Lwt_io.eprintl "2. For private repos, use a token: https://TOKEN@github.com/user/repo.git" in
+        Lwt.fail (Failure "Repository not found"))
+      else if is_network_error then (
         let* () = Lwt_io.eprintl "Network connection failed" in
         let* () = Lwt_io.eprintl "" in
         let* () = Lwt_io.eprintl "Unable to reach remote repository (likely network/proxy issue)." in
