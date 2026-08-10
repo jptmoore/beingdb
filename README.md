@@ -160,8 +160,6 @@ More detailed documentation is available in the `docs` directory:
 - [API Reference](docs/api.md)
 - [Internals](docs/internals.md)
 
-Follow the [installation documentation](docs/installation.md) for build requirements and setup.
-
 ## License
 
 MIT
