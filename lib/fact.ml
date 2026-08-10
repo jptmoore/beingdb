@@ -34,7 +34,7 @@ let canonical_proposition t =
     t.arguments;
   Buffer.contents buf
 
-let fact_id t = Digest.to_hex (Digest.string (canonical_proposition t))
+let fact_id t = Digestif.SHA256.to_hex (Digestif.SHA256.digest_string (canonical_proposition t))
 
 let encode t =
   let buf = Buffer.create 128 in

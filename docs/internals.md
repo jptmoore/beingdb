@@ -103,7 +103,7 @@ cannot appear in it):
 <predicate>/<arity>|<type_1>:<canonical_1>|<type_2>:<canonical_2>|...
 ```
 
-**Fact ID** = `Digest.to_hex (Digest.string canonical_proposition)` --
+**Fact ID** = `Digestif.SHA256.to_hex (Digestif.SHA256.digest_string canonical_proposition)` --
 deterministic and stable across builds because it depends only on the
 canonical typed proposition. Because the type tag is part of the input:
 
@@ -171,11 +171,12 @@ indexes:
   correctly ordered.
 - For non-ordered types (`Atom`, `String`, `Lang_string`, `Boolean`,
   `Uri`), it is the canonical string.
-- Any key longer than 200 bytes is replaced by an MD5 hash
-  (`"h:" ^ Digest.to_hex ...`) to keep index path segments bounded; every
-  lookup re-verifies the fully decoded fact against the query value
-  (`Value.equal` / `Value.order_compare`), so a hash collision could only
-  ever cause an unnecessary extra comparison, never an incorrect result.
+- Any key longer than 200 bytes is replaced by a SHA-256 hash
+  (`"h:" ^ Digestif.SHA256.to_hex ...`) to keep index path segments
+  bounded; every lookup re-verifies the fully decoded fact against the
+  query value (`Value.equal` / `Value.order_compare`), so a hash
+  collision could only ever cause an unnecessary extra comparison,
+  never an incorrect result.
 
 ### 3.2 Equality lookup
 
@@ -386,10 +387,12 @@ Pipeline, module by module:
   types, and the expressive-language version string
   (`Query_environment.language_version`, currently `"beingdb-dsl/1"`).
   `digestif` (already present transitively via `irmin-git`) is used
-  directly rather than hand-rolling SHA-256; this is a deliberate,
-  narrow exception to the "no new hashing dependency" precedent set by
-  fact IDs (which stay on `Digest`/MD5 -- see section 2 -- since nothing
-  about them required changing here).
+  directly rather than hand-rolling SHA-256; fact IDs and long index
+  keys (section 2) also moved from MD5 to `Digestif.SHA256` once
+  `digestif` was already a dependency, so the whole store now uses one
+  hash algorithm throughout. This is a breaking on-disk format change --
+  existing compiled `pack_store` directories must be recompiled from
+  Git after upgrading.
 - `lib/predicate_suggest.ml` -- deterministic "did you mean" suggestions
   for an unknown predicate name (normalized-name equality, Levenshtein
   edit distance, underscore-token overlap, arity compatibility) -- no

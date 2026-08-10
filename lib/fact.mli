@@ -8,7 +8,7 @@ type t = { predicate : string; arguments : Value.t list }
 
 val make : string -> Value.t list -> t
 
-(** Deterministic fact ID: an MD5 hex digest of the canonical typed
+(** Deterministic fact ID: a SHA-256 hex digest of the canonical typed
     proposition (predicate + arity + type-tagged canonical arguments).
     Type tags are part of the input, so [value(item, 1979)],
     [value(item, @1979)] and [value(item, "1979")] all produce different
