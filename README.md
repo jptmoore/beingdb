@@ -17,25 +17,32 @@ BeingDB compiles those facts into an optimized, read-only store that can be quer
 
 ## Why BeingDB?
 
-RAG systems are good at retrieving relevant text, but some questions are better answered from explicit structured facts. BeingDB provides a factual layer that can sit alongside document retrieval:
+RAG systems are good at retrieving relevant text, but some questions are better answered from explicit structured facts.
+
+BeingDB provides a factual layer that can sit alongside document retrieval:
 
 - **Git-versioned knowledge** — facts are plain text and can be reviewed, changed and versioned like source code.
 - **Fast read-only runtime** — compile a Git repository into an optimized store for serving.
 - **Simple query language** — pattern matching, joins, variables and typed comparisons.
-- **LLM-friendly** — language models can discover available predicates through the API, then construct and validate queries against structured facts rather than inferring them from retrieved text.
-- **No inference engine required** — BeingDB handles factual retrieval and joins; reasoning stays with the consuming application or LLM.
+- **LLM-friendly** — language models can discover available predicates and construct queries against structured facts.
+- **Reliable factual retrieval** — BeingDB returns explicit facts rather than asking a language model to infer them from retrieved text.
+- **No inference engine required** — BeingDB handles factual retrieval and joins; reasoning can remain with the consuming application or LLM.
 
 No schema-heavy knowledge graph or complex rule system is required. Your application or LLM handles reasoning; BeingDB provides reliable, joinable facts.
 
 ## Query facts
 
-Queries use the same predicate syntax as the underlying facts:
+Queries use the same predicate syntax as the underlying facts.
+
+A simple query:
 
 ```text
 created(Artist, Work)
 ```
 
-returns artists and the works they created. Comma-separated patterns join on shared variables and can include typed comparisons:
+returns artists and the works they created.
+
+Queries can also join multiple relationships:
 
 ```text
 created(Artist, Work),
@@ -44,77 +51,98 @@ Y >= 1970,
 shown_in(Work, Exhibition)
 ```
 
+This can answer questions such as:
+
 > Which works created after 1970 were subsequently shown in an exhibition?
 
-Whitespace is insignificant, so a query can be written on one line or across several -- this is what makes it convenient to send as a single-line JSON string over the REST API. See [Query Language](docs/query-language.md) for the full syntax reference.
+BeingDB performs the factual lookup and joins while the consuming application decides how to interpret or present the results.
+
+## Designed for LLMs
+
+BeingDB is intended to work particularly well as a structured factual component in an LLM or RAG stack.
+
+Instead of relying on semantic retrieval for every question, an LLM can query explicit relationships when the answer depends on known facts.
+
+For example, a system might use:
+
+- document search for descriptive or contextual information;
+- BeingDB for entities, relationships, dates and other structured facts;
+- the LLM for reasoning and natural-language responses.
+
+The API exposes the available predicates so an LLM can discover the vocabulary before constructing queries.
 
 ## Quick start
 
-Clone some example facts, compile them, and start the server:
+Clone some example facts:
 
 ```bash
-beingdb-clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
-beingdb-compile --git ./git_store --pack ./pack_store
-beingdb-serve --pack ./pack_store
+beingdb-clone \
+  https://github.com/jptmoore/beingdb-sample-facts.git \
+  --git ./git_store
 ```
 
+Compile the Git repository:
+
+```bash
+beingdb-compile \
+  --git ./git_store \
+  --pack ./pack_store
+```
+
+Start the HTTP server:
+
+```bash
+beingdb-serve \
+  --pack ./pack_store
+```
+
+BeingDB is now ready to query.
+
 ## HTTP API
+
+Query the database:
 
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)"}'
+  -d '{"query":"created(Artist, Work)"}'
 ```
 
-The API also exposes the predicates available in the compiled database, so applications and LLMs can discover the vocabulary they can query. See the [API documentation](docs/api.md) for pagination, comparisons, validation, safety limits and error responses.
+A multi-predicate query can perform joins:
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -H "Content-Type: application/json" \
+  -d '{"query":"created(Artist, Work), shown_in(Work, Exhibition)"}'
+```
+
+The API can also expose the predicates available in the compiled database, allowing applications and LLMs to discover the vocabulary they can query.
+
+See the [API documentation](docs/api.md) for details.
 
 ## REPL
+
+BeingDB also includes an interactive REPL:
 
 ```bash
 beingdb repl --pack ./pack_store
 ```
 
+For example:
+
 ```text
 beingdb> created(Artist, Work)
 ```
 
-See [Getting Started](docs/getting-started.md#interactive-repl) for the full command reference.
-
-## How it works
-
-BeingDB separates authoring from serving:
+or:
 
 ```text
-Git repository
-      |
-      v
-beingdb-compile
-      |
-      v
-Compiled store
-      |
-      +-- HTTP API
-      +-- REPL
+beingdb> created(Artist, Work), shown_in(Work, Exhibition)
 ```
 
-The **Git repository remains the source of truth** -- facts are edited using normal development workflows (commits, branches, pull requests, review, version history). `beingdb-compile` transforms those source facts into an optimized, read-only store; `beingdb-serve` and the REPL open that store and expose it through the query interfaces. This keeps the runtime simple and deployments reproducible.
+The REPL uses the predicates in the database to provide a query environment tailored to the available facts.
 
-## Features
-
-- Git-backed fact authoring
-- Compiled read-only runtime
-- Predicate-based fact model
-- Variables and pattern matching
-- Multi-predicate joins
-- Typed values and comparisons
-- HTTP query API
-- Interactive REPL
-- Predicate/vocabulary discovery
-- Designed for use with LLM and RAG systems
-- Lightweight deployment model
-- Configurable safety limits (timeouts, result caps, query size, concurrency) to guard against expensive or malicious queries
-
-## Example facts
+## Example
 
 A sample repository is available at:
 
@@ -132,24 +160,7 @@ More detailed documentation is available in the `docs` directory:
 - [API Reference](docs/api.md)
 - [Internals](docs/internals.md)
 
-## Building from source
-
-Clone the repository:
-
-```bash
-git clone https://github.com/jptmoore/beingdb.git
-cd beingdb
-```
-
 Follow the [installation documentation](docs/installation.md) for build requirements and setup.
-
-## Project status
-
-BeingDB is under active development.
-
-The project is exploring a deliberately small approach to structured factual retrieval: maintain human-readable facts in Git, compile them into an efficient runtime representation, and expose a query interface that applications and language models can use directly.
-
-Issues, experiments and contributions are welcome.
 
 ## License
 
