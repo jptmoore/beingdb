@@ -8,6 +8,7 @@ RUN apk add --no-cache \
     libev-dev \
     openssl-dev \
     libffi-dev \
+    zstd-dev \
     git
 
 USER opam
@@ -32,7 +33,8 @@ RUN apk add --no-cache \
     gmp \
     libev \
     libffi \
-    openssl
+    openssl \
+    zstd-libs
 
 # Copy built binary from builder
 COPY --from=builder /home/opam/.opam/default/bin/beingdb-serve /usr/local/bin/
