@@ -43,9 +43,8 @@ let create_test_pack name =
 let create_app_with_config pack config =
   let max_results = config.Beingdb.Server_config.max_results in
   let router = Dream.router [
-    Dream.get "/" (fun _req -> Dream.respond "OK");
-    Dream.get "/version" (fun _req -> 
-      Dream.json {|{"version":"0.1.0","name":"BeingDB"}|});
+    Dream.get "/" Beingdb.Api.handle_root;
+    Dream.get "/version" Beingdb.Api.handle_version;
     Dream.get "/predicates" (Beingdb.Api.handle_list_predicates pack);
     Dream.get "/query/:predicate" (fun req ->
       let predicate = Dream.param req "predicate" in
@@ -65,6 +64,13 @@ let test_health_check () =
   let status = Dream.status response in
   
   Alcotest.(check int) "status 200" 200 (Dream.status_to_int status);
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* body = Dream.body response in
+     let json = Yojson.Safe.from_string body in
+     let status_field = Yojson.Safe.Util.(json |> member "status" |> to_string) in
+     Alcotest.(check string) "status field is OK" "OK" status_field;
+     Lwt.return ());
   
   (* Cleanup *)
   let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in

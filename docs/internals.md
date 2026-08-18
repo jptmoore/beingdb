@@ -473,6 +473,12 @@ Pipeline, module by module:
   (malformed request, timeout, internal error, or a bad
   `language`/`action` parameter) -- `Api.ml` renders the latter as
   `{"error": {"code": ..., "message": ...}}`, never a bare string.
+  `Success` responses for `action: "execute"` (both languages) also
+  carry `language`/`languageVersion`/`environmentFingerprint` (via
+  `Controller.with_environment_fields`), matching the fields already
+  present on `validate`/`explain`'s envelope -- so a client can learn
+  the dataset's schema fingerprint from any query response, not just
+  `/predicates` or the validate/explain actions.
 
 ## 7. Schema inference
 
