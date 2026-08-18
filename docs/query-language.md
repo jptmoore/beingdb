@@ -662,7 +662,10 @@ curl -X POST http://localhost:8080/query \
 ```
 
 A successful `execute` response looks like the core language's, plus any
-advisory `warnings`:
+advisory `warnings`, plus `language`/`languageVersion`/
+`environmentFingerprint` (see below) -- so a client can cache schema
+knowledge purely from ordinary query responses, without a separate
+`/predicates` round trip:
 
 ```json
 {
@@ -671,7 +674,10 @@ advisory `warnings`:
     { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
   ],
   "count": 1,
-  "warnings": []
+  "warnings": [],
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:..."
 }
 ```
 
@@ -773,7 +779,8 @@ expressive-language version) changes whenever any of those change --
 useful for cache invalidation in LLM prompts built from this
 introspection data. It is exposed consistently, under the same
 `environmentFingerprint` key, in `/predicates`, REPL startup, and every
-`validate`/`explain` response.
+`POST /query` response -- `execute`, `validate`, and `explain` alike,
+both languages.
 
 ### REPL
 

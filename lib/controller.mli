@@ -39,7 +39,10 @@ val execute_query :
 (** {2 Expressive query language and unified query dispatch} *)
 
 (** Outcome of {!run_query}:
-    - [Success json]: executed/validated/explained successfully.
+    - [Success json]: executed/validated/explained successfully. For all
+      three actions (including [execute]), [json] always carries
+      [languageVersion]/[environmentFingerprint], letting callers cache
+      schema knowledge from ordinary query responses alone.
     - [Invalid json]: a well-formed request whose *query* is invalid --
       [json] always has the shape [{"valid": false, "errors": [...],
       "warnings": [...], "language", "languageVersion",

@@ -18,7 +18,7 @@ Configure port via `--port` flag or `PORT` environment variable.
 GET /
 ```
 
-Returns `200 OK` with plain text body.
+Returns `200 OK` with a JSON body.
 
 **Use case:** Container health checks, uptime monitoring
 
@@ -28,8 +28,8 @@ curl http://localhost:8080/
 ```
 
 Response:
-```
-OK
+```json
+{ "status": "OK" }
 ```
 
 ---
@@ -149,7 +149,9 @@ version; formatted as `"sha256:<lowercase hex digest>"`) and changes
 whenever any of those change -- useful for invalidating cached prompts
 or schema descriptions built from this endpoint. The same fingerprint
 is exposed, under the same `environmentFingerprint` key, in REPL
-startup and every `validate`/`explain` response.
+startup and every `POST /query` response (`execute`, `validate`, and
+`explain` alike, both languages) -- so a client never has to make a
+separate call to this endpoint just to learn it.
 
 **Use cases:** 
 - Discovery and autocomplete (without samples)
@@ -234,7 +236,10 @@ equivalents.
     }
   ],
   "count": 1,
-  "total": 1
+  "total": 1,
+  "language": "core",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
 
@@ -249,7 +254,10 @@ equivalents.
   "count": 2,
   "total": 156,
   "offset": 0,
-  "limit": 10
+  "limit": 10,
+  "language": "core",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
 
@@ -265,6 +273,9 @@ loss.
 - `total` - Total results across all pages (only with pagination)
 - `offset` - Echo of request offset (only with pagination)
 - `limit` - Echo of request limit (only with pagination)
+- `language` - Echo of the request's `"core"`/`"dsl"` language
+- `languageVersion` - The query language version (same value as `/predicates?detailed=true`)
+- `environmentFingerprint` - The dataset schema fingerprint (same value as `/predicates?detailed=true`); lets a client cache schema knowledge from ordinary query responses alone, without a separate `/predicates` call. Present on every `action: "execute"` response (both languages), not just `validate`/`explain`.
 
 **Examples:**
 

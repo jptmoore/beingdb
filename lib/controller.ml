@@ -216,7 +216,11 @@ let execute_query ~max_results store query_str ~offset ~limit =
     ({!Core_query.apply}).
 
     Every response is one of:
-    - [Success json]: executed/validated/explained successfully.
+    - [Success json]: executed/validated/explained successfully. For all
+      three actions (including [execute]), [json] always carries
+      [languageVersion]/[environmentFingerprint], so an MCP client can
+      cache schema/version knowledge purely from ordinary query
+      responses, without a separate [/predicates] round trip.
     - [Invalid json]: a well-formed request whose *query* is invalid --
       [json] always has the shape [{"valid": false, "errors": [...],
       "warnings": [...], "language", "languageVersion",
@@ -246,6 +250,18 @@ let core_error_json ~code ~message ?groups () =
 let validation_error_error_json (err : Query_validation.validation_error) =
   let groups = match err with Query_validation.DisconnectedQuery groups -> Some groups | _ -> None in
   core_error_json ~code:(Query_validation.error_code err) ~message:(Query_validation.error_message err) ?groups ()
+
+(** [language]/[languageVersion]/[environmentFingerprint] fields, as
+    appended to "execute" action success responses (in addition to
+    validate/explain's {!validation_envelope}, which carries the same
+    three fields) so clients can cache schema knowledge from ordinary
+    query responses alone, without a separate [/predicates] call. *)
+let with_environment_fields ~language (env : Query_environment.t) =
+  [
+    ("language", `String language);
+    ("languageVersion", `String env.Query_environment.language_version);
+    ("environmentFingerprint", `String env.Query_environment.fingerprint);
+  ]
 
 (** The single response envelope for [action: "validate"] and
     [action: "explain"], in both languages: [valid], the [errors]/
@@ -313,6 +329,7 @@ let execute_core_structured ~max_results store query_str ~offset ~limit =
       | Error err -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ validation_error_error_json err ] [] []))
       | Ok _ -> (
           execute_query ~max_results store query_str ~offset ~limit >>= function
+          | Ok (`Assoc fields) -> Lwt.return (Success (`Assoc (fields @ with_environment_fields ~language:"core" env)))
           | Ok json -> Lwt.return (Success json)
           | Error message -> Lwt.return (Failure { code = "execution_error"; message })))
 
@@ -392,7 +409,7 @@ let execute_dsl ~max_results store query_str =
   | `Invalid (env, errors, warnings) ->
       let errors_json, warnings_json = errors_warnings_json errors warnings in
       Lwt.return (Invalid (validation_envelope ~language:"dsl" ~env ~valid:false errors_json warnings_json []))
-  | `Valid (_env, cq, warnings) ->
+  | `Valid (env, cq, warnings) ->
       let effective_limit = match cq.Core_query.limit with Some n -> min n max_results | None -> max_results in
       let pattern_count = List.length (List.filter (function Query_ast.Pattern _ -> true | _ -> false) cq.Core_query.query.Query_ast.clauses) in
       let is_join = pattern_count > 1 in
@@ -416,12 +433,13 @@ let execute_dsl ~max_results store query_str =
             Lwt.return
               (Success
                  (`Assoc
-                   [
-                     ("variables", `List (List.map (fun v -> `String v) vars));
-                     ("results", `List (List.map (row_to_json vars) rows));
-                     ("count", `Int (List.length rows));
-                     ("warnings", `List (List.map Validation_error.warning_to_json warnings));
-                   ]))
+                   ([
+                      ("variables", `List (List.map (fun v -> `String v) vars));
+                      ("results", `List (List.map (row_to_json vars) rows));
+                      ("count", `Int (List.length rows));
+                      ("warnings", `List (List.map Validation_error.warning_to_json warnings));
+                    ]
+                   @ with_environment_fields ~language:"dsl" env)))
       in
       Lwt.catch
         (fun () -> Lwt_unix.with_timeout !Query_validation.Config.query_timeout run_body)

@@ -31,7 +31,7 @@ let status_for_failure_code = function
 
 (** Health check endpoint *)
 let handle_root _req =
-  Dream.respond "OK"
+  json_response (`Assoc [ ("status", `String "OK") ])
 
 (** Version endpoint *)
 let handle_version _req =
