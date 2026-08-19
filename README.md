@@ -71,6 +71,8 @@ For example, a system might use:
 
 The API exposes the available predicates so an LLM can discover the vocabulary before constructing queries.
 
+For MCP-based integrations, see the [BeingDB MCP server](https://github.com/jptmoore/beingdb-mcp).
+
 ## Quick start
 
 Clone some example facts:
