@@ -45,10 +45,12 @@ returns artists and the works they created.
 Queries can also join multiple relationships:
 
 ```text
-created(Artist, Work),
-year_created(Work, Y),
-Y >= 1970,
-shown_in(Work, Exhibition)
+find Artist, Work, Y, Exhibition
+where
+  created(Artist, Work)
+  year_created(Work, Y)
+  Y >= 1970
+  shown_in(Work, Exhibition)
 ```
 
 This can answer questions such as:
