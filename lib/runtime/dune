@@ -1,0 +1,7 @@
+; Portable BeingDB runtime: values, facts, pack/index interpretation,
+; query languages, planner and evaluator. Must not depend on Unix,
+; Irmin backends, Git, Dream or CLI libraries.
+
+(library
+ (name beingdb_runtime)
+ (libraries lwt yojson digestif))

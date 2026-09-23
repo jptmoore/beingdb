@@ -45,7 +45,7 @@ let show_predicates store =
   |> List.iter (fun (name, arity) -> Printf.printf "  %s/%d\n" name arity)
 
 let describe_predicate store name =
-  let env = Lwt_main.run (Query_environment.load_or_build store) in
+  let env = Lwt_main.run (Db.Environment.load_or_build store) in
   match Query_environment.find env name with
   | None -> Printf.printf "Unknown predicate: %s\n" name
   | Some p ->
@@ -61,7 +61,7 @@ let describe_predicate store name =
           p.Query_environment.examples)
 
 let show_environment store mode =
-  let env = Lwt_main.run (Query_environment.load_or_build store) in
+  let env = Lwt_main.run (Db.Environment.load_or_build store) in
   Printf.printf "predicates: %d\n" (List.length env.Query_environment.predicates);
   Printf.printf "environment_fingerprint: %s\n" env.Query_environment.fingerprint;
   Printf.printf "language_version: %s\n" env.Query_environment.language_version;
@@ -177,7 +177,7 @@ let run_repl pack_path default_limit history_file =
     in
     go []
   in
-  let env = Lwt_main.run (Query_environment.load_or_build store) in
+  let env = Lwt_main.run (Db.Environment.load_or_build store) in
   Printf.printf "BeingDB REPL. %d predicates, fingerprint %s, %s, mode %s. Type :help for commands, :quit to exit.\n"
     (List.length env.Query_environment.predicates) env.Query_environment.fingerprint env.Query_environment.language_version
     (mode_name !mode);

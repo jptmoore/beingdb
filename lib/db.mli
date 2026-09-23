@@ -1,6 +1,11 @@
-(** DB: Database abstraction layer over storage backends *)
+(** DB: native façade binding the portable runtime to the Pack backend *)
 
 type t = Pack_backend.t
+
+(** The portable query engine and environment, bound to the native store. *)
+module Engine : module type of Query_engine.Make (Pack_backend)
+
+module Environment : module type of Query_environment.Make (Pack_backend)
 
 (** Get list of all predicates with their arities *)
 val list_predicates : t -> (string * int) list Lwt.t

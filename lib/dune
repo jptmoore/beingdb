@@ -1,6 +1,11 @@
+; Authoring/build (Git, source parsing, compile), HTTP server and CLI/REPL.
+; Query semantics live in lib/runtime; native pack storage in lib/pack_unix.
+
 (library
  (name beingdb)
- (libraries irmin.unix irmin-git.unix irmin-pack.unix dream lwt lwt.unix logs logs.lwt logs.fmt fmt fmt.tty yojson cmdliner linenoise digestif))
+ (flags
+  (:standard -open Beingdb_runtime -open Beingdb_pack_unix))
+ (libraries beingdb_runtime beingdb_pack_unix irmin.unix irmin-git.unix irmin-pack.unix dream lwt lwt.unix logs logs.lwt logs.fmt fmt fmt.tty yojson cmdliner linenoise digestif))
 
 (rule
  (target version.ml)

@@ -1,4 +1,9 @@
-(** BeingDB: Logic-based knowledge store with Git and Pack backends *)
+(** BeingDB: Logic-based knowledge store with Git and Pack backends.
+
+    Re-exports the portable runtime ({!Beingdb_runtime}), the native pack
+    adapter ({!Beingdb_pack_unix}) and the authoring/server/CLI modules
+    under one namespace. [Query_engine] and [Query_environment] are
+    bound to the native {!Pack_backend} here for backward compatibility. *)
 
 module Version = Version
 module Decimal = Decimal
@@ -11,14 +16,27 @@ module Query_ast = Query_ast
 module Clause_parser = Clause_parser
 module Query_connectivity = Query_connectivity
 module Query_planner = Query_planner
+module Runtime_store = Runtime_store
+module Pack_layout = Pack_layout
+module Memory_store = Memory_store
 module Git_backend = Git_backend
 module Pack_backend = Pack_backend
 module Parse_predicate = Parse_predicate
 module Query_parser = Query_parser
-module Query_engine = Query_engine
+
+module Query_engine = struct
+  include Query_engine
+  include Db.Engine
+end
+
 module Query_validation = Query_validation
 module Server_config = Server_config
-module Query_environment = Query_environment
+
+module Query_environment = struct
+  include Query_environment
+  include Db.Environment
+end
+
 module Predicate_suggest = Predicate_suggest
 module Surface_ast = Surface_ast
 module Dsl_parser = Dsl_parser

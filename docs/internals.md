@@ -3,9 +3,54 @@
 This document describes BeingDB's typed value model, canonical encoding,
 storage layout and query planning.
 
+## 0. Architecture: authoring, build, runtime
+
+BeingDB has three stages:
+
+```text
+1. AUTHORING   human-readable facts  ->  Git
+2. BUILD       beingdb-compile  ->  validated/indexed immutable pack
+3. RUNTIME     compiled pack  ->  pack/index runtime  ->  query parser/planner/evaluator  ->  results
+```
+
+The source is split into three Dune libraries along those lines:
+
+| Library | Directory | Contents | Dependencies |
+|---|---|---|---|
+| `beingdb_runtime` | `lib/runtime/` | `Value`, `Decimal`, `Calendar`, `Fact`, `Manifest`, lexer and both query parsers, AST, validation, connectivity, planner, `Query_engine`, `Query_environment`, DSL lowering, `Core_query`, explain, `Runtime_store`, `Pack_layout`, `Memory_store` | `lwt`, `yojson`, `digestif` only |
+| `beingdb_pack_unix` | `lib/pack_unix/` | `Pack_backend`: the Irmin Pack Unix store, open/close, and the pack writer | runtime + `irmin-pack.unix`, `irmin.unix` |
+| `beingdb` | `lib/` | Git backend, source-fact parsing (`Parse_predicate`), compile/import/clone/pull, `Db`/`Model`/`Controller`, Dream API, REPL, CLI | everything |
+
+The runtime storage boundary is `Runtime_store.S`: the six read-only
+operations the engine and environment need (`list_predicates`,
+`get_manifest`, `query_all`, `sample_facts`, `equality_lookup`,
+`range_lookup`), in BeingDB terms only. `Query_engine.Make` and
+`Query_environment.Make` are functors over it, so there is one
+evaluator for every store.
+
+`Pack_layout` holds the portable interpretation of the compiled pack
+(the path layout of section 3, fact decoding, equality/range lookup
+semantics, `_all` scans) over a two-function `READER` (`find` contents
+at a path, `list` children of a directory). It also produces the exact
+entries a compiled predicate contributes (`predicate_entries`), which the
+native writer uses. `Pack_backend` supplies a `READER` backed by
+`Irmin_pack_unix`; this is the native runtime. `Memory_store` supplies an
+in-memory tree and is used to test the runtime with no Irmin or Unix
+dependency (`test/test_runtime.ml`, and `test/test_runtime_parity.ml`,
+which runs identical queries against both stores). `Db.Engine` /
+`Db.Environment` are the engine and environment bound to `Pack_backend`;
+`Beingdb.Query_engine` / `Beingdb.Query_environment` re-export them for
+backward compatibility.
+
+The split separates platform-independent runtime logic from the Unix
+adapter so that alternative execution environments can be investigated.
+No browser or WebAssembly runtime is implemented. Server-only concerns
+remain outside the runtime: the query timeout (`Lwt_unix.with_timeout`
+in `Controller`), Dream, and the CLI.
+
 ## 1. The typed value model
 
-`lib/value.ml` defines the one authoritative value type:
+`lib/runtime/value.ml` defines the one authoritative value type:
 
 ```ocaml
 type t =
@@ -30,8 +75,8 @@ encoding (`Fact.encode`, `Pack_backend`), and API/JSON serialization
 
 Numbers, dates and other literals are never stored as OCaml `float`.
 Exact decimals are represented as a coefficient and scale
-(`lib/decimal.ml`); calendar dates and UTC instants are computed with a
-proleptic-Gregorian day-count algorithm (`lib/calendar.ml`), using only
+(`lib/runtime/decimal.ml`); calendar dates and UTC instants are computed with a
+proleptic-Gregorian day-count algorithm (`lib/runtime/calendar.ml`), using only
 the OCaml standard library.
 
 ### 1.1 Literal syntax
@@ -56,7 +101,7 @@ the OCaml standard library.
 (atom) are four different values of four different types; they are
 never equal to one another (see ["Comparison semantics"](#4-comparison-semantics)).
 
-Tokenizing is centralized in `lib/lexer.ml` and shared by fact parsing
+Tokenizing is centralized in `lib/runtime/lexer.ml` and shared by fact parsing
 (`Parse_predicate`) and query parsing (`Query_parser`), so both accept
 exactly the same literal syntax.
 
@@ -89,7 +134,7 @@ are distinct constructors, and no code path converts between them.
 
 ## 2. Canonical fact encoding and fact IDs
 
-`lib/fact.ml` defines:
+`lib/runtime/fact.ml` defines:
 
 ```ocaml
 type t = { predicate : string; arguments : Value.t list }
@@ -124,6 +169,10 @@ delimiter collisions:
 ```
 
 ## 3. Storage layout (Irmin Pack)
+
+The layout below is defined and interpreted by `Pack_layout`
+(`lib/runtime/pack_layout.ml`); the native `Pack_backend` stores it in an
+Irmin Pack Unix repository.
 
 ```
 /facts/<fact-id>                                     -> canonical encoded fact
@@ -263,8 +312,8 @@ Did you mean @1979 (year only) or @1979-04-01 (full date)?
 See [query-language.md](query-language.md) for the user-facing syntax
 and semantics. In summary:
 
-- `lib/query_ast.ml` defines the structured AST (`term`, `clause`,
-  `comparison_operator`) produced by `lib/query_parser.ml`; comparisons
+- `lib/runtime/query_ast.ml` defines the structured AST (`term`, `clause`,
+  `comparison_operator`) produced by `lib/runtime/query_parser.ml`; comparisons
   are never re-interpreted from text during execution. `clause` also
   has three *group* variants -- `Optional`, `Alternatives`, and
   `Not_exists`, each holding a nested `clause list` (or, for
@@ -284,8 +333,8 @@ and semantics. In summary:
   term        := VARIABLE | "_" | literal
   ```
 
-  Tokenization (`lib/lexer.ml`) and clause-level parsing
-  (`lib/clause_parser.ml`, shared with the expressive language) are
+  Tokenization (`lib/runtime/lexer.ml`) and clause-level parsing
+  (`lib/runtime/clause_parser.ml`, shared with the expressive language) are
   separate passes: the lexer turns the input into a flat token stream
   first, skipping `[' ' '\t' '\r' '\n']+` between tokens (so formatting
   never affects meaning), then `Query_parser` splits that stream on
@@ -300,7 +349,7 @@ and semantics. In summary:
   is the single entry point used by the REST API (`Controller`), the
   REPL (`Cli_repl`), and the CLI -- there is no separate parsing path
   per consumer.
-- `lib/query_planner.ml` is pure (it never touches the store): it
+- `lib/runtime/query_planner.ml` is pure (it never touches the store): it
   collects every `Compare`/`Between` clause that constrains a variable
   with a literal (normalizing `literal OP variable` to `variable OP'
   literal`, and expanding `between` into two constraints), then for each
@@ -322,7 +371,8 @@ and semantics. In summary:
   only inside an `Optional`/`Alternatives`/`Not_exists` group never leak
   out to the enclosing scope's planning decisions, a deliberately
   conservative safety choice.
-- `lib/query_engine.ml` executes the plan: for every candidate fact
+- `lib/runtime/query_engine.ml` (`Query_engine.Make`, over any
+  `Runtime_store.S`) executes the plan: for every candidate fact
   fetched via the chosen access method, it re-verifies **every**
   argument position (constants, joined variables, and range/equality
   constraints) against the fully decoded fact before binding free
@@ -364,23 +414,23 @@ and executor underneath either language.
 
 Pipeline, module by module:
 
-- `lib/clause_parser.ml` -- leaf-clause parsing (a predicate pattern, a
-  comparison, or a `between`), factored out of `lib/query_parser.ml` so
+- `lib/runtime/clause_parser.ml` -- leaf-clause parsing (a predicate pattern, a
+  comparison, or a `between`), factored out of `lib/runtime/query_parser.ml` so
   both the core parser and the expressive parser accept identical
   literal/clause syntax with no duplication.
-- `lib/surface_ast.ml` -- the parsed form of the expressive syntax,
+- `lib/runtime/surface_ast.ml` -- the parsed form of the expressive syntax,
   before validation: leaf clauses carry a source line number and column
   (for precise error locations), alongside `Optional`/`Alternatives`/
   `Negation` group variants.
-- `lib/dsl_parser.ml` -- a line-oriented parser for `find`/`where`/
+- `lib/runtime/dsl_parser.ml` -- a line-oriented parser for `find`/`where`/
   `optional`/`either`/`or`/`not`/`order by`/`limit`/`offset`, producing
   a `Surface_ast.surface_query`. Tracks each significant line's 1-based
   line number and the 1-based column of its first non-whitespace
   character, threaded onto every leaf clause.
-- `lib/query_environment.ml` -- dataset-aware predicate metadata used
+- `lib/runtime/query_environment.ml` -- dataset-aware predicate metadata used
   for validation and introspection, built deterministically from the
   compiled store's per-predicate manifests (section 7) via
-  `Pack_backend.list_predicates`/`get_manifest`/`sample_facts` -- no
+  `Runtime_store.S`'s `list_predicates`/`get_manifest`/`sample_facts` -- no
   separate cache or user-authored schema. Includes a fingerprint:
   `"sha256:" ^ Digestif.SHA256.to_hex (Digestif.SHA256.digest_string
   canonical)` over sorted predicate names, arities, observed argument
@@ -393,11 +443,11 @@ Pipeline, module by module:
   hash algorithm throughout. This is a breaking on-disk format change --
   existing compiled `pack_store` directories must be recompiled from
   Git after upgrading.
-- `lib/predicate_suggest.ml` -- deterministic "did you mean" suggestions
+- `lib/runtime/predicate_suggest.ml` -- deterministic "did you mean" suggestions
   for an unknown predicate name (normalized-name equality, Levenshtein
   edit distance, underscore-token overlap, arity compatibility) -- no
   embeddings or external calls.
-- `lib/query_connectivity.ml` -- checks that a query's positive
+- `lib/runtime/query_connectivity.ml` -- checks that a query's positive
   (non-negated) pattern clauses form a single connected component,
   replacing an earlier, cruder rule that rejected any repeated
   predicate. Two top-level clauses are connected when they share a
@@ -411,7 +461,7 @@ Pipeline, module by module:
   `disconnected_query` error). Self-joins and multi-hop chains sharing a
   variable (`parent(A, B), parent(B, C)`) are always connected and never
   rejected.
-- `lib/dsl_lower.ml` -- validates a `Surface_ast.surface_query` against
+- `lib/runtime/dsl_lower.ml` -- validates a `Surface_ast.surface_query` against
   a `Query_environment.t` and, if there are no errors, lowers it into a
   `Core_query.t`. Collects *every* problem found (not just the first).
   Checks: unknown predicates (with suggestions), arity, literal-vs-
@@ -432,13 +482,13 @@ Pipeline, module by module:
   inferred (never bound by a recognized pattern) is left unchecked here,
   deferred to `Query_engine`'s runtime type-checked comparison
   evaluator, exactly as cross-variable comparisons already are.
-- `lib/validation_error.ml` -- the structured error/warning type shared
+- `lib/runtime/validation_error.ml` -- the structured error/warning type shared
   by validation failures, with `to_json`/`warning_to_json` for the HTTP
   and REPL surfaces. JSON field names are camelCase (`leftType`,
   `rightType`, `argumentPosition`, `expectedTypes`, `receivedType`) to
   match the rest of the normalized `/query` response envelope; the
   `code` *value* itself stays a stable snake_case string.
-- `lib/explain_plan.ml` -- builds the structured, machine-readable
+- `lib/runtime/explain_plan.ml` -- builds the structured, machine-readable
   `plan` array for `action: "explain"`: the planner's steps (recursively
   for nested groups) mapped to stable operation names
   (`predicate_scan`/`exact_index_lookup`/`range_index_lookup`/`join`/
@@ -450,7 +500,7 @@ Pipeline, module by module:
   `normalized_core_query_json` renders the lowered query's patterns and
   comparisons as strings for the explain response's
   `normalizedCoreQuery` field.
-- `lib/core_query.ml` -- `Core_query.apply` runs the post-execution
+- `lib/runtime/core_query.ml` -- `Core_query.apply` runs the post-execution
   pipeline over a raw `Query_engine.result`: order by full binding
   (`Value.order_compare`, falling back to canonical-string comparison
   for unordered types so `order by` always produces *some* deterministic
@@ -482,7 +532,7 @@ Pipeline, module by module:
 
 ## 7. Schema inference
 
-No user-authored schema is required or supported. `lib/manifest.ml`
+No user-authored schema is required or supported. `lib/runtime/manifest.ml`
 computes, purely from the compiled facts for one predicate (during
 `Pack_backend.write_predicate_batch`, invoked by `beingdb compile`):
 

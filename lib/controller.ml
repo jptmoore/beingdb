@@ -87,7 +87,7 @@ let list_predicates ~samples store =
     filtered by a case-insensitive substring ([q]) and/or an exact name
     list ([names]). *)
 let list_predicates_detailed ?q ?names store =
-  Query_environment.load_or_build store >>= fun env ->
+  Db.Environment.load_or_build store >>= fun env ->
   let matches_filters (p : Query_environment.predicate_signature) =
     let matches_q =
       match q with
@@ -284,7 +284,7 @@ let validation_envelope ~language ~(env : Query_environment.t) ~valid errors_jso
 (** Run the core-language "validate" action: parse + structural
     validation only, no execution. *)
 let validate_core store query_str =
-  Query_environment.load_or_build store >>= fun env ->
+  Db.Environment.load_or_build store >>= fun env ->
   match Query_parser.parse_query_result query_str with
   | Error msg -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
   | Ok query -> (
@@ -299,7 +299,7 @@ let validate_core store query_str =
 (** Run the core-language "explain" action: parse then produce the
     structured plan and human-readable [planText], without executing. *)
 let explain_core store query_str =
-  Query_environment.load_or_build store >>= fun env ->
+  Db.Environment.load_or_build store >>= fun env ->
   match Query_parser.parse_query_result query_str with
   | Error msg -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
   | Ok query ->
@@ -321,7 +321,7 @@ let explain_core store query_str =
     parse/validation failures as [Invalid] (query-invalid) rather than a
     bare runtime [Failure]. *)
 let execute_core_structured ~max_results store query_str ~offset ~limit =
-  Query_environment.load_or_build store >>= fun env ->
+  Db.Environment.load_or_build store >>= fun env ->
   match Query_parser.parse_query_result query_str with
   | Error msg -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
   | Ok query -> (
@@ -339,12 +339,12 @@ let errors_warnings_json errors warnings =
 (** Parse and lower a DSL query string against a freshly built
     {!Query_environment}. Rebuilt per call: manifests are already
     persisted per-predicate, so this is a bounded, local reconstruction
-    rather than a full-store scan (see {!Query_environment.load_or_build}). *)
+    rather than a full-store scan (see {!Db.Environment.load_or_build}). *)
 let lower_dsl store query_str =
   match Dsl_parser.parse query_str with
   | Error msg -> Lwt.return (`Parse_error msg)
   | Ok surface -> (
-      Query_environment.load_or_build store >>= fun env ->
+      Db.Environment.load_or_build store >>= fun env ->
       let { Dsl_lower.core_query; errors; warnings } = Dsl_lower.lower env surface in
       match (core_query, errors) with
       | _, _ :: _ -> Lwt.return (`Invalid (env, errors, warnings))
@@ -354,7 +354,7 @@ let lower_dsl store query_str =
 let validate_dsl store query_str =
   lower_dsl store query_str >>= function
   | `Parse_error msg ->
-      Query_environment.load_or_build store >>= fun env ->
+      Db.Environment.load_or_build store >>= fun env ->
       Lwt.return (Invalid (validation_envelope ~language:"dsl" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
   | `Internal_error message -> Lwt.return (Failure { code = "internal_error"; message })
   | `Invalid (env, errors, warnings) ->
@@ -374,7 +374,7 @@ let validate_dsl store query_str =
 let explain_dsl store query_str =
   lower_dsl store query_str >>= function
   | `Parse_error msg ->
-      Query_environment.load_or_build store >>= fun env ->
+      Db.Environment.load_or_build store >>= fun env ->
       Lwt.return (Invalid (validation_envelope ~language:"dsl" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
   | `Internal_error message -> Lwt.return (Failure { code = "internal_error"; message })
   | `Invalid (env, errors, warnings) ->
@@ -403,7 +403,7 @@ let explain_dsl store query_str =
 let execute_dsl ~max_results store query_str =
   lower_dsl store query_str >>= function
   | `Parse_error msg ->
-      Query_environment.load_or_build store >>= fun env ->
+      Db.Environment.load_or_build store >>= fun env ->
       Lwt.return (Invalid (validation_envelope ~language:"dsl" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
   | `Internal_error message -> Lwt.return (Failure { code = "internal_error"; message })
   | `Invalid (env, errors, warnings) ->
