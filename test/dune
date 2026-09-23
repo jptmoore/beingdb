@@ -42,3 +42,14 @@
  (name test_hardening)
  (libraries beingdb alcotest lwt lwt.unix)
  (modes native))
+
+; Portable runtime only (plus alcotest): no Irmin, Git, Dream or lwt.unix.
+(test
+ (name test_runtime)
+ (libraries beingdb_runtime alcotest lwt)
+ (modes native))
+
+(test
+ (name test_runtime_parity)
+ (libraries beingdb alcotest lwt lwt.unix yojson unix)
+ (modes native))

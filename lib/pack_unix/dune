@@ -1,0 +1,8 @@
+; Native storage adapter: the compiled pack stored in an Irmin_pack_unix
+; repository on the local filesystem.
+
+(library
+ (name beingdb_pack_unix)
+ (flags
+  (:standard -open Beingdb_runtime))
+ (libraries beingdb_runtime irmin irmin.unix irmin-pack irmin-pack.unix lwt yojson))

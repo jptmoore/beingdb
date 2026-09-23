@@ -43,31 +43,34 @@ let compute_fingerprint predicates =
   let canonical = String.concat ";" (List.map canonical_predicate_string sorted) ^ "|" ^ language_version in
   "sha256:" ^ Digestif.SHA256.to_hex (Digestif.SHA256.digest_string canonical)
 
-let build ?(examples = 3) store =
-  let* names = Pack_backend.list_predicates store in
-  let* predicate_opts =
-    Lwt_list.map_s
-      (fun name ->
-        let* manifest_opt = Pack_backend.get_manifest store name in
-        match manifest_opt with
-        | None -> Lwt.return None
-        | Some (m : Manifest.t) ->
-            let arguments =
-              List.mapi
-                (fun i (p : Manifest.position_stat) -> { position = i; types = List.map fst p.type_stats })
-                m.positions
-            in
-            let* samples = Pack_backend.sample_facts ~limit:examples store name in
-            let examples_v = List.map (fun (f : Fact.t) -> f.arguments) samples in
-            Lwt.return (Some { name; arity = m.arity; arguments; count = m.fact_count; examples = examples_v }))
-      names
-  in
-  let predicates = List.filter_map (fun x -> x) predicate_opts in
-  let by_name = Hashtbl.create 64 in
-  List.iter (fun p -> Hashtbl.replace by_name p.name p) predicates;
-  let fingerprint = compute_fingerprint predicates in
-  Lwt.return { predicates; by_name; fingerprint; language_version }
+module Make (Store : Runtime_store.S) = struct
+  let build ?(examples = 3) store =
+    let* names = Store.list_predicates store in
+    let* predicate_opts =
+      Lwt_list.map_s
+        (fun name ->
+          let* manifest_opt = Store.get_manifest store name in
+          match manifest_opt with
+          | None -> Lwt.return None
+          | Some (m : Manifest.t) ->
+              let arguments =
+                List.mapi
+                  (fun i (p : Manifest.position_stat) -> { position = i; types = List.map fst p.type_stats })
+                  m.positions
+              in
+              let* samples = Store.sample_facts ~limit:examples store name in
+              let examples_v = List.map (fun (f : Fact.t) -> f.arguments) samples in
+              Lwt.return (Some { name; arity = m.arity; arguments; count = m.fact_count; examples = examples_v }))
+        names
+    in
+    let predicates = List.filter_map (fun x -> x) predicate_opts in
+    let by_name = Hashtbl.create 64 in
+    List.iter (fun p -> Hashtbl.replace by_name p.name p) predicates;
+    let fingerprint = compute_fingerprint predicates in
+    Lwt.return { predicates; by_name; fingerprint; language_version }
 
-let load_or_build ?examples store = build ?examples store
+  let load_or_build ?examples store = build ?examples store
+end
+
 let find t name = Hashtbl.find_opt t.by_name name
 let known_names t = List.map (fun p -> (p.name, p.arity)) t.predicates

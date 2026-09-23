@@ -1,8 +1,11 @@
-(** DB: Database abstraction layer over storage backends *)
+(** DB: native façade binding the portable runtime to the Pack backend *)
 
 open Lwt.Infix
 
 type t = Pack_backend.t
+
+module Engine = Query_engine.Make (Pack_backend)
+module Environment = Query_environment.Make (Pack_backend)
 
 (** Get list of all predicates with their arities *)
 let list_predicates store =
@@ -35,9 +38,9 @@ let predicate_exists store predicate =
 let get_manifest store predicate = Pack_backend.get_manifest store predicate
 
 (** Execute query using query engine *)
-let execute_query store query = Query_engine.execute store query
+let execute_query store query = Engine.execute store query
 
 (** Execute query with streaming (for joins) *)
 let execute_query_streaming store query ~offset ~limit =
-  Query_engine.execute_streaming store query ~offset ~limit
+  Engine.execute_streaming store query ~offset ~limit
 
