@@ -568,15 +568,18 @@ This adds documentation to the inferred schema; it does not replace it:
 
 - `lib/parse_declaration.ml` (authoring) extracts `%!` blocks from the
   source lines and selects the one for the predicate being compiled.
-  Unparseable, foreign, repeated or arity-mismatched declarations become
+  Unparseable, empty, foreign, repeated or arity-mismatched declarations
+  (a description-only declaration has no arity to mismatch) become
   compile warnings and are dropped, so a declaration can never fail an
   otherwise valid compile.
 - `lib/runtime/predicate_declaration.ml` (portable) is the typed,
-  validated record: per-argument `role` and optional `semantic_type`,
-  plus an optional `description`.
+  validated record. Every part is optional: `arguments` (absent for a
+  description-only `%! name` declaration; when present, one entry per
+  argument with a `role` and an optional `semantic_type`) and
+  `description`. A declaration with neither is rejected.
 - The declaration is stored in the existing manifest as an optional
   `"declaration"` field
-  (`{"arguments": [{"role", "semantic_type"?}], "description"?}`). No
+  (`{"arguments"?: [{"role", "semantic_type"?}], "description"?}`). No
   new pack paths or `Runtime_store.S` operations are involved, so any
   reader of `/meta/<predicate>` (including the `beingdb-wasm` logical
   pack export) carries it unchanged.

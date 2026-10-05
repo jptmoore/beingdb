@@ -1,39 +1,54 @@
 (** Parse_declaration: optional predicate declarations in source files.
 
-    A declaration is a PlDoc-style structured comment: a [%!] line giving
-    the signature, optionally followed by [%] comment lines forming the
-    description. It ends at the first line that does not start with [%]
-    (a blank line or a fact) or at the next [%!] line.
+    A declaration is a PlDoc-style structured comment: a [%!] line naming
+    the predicate, optionally with its argument roles, followed by
+    optional [%] comment lines forming the description. It ends at the
+    first line that does not start with [%] (a blank line or a fact) or
+    at the next [%!] line. Ordinary [%] comments are never declarations.
 
     {[
-      %! created_by(Work:work, Creator:person)
-      %  Relates a work to the person who created it.
-      created_by(shadow_of_a_journey, tina_keane).
+      %! created_by
+      %  Relates a work to the artist or creator who made it.
+
+      %! created_by(Work, Artist)
+
+      %! created_by(Work:work, Artist:person)
+      %  Relates a work to the artist or creator who made it.
     ]}
 
     Each argument is a role ([[A-Z][A-Za-z0-9_]*]), optionally followed
-    by [:semantic_type] ([[a-z][a-z0-9_]*]). An empty [%] line separates
-    description paragraphs; other lines in a paragraph are joined with a
-    single space. Because declarations are comments, sources containing
-    them still compile with BeingDB versions that predate them. *)
+    by [:semantic_type] ([[a-z][a-z0-9_]*]). A bare [%! name] declares
+    only a description and needs at least one description line. An empty
+    [%] line separates description paragraphs; other lines in a
+    paragraph are joined with a single space. Because declarations are
+    comments, sources containing them still compile with BeingDB
+    versions that predate them. *)
 
 type item = { name : string; declaration : Predicate_declaration.t; line : int (** 1-based *) }
 
-(** Parse just the text after [%!], e.g. ["created_by(Work, Creator:person)"]. *)
+let check_name name =
+  if Result.is_error (Query_validation.validate_predicate_name name) then
+    Error (Printf.sprintf "invalid predicate name '%s'" name)
+  else Ok name
+
+(** Parse the text after [%!]: a predicate name, optionally followed by
+    an argument list, e.g. ["created_by"] or ["created_by(Work, Artist:person)"].
+    Returns the name and the declared arguments ([None] for a bare name). *)
 let parse_signature text =
   let text = String.trim text in
   let text =
     if String.ends_with ~suffix:"." text then String.trim (String.sub text 0 (String.length text - 1)) else text
   in
   match String.index_opt text '(' with
-  | None -> Error "expected name(Role, ...)"
+  | None -> Result.map (fun name -> (name, None)) (check_name text)
   | Some lp ->
       let name = String.trim (String.sub text 0 lp) in
       let rest = String.sub text (lp + 1) (String.length text - lp - 1) in
       if not (String.ends_with ~suffix:")" rest) then Error "expected name(Role, ...) with nothing after ')'"
-      else if Result.is_error (Query_validation.validate_predicate_name name) then
-        Error (Printf.sprintf "invalid predicate name '%s'" name)
       else
+        match check_name name with
+        | Error msg -> Error msg
+        | Ok name ->
         let inner = String.trim (String.sub rest 0 (String.length rest - 1)) in
         let parts = if inner = "" then [] else List.map String.trim (String.split_on_char ',' inner) in
         let arguments =
@@ -48,7 +63,7 @@ let parse_signature text =
                   })
             parts
         in
-        Result.map (fun d -> (name, d)) (Predicate_declaration.make ~arguments ~description:None)
+        Ok (name, Some arguments)
 
 let is_comment line = String.starts_with ~prefix:"%" line
 let is_signature line = String.starts_with ~prefix:"%!" line
@@ -83,17 +98,16 @@ let extract lines =
       let sig_text = String.sub lines.(i) 2 (String.length lines.(i) - 2) in
       match parse_signature sig_text with
       | Error e -> scan next items (Printf.sprintf "line %d: ignoring declaration: %s" (i + 1) e :: warnings)
-      | Ok (name, d) -> (
-          match
-            Predicate_declaration.make ~arguments:d.Predicate_declaration.arguments ~description:(description_of desc_lines)
-          with
+      | Ok (name, arguments) -> (
+          match Predicate_declaration.make ~arguments ~description:(description_of desc_lines) with
           | Ok declaration -> scan next ({ name; declaration; line = i + 1 } :: items) warnings
           | Error e -> scan next items (Printf.sprintf "line %d: ignoring declaration: %s" (i + 1) e :: warnings))
   in
   scan 0 [] []
 
 (** The declaration to compile for [predicate] given its facts' [arity]:
-    the first declaration naming it, if its arity matches. Declarations
+    the first declaration naming it, if any declared arguments match the
+    arity (a description-only declaration always applies). Declarations
     for other predicates, repeated declarations and arity mismatches are
     reported as warnings and ignored, so declarations can never make an
     otherwise valid source fail to compile. *)
@@ -110,12 +124,12 @@ let select ~predicate ~arity items =
       let repeat_warnings =
         List.map (fun it -> Printf.sprintf "line %d: ignoring repeated declaration for '%s'" it.line predicate) repeats
       in
-      let declared = Predicate_declaration.arity first.declaration in
-      if declared <> arity then
+      match Predicate_declaration.arity first.declaration with
+      | Some declared when declared <> arity ->
         ( None,
           (Printf.sprintf "line %d: ignoring declaration %s: it has %d argument(s) but the facts have %d" first.line
              (Predicate_declaration.signature predicate first.declaration)
              declared arity
           :: repeat_warnings)
           @ other_warnings )
-      else (Some first.declaration, repeat_warnings @ other_warnings)
+      | _ -> (Some first.declaration, repeat_warnings @ other_warnings)

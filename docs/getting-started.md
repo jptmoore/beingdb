@@ -242,15 +242,15 @@ lives_in(bob, paris).
 lives_in(carol, berlin).
 ```
 
-Optionally, document a predicate with a `%!` declaration giving argument
-roles, semantic types and a description. Clients see these through
-`GET /predicates?detailed=true` (see
+Optionally, say what a predicate means with a `%!` declaration: name its
+arguments and/or add a plain-English description. Both are optional, and
+clients see them through `GET /predicates?detailed=true` (see
 [Predicate declarations](query-language.md#predicate-declarations-optional)):
 
 **predicates/knows.pl:**
 ```prolog
-%! knows(Person:person, Acquaintance:person)
-%  The first person knows the second; not necessarily mutual.
+%! knows(Person, Acquaintance)
+% The first person knows the second; not necessarily mutual.
 knows(alice, bob).
 knows(bob, carol).
 knows(carol, alice).

@@ -20,7 +20,10 @@ let cleanup dir = ignore (Unix.system (Printf.sprintf "rm -rf %s" (Filename.quot
 
 let decl ?description args =
   let arguments = List.map (fun (role, semantic_type) -> { Predicate_declaration.role; semantic_type }) args in
-  match Predicate_declaration.make ~arguments ~description with Ok d -> d | Error e -> Alcotest.fail e
+  match Predicate_declaration.make ~arguments:(Some arguments) ~description with Ok d -> d | Error e -> Alcotest.fail e
+
+let description_only text =
+  match Predicate_declaration.make ~arguments:None ~description:(Some text) with Ok d -> d | Error e -> Alcotest.fail e
 
 let created_by_decl =
   decl ~description:"Relates a work to the person who created it."
@@ -29,10 +32,9 @@ let created_by_decl =
 let atoms predicate rows = List.map (fun args -> Fact.make predicate (List.map (fun a -> Value.Atom a) args)) rows
 let created_by_facts = atoms "created_by" [ [ "work1"; "alice" ]; [ "work2"; "bob" ] ]
 let person_facts = atoms "person" [ [ "alice" ]; [ "bob" ] ]
-let roles (d : Predicate_declaration.t) = List.map (fun (a : Predicate_declaration.argument) -> a.role) d.arguments
-
-let semantic_types (d : Predicate_declaration.t) =
-  List.map (fun (a : Predicate_declaration.argument) -> a.semantic_type) d.arguments
+let declared_args (d : Predicate_declaration.t) = Option.value d.arguments ~default:[]
+let roles d = List.map (fun (a : Predicate_declaration.argument) -> a.role) (declared_args d)
+let semantic_types d = List.map (fun (a : Predicate_declaration.argument) -> a.semantic_type) (declared_args d)
 
 (* --- source parsing --- *)
 
@@ -77,6 +79,49 @@ let test_plain_comments_are_not_declarations () =
   Alcotest.(check int) "no declarations" 0 (List.length items);
   Alcotest.(check (list string)) "no warnings" [] warnings
 
+(* Each authoring form, compiled for a 2-argument predicate: the stored
+   declaration (manifest JSON) or None, and the number of warnings. *)
+let progressive_forms =
+  let desc = "% Relates a work to the artist or creator who made it." in
+  let d = {|"description":"Relates a work to the artist or creator who made it."|} in
+  [
+    ("no metadata", [], None);
+    ("plain % comment is not metadata", [ desc ], None);
+    ("description only", [ "%! created_by"; desc ], Some ("{" ^ d ^ "}"));
+    ("roles only", [ "%! created_by(Work, Artist)" ], Some {|{"arguments":[{"role":"Work"},{"role":"Artist"}]}|});
+    ( "roles + description",
+      [ "%! created_by(Work, Artist)"; desc ],
+      Some ({|{"arguments":[{"role":"Work"},{"role":"Artist"}],|} ^ d ^ "}") );
+    ( "roles + semantic types",
+      [ "%! created_by(Work:work, Artist:person)" ],
+      Some {|{"arguments":[{"role":"Work","semantic_type":"work"},{"role":"Artist","semantic_type":"person"}]}|} );
+    ( "roles + semantic types + description",
+      [ "%! created_by(Work:work, Artist:person)"; desc ],
+      Some ({|{"arguments":[{"role":"Work","semantic_type":"work"},{"role":"Artist","semantic_type":"person"}],|} ^ d ^ "}") );
+    ( "semantic type on some arguments only",
+      [ "%! created_by(Work:work, Artist)" ],
+      Some {|{"arguments":[{"role":"Work","semantic_type":"work"},{"role":"Artist"}]}|} );
+  ]
+
+let test_progressive_forms () =
+  List.iter
+    (fun (label, header, expected) ->
+      let items, warnings = Parse_declaration.extract (header @ [ {|created_by("Work A", "Artist A").|} ]) in
+      let d, select_warnings = Parse_declaration.select ~predicate:"created_by" ~arity:2 items in
+      Alcotest.(check (list string)) (label ^ ": no warnings") [] (warnings @ select_warnings);
+      Alcotest.(check (option string)) label expected
+        (Option.map (fun d -> Yojson.Safe.to_string (Predicate_declaration.to_json d)) d))
+    progressive_forms
+
+let test_description_only_any_arity () =
+  let items, _ = Parse_declaration.extract [ "%! created_by"; "% Text." ] in
+  List.iter
+    (fun arity ->
+      let d, warnings = Parse_declaration.select ~predicate:"created_by" ~arity items in
+      Alcotest.(check bool) "applies at any arity" true (d <> None);
+      Alcotest.(check (list string)) "no warnings" [] warnings)
+    [ 1; 2; 3 ]
+
 let test_invalid_declarations_warn () =
   let bad =
     [
@@ -86,6 +131,9 @@ let test_invalid_declarations_warn () =
       "%! created_by(Work:Person, X)";
       "%! Created_by(Work, X)";
       "%! created_by";
+      "%! created_by/2";
+      "%! created_by(Work:)";
+      "%! created_by(Work";
     ]
   in
   List.iter
@@ -127,7 +175,19 @@ let test_declaration_json_roundtrip () =
   Alcotest.(check string) "signature" "created_by(Work:work, Creator:person)"
     (Predicate_declaration.signature "created_by" created_by_decl);
   Alcotest.(check bool) "blank description is None" true
-    ((decl ~description:"   " [ ("X", None) ]).description = None)
+    ((decl ~description:"   " [ ("X", None) ]).description = None);
+  let text_only = description_only "Relates a work to its creator." in
+  Alcotest.(check string) "description-only omits arguments" {|{"description":"Relates a work to its creator."}|}
+    (Yojson.Safe.to_string (Predicate_declaration.to_json text_only));
+  (match Predicate_declaration.of_json (Predicate_declaration.to_json text_only) with
+  | Ok d -> Alcotest.(check bool) "description-only roundtrip" true (d = text_only)
+  | Error e -> Alcotest.fail e);
+  Alcotest.(check (option int)) "description-only has no declared arity" None (Predicate_declaration.arity text_only);
+  Alcotest.(check string) "description-only signature" "created_by" (Predicate_declaration.signature "created_by" text_only);
+  Alcotest.(check bool) "empty declaration rejected" true
+    (Result.is_error (Predicate_declaration.make ~arguments:None ~description:(Some " ")));
+  Alcotest.(check bool) "empty declaration JSON rejected" true
+    (Result.is_error (Predicate_declaration.of_json (`Assoc [])))
 
 let legacy_manifest_json =
   {|{"arity":2,"fact_count":2,"positions":[{"atom":{"count":2,"distinct_count":2,"min":"work1","max":"work1"}},{"atom":{"count":2,"distinct_count":2,"min":"alice","max":"alice"}}]}|}
@@ -215,7 +275,33 @@ let test_fingerprint () =
     decl ~description:"Who made the work." [ ("Work", Some "work"); ("Creator", Some "person") ]
   in
   Alcotest.(check bool) "description changes fingerprint" true
-    ((env_of (memory_store ~declaration:reworded ())).fingerprint <> declared)
+    ((env_of (memory_store ~declaration:reworded ())).fingerprint <> declared);
+  let fp d = (env_of (memory_store ~declaration:d ())).fingerprint in
+  let layers =
+    [
+      fp (description_only "Who made the work.");
+      fp (decl [ ("Work", None); ("Creator", None) ]);
+      fp (decl ~description:"Who made the work." [ ("Work", None); ("Creator", None) ]);
+      fp (decl [ ("Work", Some "work"); ("Creator", Some "person") ]);
+      fp reworded;
+    ]
+  in
+  Alcotest.(check int) "every metadata layer is distinct" (List.length layers)
+    (List.length (List.sort_uniq String.compare (plain :: layers)) - 1)
+
+let test_environment_description_only () =
+  let env = env_of (memory_store ~declaration:(description_only "Relates a work to its creator.") ()) in
+  match Query_environment.find env "created_by" with
+  | None -> Alcotest.fail "created_by missing"
+  | Some p ->
+      Alcotest.(check (option string)) "description" (Some "Relates a work to its creator.") p.description;
+      Alcotest.(check bool) "no roles or semantic types" true
+        (List.for_all (fun (a : Query_environment.argument_signature) -> a.role = None && a.semantic_type = None) p.arguments);
+      let open Yojson.Safe.Util in
+      let json = Query_environment.predicate_to_json p in
+      Alcotest.(check (list string)) "predicate keys" [ "name"; "arity"; "count"; "description"; "arguments"; "examples" ] (keys json);
+      Alcotest.(check (list string)) "argument keys unchanged" [ "position"; "types" ]
+        (json |> member "arguments" |> index 0 |> keys)
 
 let test_mismatched_declaration_ignored () =
   let env = env_of (memory_store ~declaration:(decl [ ("Only", None) ]) ()) in
@@ -263,6 +349,7 @@ let compile_into git pack_dir =
   let* pack = Pack_backend.init ~fresh:true pack_dir in
   let* _ = Cli_compile.compile_predicate pack git "created_by" in
   let* _ = Cli_compile.compile_predicate pack git "person" in
+  let* _ = Cli_compile.compile_predicate pack git "knows" in
   Lwt.return pack
 
 let test_compile_from_git () =
@@ -273,17 +360,23 @@ let test_compile_from_git () =
        let* git = Git_backend.init git_dir in
        let* () = Git_backend.write_predicate git "created_by.pl" source in
        let* () = Git_backend.write_predicate git "person.pl" "% People\nperson(alice).\nperson(bob).\n" in
+       let* () = Git_backend.write_predicate git "knows.pl" "%! knows\n% The first person knows the second.\nknows(alice, bob).\n" in
        let* a = compile_into git pack_a in
        let* b = compile_into git pack_b in
        let* meta_a = Pack_backend.Reader.find a (Pack_layout.meta_path "created_by") in
        let* meta_b = Pack_backend.Reader.find b (Pack_layout.meta_path "created_by") in
        let* person = Pack_backend.get_manifest a "person" in
+       let* knows = Pack_backend.get_manifest a "knows" in
        let* manifest = Pack_backend.get_manifest a "created_by" in
        let* rows = Controller.run_query ~max_results:100 ~language:"dsl" a "find W\nwhere\n  created_by(W, alice)" ~offset:None ~limit:None in
-       Lwt.return (meta_a, meta_b, person, manifest, rows))
+       Lwt.return (meta_a, meta_b, person, knows, manifest, rows))
   in
   List.iter cleanup [ git_dir; pack_a; pack_b ];
-  let meta_a, meta_b, person, manifest, rows = result in
+  let meta_a, meta_b, person, knows, manifest, rows = result in
+  (match knows with
+  | Some { declaration = Some d; _ } ->
+      Alcotest.(check bool) "description-only compiled" true (d = description_only "The first person knows the second.")
+  | _ -> Alcotest.fail "expected a description-only declaration");
   Alcotest.(check (option string)) "compile is deterministic" meta_a meta_b;
   (match manifest with
   | Some { declaration = Some d; arity; fact_count; _ } ->
@@ -305,6 +398,8 @@ let () =
     [
       ( "Parsing",
         [
+          Alcotest.test_case "progressive forms" `Quick test_progressive_forms;
+          Alcotest.test_case "description only at any arity" `Quick test_description_only_any_arity;
           Alcotest.test_case "full declaration" `Quick test_extract_full;
           Alcotest.test_case "minimal declaration" `Quick test_extract_minimal;
           Alcotest.test_case "plain comments" `Quick test_plain_comments_are_not_declarations;
@@ -321,6 +416,7 @@ let () =
           Alcotest.test_case "fields" `Quick test_environment_fields;
           Alcotest.test_case "JSON" `Quick test_environment_json;
           Alcotest.test_case "fingerprint" `Quick test_fingerprint;
+          Alcotest.test_case "description only" `Quick test_environment_description_only;
           Alcotest.test_case "mismatched declaration ignored" `Quick test_mismatched_declaration_ignored;
         ] );
       ( "Pack",

@@ -1,7 +1,7 @@
 (** See {!Predicate_declaration} (mli) for documentation. *)
 
 type argument = { role : string; semantic_type : string option }
-type t = { arguments : argument list; description : string option }
+type t = { arguments : argument list option; description : string option }
 
 let is_lower = function 'a' .. 'z' -> true | _ -> false
 let is_upper = function 'A' .. 'Z' -> true | _ -> false
@@ -28,17 +28,19 @@ let make ~arguments ~description =
               Error (Printf.sprintf "invalid semantic type '%s' for %s (expected a lowercase name such as person)" ty role)
           | _ -> check (role :: seen) rest)
   in
-  match check [] arguments with
-  | Error _ as e -> e
-  | Ok () ->
-      let description = match Option.map String.trim description with Some "" | None -> None | Some d -> Some d in
-      Ok { arguments; description }
+  let description = match Option.map String.trim description with Some "" | None -> None | Some d -> Some d in
+  match (arguments, description) with
+  | None, None -> Error "declares neither arguments nor a description"
+  | Some args, _ -> Result.map (fun () -> { arguments; description }) (check [] args)
+  | None, Some _ -> Ok { arguments; description }
 
-let arity t = List.length t.arguments
+let arity t = Option.map List.length t.arguments
 
 let signature name t =
   let arg a = match a.semantic_type with Some ty -> a.role ^ ":" ^ ty | None -> a.role in
-  Printf.sprintf "%s(%s)" name (String.concat ", " (List.map arg t.arguments))
+  match t.arguments with
+  | None -> name
+  | Some args -> Printf.sprintf "%s(%s)" name (String.concat ", " (List.map arg args))
 
 let to_json t =
   let argument a =
@@ -46,8 +48,8 @@ let to_json t =
       ((("role", `String a.role) :: (match a.semantic_type with Some ty -> [ ("semantic_type", `String ty) ] | None -> [])))
   in
   `Assoc
-    ((("arguments", `List (List.map argument t.arguments))
-     :: (match t.description with Some d -> [ ("description", `String d) ] | None -> [])))
+    ((match t.arguments with Some args -> [ ("arguments", `List (List.map argument args)) ] | None -> [])
+    @ match t.description with Some d -> [ ("description", `String d) ] | None -> [])
 
 let of_json = function
   | `Assoc fields -> (
@@ -65,13 +67,17 @@ let of_json = function
         | None | Some `Null -> Ok None
         | Some _ -> Error "Invalid declaration description JSON"
       in
-      match (List.assoc_opt "arguments" fields, description) with
-      | Some (`List args), Ok description -> (
-          let rec collect acc = function
-            | [] -> Ok (List.rev acc)
-            | j :: rest -> ( match argument j with Ok a -> collect (a :: acc) rest | Error _ as e -> e)
-          in
-          match collect [] args with Ok arguments -> make ~arguments ~description | Error _ as e -> e)
-      | _, (Error _ as e) -> e
-      | _ -> Error "Invalid declaration JSON")
+      let rec collect acc = function
+        | [] -> Ok (List.rev acc)
+        | j :: rest -> ( match argument j with Ok a -> collect (a :: acc) rest | Error _ as e -> e)
+      in
+      let arguments =
+        match List.assoc_opt "arguments" fields with
+        | None | Some `Null -> Ok None
+        | Some (`List args) -> Result.map Option.some (collect [] args)
+        | Some _ -> Error "Invalid declaration arguments JSON"
+      in
+      match (arguments, description) with
+      | Ok arguments, Ok description -> make ~arguments ~description
+      | (Error _ as e), _ | _, (Error _ as e) -> e)
   | _ -> Error "Invalid declaration JSON"

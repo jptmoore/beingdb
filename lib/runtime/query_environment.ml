@@ -62,10 +62,12 @@ let signature_of_manifest ~name ~examples (m : Manifest.t) =
   (* A declaration whose arity disagrees with the facts is never written
      by the compiler; ignore one defensively rather than mislabel. *)
   let declaration =
-    match m.declaration with Some d when Predicate_declaration.arity d = m.arity -> Some d | _ -> None
+    match m.declaration with
+    | Some d when Option.fold ~none:true ~some:(( = ) m.arity) (Predicate_declaration.arity d) -> Some d
+    | _ -> None
   in
   let declared_argument i =
-    match declaration with Some d -> List.nth_opt d.Predicate_declaration.arguments i | None -> None
+    Option.bind declaration (fun d -> Option.bind d.Predicate_declaration.arguments (fun args -> List.nth_opt args i))
   in
   let arguments =
     List.mapi

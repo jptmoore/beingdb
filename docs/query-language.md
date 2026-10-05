@@ -55,35 +55,73 @@ homepage(
 
 ### Predicate declarations (optional)
 
-A predicate's source file may document the predicate with a PlDoc-style
-structured comment: a `%!` line giving the signature, optionally
-followed by `%` lines with a description.
+Facts work on their own: BeingDB always works out each predicate's
+arity, value types, fact count and examples. You can optionally add a
+**declaration** to say what a predicate means. A declaration is a
+comment line starting with `%!` placed in the predicate's file, usually
+just above the facts. Each part is optional; add only what helps.
+
+**Simple description.** Name the predicate on a `%!` line and describe
+it on the `%` lines that follow:
 
 ```prolog
-%! created_by(Work:work, Creator:person)
-%  Relates a work to the person who created it.
-created_by(shadow_of_a_journey, tina_keane).
+%! created_by
+% Relates a work to the artist or creator who made it.
+created_by("Work A", "Artist A").
 ```
 
-- Each argument has a **role**: a variable-style name
-  (`[A-Z][A-Za-z0-9_]*`). Roles must be distinct.
-- A role may be followed by `:` and a **semantic type**: a lowercase
-  label (`[a-z][a-z0-9_]*`) such as `person`. Semantic types are free
-  labels: BeingDB records them but does not check them against the
-  facts, and they are separate from the observed value types (`atom`,
-  `year`, ...).
-- The **description** is the following `%` lines, up to the first line
-  that does not start with `%`. Lines are joined with spaces; an empty
-  `%` line starts a new paragraph. The description is optional.
-- Declarations are comments, so files that contain them still compile
-  with older BeingDB versions. Plain `%` comments are never treated as
-  declarations.
+**Argument roles.** Name each argument, in order, to make clear which
+argument is which:
+
+```prolog
+%! created_by(Work, Artist)
+created_by("Work A", "Artist A").
+```
+
+**Roles plus description** (recommended):
+
+```prolog
+%! created_by(Work, Artist)
+% Relates a work to the artist or creator who made it.
+created_by("Work A", "Artist A").
+```
+
+**Advanced: semantic types.** A role may be refined with `:` and a
+semantic type, on any or all arguments:
+
+```prolog
+%! created_by(Work:work, Artist:person)
+% Relates a work to the artist or creator who made it.
+created_by("Work A", "Artist A").
+```
+
+Here `Work` and `Artist` are **argument roles**, and `work` and `person`
+are optional **semantic types**. Semantic types are never required.
+
+Rules:
+
+- A role is a capitalised name (`[A-Z][A-Za-z0-9_]*`), like a query
+  variable. Roles in one declaration must be distinct, and there must
+  be one per argument.
+- A semantic type is a lowercase label (`[a-z][a-z0-9_]*`). BeingDB
+  records it but does not check it against the facts. It is separate
+  from the value types BeingDB observes (`atom`, `string`, `year`, ...).
+- The description is the `%` lines directly after the `%!` line, up to
+  the first line that does not start with `%` (a blank line or a fact).
+  Lines are joined with spaces; an empty `%` line starts a new
+  paragraph. A bare `%! name` must have a description.
+- Only `%!` starts a declaration. Ordinary `%` comments (headers,
+  provenance notes, ...) are never treated as metadata.
+- Declarations are documentation only: they do not change query
+  results, validation or how values are typed.
+- Declarations are comments, so files containing them still compile
+  with older BeingDB versions.
 
 `beingdb compile` (and the REPL's `:load`) stores the declaration with
 the predicate. A declaration that cannot be parsed, names a different
-predicate, repeats an earlier one, or has a different number of arguments
-from the facts is reported as a warning and ignored. It never fails the
-compile. Declarations are returned by
+predicate, repeats an earlier one, or declares a different number of
+arguments from the facts is reported as a warning and ignored. It never
+fails the compile. Declarations are returned by
 [predicate introspection](#predicate-introspection-get-predicatesdetailedtrue).
 
 ### Literal types

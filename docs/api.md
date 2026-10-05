@@ -150,10 +150,13 @@ curl 'http://localhost:8080/predicates?detailed=true&q=creat'
 | `arguments[].position`, `arguments[].types` | always | observed value types at that position |
 | `examples` | always (may be empty) | up to 3 stored facts |
 | `description` | only if declared | predicate declaration |
-| `arguments[].role`, `arguments[].semanticType` | only if declared (`semanticType` is optional within a declaration) | predicate declaration |
+| `arguments[].role` | only if argument roles are declared | predicate declaration |
+| `arguments[].semanticType` | only if that argument's semantic type is declared | predicate declaration |
 
 Declarations are optional `%!` comments in the predicate's source file,
-compiled into the pack (see
+compiled into the pack. Description, roles and semantic types are
+independent: a predicate may have just a description, just roles, or
+any combination (see
 [Predicate declarations](query-language.md#predicate-declarations-optional)).
 Semantic types are descriptive labels and are not checked against the
 facts. Predicates without a declaration return exactly the fields shown
