@@ -2,7 +2,12 @@
 
 type type_stat = { count : int; distinct_count : int; min : string option; max : string option }
 type position_stat = { type_stats : (string * type_stat) list }
-type t = { arity : int; fact_count : int; positions : position_stat list }
+type t = {
+  arity : int;
+  fact_count : int;
+  positions : position_stat list;
+  declaration : Predicate_declaration.t option;
+}
 
 let compute_type_stat values =
   let count = List.length values in
@@ -26,7 +31,7 @@ let compute_type_stat values =
   in
   { count; distinct_count; min; max }
 
-let compute facts =
+let compute ?declaration facts =
   let arity = match facts with f :: _ -> List.length f.Fact.arguments | [] -> 0 in
   let fact_count = List.length facts in
   let positions =
@@ -45,7 +50,7 @@ let compute facts =
         in
         { type_stats })
   in
-  { arity; fact_count; positions }
+  { arity; fact_count; positions; declaration }
 
 let type_stat_to_json (tn, s) =
   ( tn,
@@ -59,15 +64,16 @@ let type_stat_to_json (tn, s) =
 
 let to_json t =
   `Assoc
-    [
-      ("arity", `Int t.arity);
-      ("fact_count", `Int t.fact_count);
-      ( "positions",
-        `List
-          (List.map
-             (fun p -> `Assoc (List.map type_stat_to_json p.type_stats))
-             t.positions) );
-    ]
+    ([
+       ("arity", `Int t.arity);
+       ("fact_count", `Int t.fact_count);
+       ( "positions",
+         `List
+           (List.map
+              (fun p -> `Assoc (List.map type_stat_to_json p.type_stats))
+              t.positions) );
+     ]
+    @ match t.declaration with Some d -> [ ("declaration", Predicate_declaration.to_json d) ] | None -> [])
 
 let type_stat_of_json = function
   | `Assoc fields ->
@@ -99,6 +105,11 @@ let of_json json =
                 | _ -> { type_stats = [] })
               position_jsons
           in
-          Ok { arity; fact_count; positions }
+          let declaration =
+            match List.assoc_opt "declaration" fields with
+            | Some json -> Result.to_option (Predicate_declaration.of_json json)
+            | None -> None
+          in
+          Ok { arity; fact_count; positions; declaration }
       | _ -> Error "Invalid manifest JSON")
   | _ -> Error "Invalid manifest JSON"

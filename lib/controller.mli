@@ -6,10 +6,12 @@
 val list_predicates : 
   samples:int option -> Db.t -> (Yojson.Safe.t, string) result Lwt.t
 
-(** List predicates with full schema detail (argument type signatures,
-    fact counts, bounded typed examples) and the query-environment
-    fingerprint. [q] filters by case-insensitive substring match on the
-    predicate name; [names] filters to an exact set of names. *)
+(** List predicates with full schema detail and the query-environment
+    fingerprint, serialised by {!Query_environment.to_json}: argument
+    type signatures, fact counts, bounded typed examples, and any
+    declared roles, semantic types and descriptions. [q] filters by
+    case-insensitive substring match on the predicate name; [names]
+    filters to an exact set of names. *)
 val list_predicates_detailed :
   ?q:string -> ?names:string list -> Db.t -> (Yojson.Safe.t, string) result Lwt.t
 

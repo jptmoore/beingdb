@@ -242,6 +242,20 @@ lives_in(bob, paris).
 lives_in(carol, berlin).
 ```
 
+Optionally, document a predicate with a `%!` declaration giving argument
+roles, semantic types and a description. Clients see these through
+`GET /predicates?detailed=true` (see
+[Predicate declarations](query-language.md#predicate-declarations-optional)):
+
+**predicates/knows.pl:**
+```prolog
+%! knows(Person:person, Acquaintance:person)
+%  The first person knows the second; not necessarily mutual.
+knows(alice, bob).
+knows(bob, carol).
+knows(carol, alice).
+```
+
 ### 3. Commit and Push
 
 ```bash
@@ -340,7 +354,7 @@ A line starting with `:` is a REPL command rather than a query:
 | Command | Effect |
 |---|---|
 | `:predicates` | List predicates and their arities |
-| `:describe <predicate>` | Show a predicate's argument types, fact count, and examples |
+| `:describe <predicate>` | Show a predicate's argument types, fact count, examples, and any declared roles and description |
 | `:environment` | Show predicate count, fingerprint, language version, and current mode |
 | `:explain <query>` | Show the chosen query plan without executing it (single-line only) |
 | `:validate` | Enter a query (blank line to finish) and validate it without executing |

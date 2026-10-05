@@ -24,8 +24,9 @@ val index_type_branch : string -> int -> string -> path
 
 (** Every [(path, contents)] entry that compiling [facts] for
     [predicate] contributes to the pack: fact bodies, the [_all] scan
-    bucket, positional index entries, and the predicate's manifest. *)
-val predicate_entries : string -> Fact.t list -> (path * string) list
+    bucket, positional index entries, and the predicate's manifest
+    (carrying [declaration], if given). *)
+val predicate_entries : ?declaration:Predicate_declaration.t -> string -> Fact.t list -> (path * string) list
 
 (** Minimal read-only access to a compiled pack tree. [find] returns the
     contents stored at a path; [list] returns the child step names of a

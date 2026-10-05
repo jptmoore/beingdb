@@ -67,7 +67,7 @@ Lists all available predicates in the pack store with their arities.
 
 **Query Parameters:**
 - `samples` (optional, integer, max 1000) - Include N sample facts for each predicate
-- `detailed` (optional, `true`/`1`) - Return full schema detail instead: per-argument observed types, fact counts, bounded typed examples, and the query-environment fingerprint (see below); mutually exclusive with `samples`
+- `detailed` (optional, `true`/`1`) - Return full schema detail instead: per-argument observed types, fact counts, bounded typed examples, any declared roles, semantic types and descriptions, and the query-environment fingerprint (see below); mutually exclusive with `samples`
 - `q` (optional, string, only with `detailed`) - Filter to predicates whose name contains this substring (case-insensitive)
 - `names` (optional, comma-separated string, only with `detailed`) - Filter to an exact set of predicate names
 
@@ -126,15 +126,16 @@ curl 'http://localhost:8080/predicates?detailed=true&q=creat'
 {
   "predicates": [
     {
-      "name": "created",
+      "name": "created_by",
       "arity": 2,
       "count": 3,
+      "description": "Relates a work to the person who created it.",
       "arguments": [
-        {"position": 0, "types": ["atom"]},
-        {"position": 1, "types": ["atom"]}
+        {"position": 0, "types": ["atom"], "role": "Work", "semanticType": "work"},
+        {"position": 1, "types": ["atom"], "role": "Creator", "semanticType": "person"}
       ],
       "examples": [
-        [{"type": "atom", "value": "tina_keane"}, {"type": "atom", "value": "she"}]
+        [{"type": "atom", "value": "she"}, {"type": "atom", "value": "tina_keane"}]
       ]
     }
   ],
@@ -143,10 +144,27 @@ curl 'http://localhost:8080/predicates?detailed=true&q=creat'
 }
 ```
 
+| Field | Present | Source |
+|---|---|---|
+| `name`, `arity`, `count` | always | compiled facts |
+| `arguments[].position`, `arguments[].types` | always | observed value types at that position |
+| `examples` | always (may be empty) | up to 3 stored facts |
+| `description` | only if declared | predicate declaration |
+| `arguments[].role`, `arguments[].semanticType` | only if declared (`semanticType` is optional within a declaration) | predicate declaration |
+
+Declarations are optional `%!` comments in the predicate's source file,
+compiled into the pack (see
+[Predicate declarations](query-language.md#predicate-declarations-optional)).
+Semantic types are descriptive labels and are not checked against the
+facts. Predicates without a declaration return exactly the fields shown
+before declarations existed, so existing clients are unaffected.
+
 The fingerprint is deterministic (SHA-256 over sorted predicate names,
-arities, observed argument types, and the expressive query-language
-version; formatted as `"sha256:<lowercase hex digest>"`) and changes
-whenever any of those change -- useful for invalidating cached prompts
+arities, observed argument types, any declared roles, semantic types and
+descriptions, and the expressive query-language version; formatted as
+`"sha256:<lowercase hex digest>"`) and changes whenever any of those
+change. Packs without declarations keep the fingerprint they had before
+declarations existed. This is useful for invalidating cached prompts
 or schema descriptions built from this endpoint. The same fingerprint
 is exposed, under the same `environmentFingerprint` key, in REPL
 startup and every `POST /query` response (`execute`, `validate`, and

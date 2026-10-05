@@ -44,22 +44,39 @@ let load_facts_file store path =
             Hashtbl.replace by_predicate f.predicate (f :: existing))
           facts;
         let predicates = List.rev !order in
+        let declarations, declaration_warnings = Parse_declaration.extract lines in
         let* summaries =
           Lwt_list.map_s
             (fun predicate ->
               let group = List.rev (Hashtbl.find by_predicate predicate) in
               let arities = List.map (fun (f : Fact.t) -> List.length f.arguments) group |> List.sort_uniq compare in
               match arities with
-              | [ _ ] ->
+              | [ arity ] ->
+                  let mine = List.filter (fun (it : Parse_declaration.item) -> it.name = predicate) declarations in
+                  let declaration, warnings = Parse_declaration.select ~predicate ~arity mine in
                   let* () =
-                    Pack_backend.write_predicate_batch store predicate group
+                    Pack_backend.write_predicate_batch ?declaration store predicate group
                       (Printf.sprintf "repl :load %s" path)
                   in
-                  Lwt.return (Printf.sprintf "%s (%d facts)" predicate (List.length group))
-              | _ -> Lwt.return (Printf.sprintf "%s: arity mismatch, not written" predicate))
+                  Lwt.return
+                    (Printf.sprintf "%s (%d facts)" predicate (List.length group)
+                    :: List.map (fun w -> "declaration warning: " ^ w) warnings)
+              | _ -> Lwt.return [ Printf.sprintf "%s: arity mismatch, not written" predicate ])
             predicates
         in
-        Lwt.return (Ok (summaries @ List.map (fun e -> "parse error: " ^ e) parse_errors)))
+        let orphans =
+          List.filter_map
+            (fun (it : Parse_declaration.item) ->
+              if Hashtbl.mem by_predicate it.name then None
+              else Some (Printf.sprintf "declaration warning: line %d: no facts for declared predicate '%s'" it.line it.name))
+            declarations
+        in
+        Lwt.return
+          (Ok
+             (List.concat summaries
+             @ List.map (fun w -> "declaration warning: " ^ w) declaration_warnings
+             @ orphans
+             @ List.map (fun e -> "parse error: " ^ e) parse_errors)))
     (fun exn -> Lwt.return (Error (Printf.sprintf "Could not read %s: %s" path (Printexc.to_string exn))))
 
 let run_queries_file ~max_results store path =

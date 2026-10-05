@@ -431,10 +431,16 @@ Pipeline, module by module:
   for validation and introspection, built deterministically from the
   compiled store's per-predicate manifests (section 7) via
   `Runtime_store.S`'s `list_predicates`/`get_manifest`/`sample_facts` -- no
-  separate cache or user-authored schema. Includes a fingerprint:
+  separate cache. Each argument carries its observed types plus the
+  optional declared `role`/`semantic_type`; each predicate carries an
+  optional declared `description`. `Query_environment.to_json` /
+  `predicate_to_json` are the single serialisation of this metadata
+  (`GET /predicates?detailed=true`). Includes a fingerprint:
   `"sha256:" ^ Digestif.SHA256.to_hex (Digestif.SHA256.digest_string
   canonical)` over sorted predicate names, arities, observed argument
-  types, and the expressive-language version string
+  types, any declared roles/semantic types/descriptions (appended only
+  when present, so undeclared environments keep their earlier
+  fingerprint), and the expressive-language version string
   (`Query_environment.language_version`, currently `"beingdb-dsl/1"`).
   `digestif` (already present transitively via `irmin-git`) is used
   directly rather than hand-rolling SHA-256; fact IDs and long index
@@ -530,9 +536,9 @@ Pipeline, module by module:
   the dataset's schema fingerprint from any query response, not just
   `/predicates` or the validate/explain actions.
 
-## 7. Schema inference
+## 7. Schema inference and predicate declarations
 
-No user-authored schema is required or supported. `lib/runtime/manifest.ml`
+No user-authored schema is required. `lib/runtime/manifest.ml`
 computes, purely from the compiled facts for one predicate (during
 `Pack_backend.write_predicate_batch`, invoked by `beingdb compile`):
 
@@ -552,6 +558,39 @@ rather than silently dropped.
 Compile-time warnings are emitted (to stderr, non-fatal) for mixed
 argument types at a position. Inconsistent arity within one predicate
 file is a fatal compile error, since arity is fixed per predicate.
+
+### 7.1 Predicate declarations
+
+Authors may document a predicate with an optional `%!` structured
+comment in its source file (syntax in
+[query-language.md](query-language.md#predicate-declarations-optional)).
+This adds documentation to the inferred schema; it does not replace it:
+
+- `lib/parse_declaration.ml` (authoring) extracts `%!` blocks from the
+  source lines and selects the one for the predicate being compiled.
+  Unparseable, foreign, repeated or arity-mismatched declarations become
+  compile warnings and are dropped, so a declaration can never fail an
+  otherwise valid compile.
+- `lib/runtime/predicate_declaration.ml` (portable) is the typed,
+  validated record: per-argument `role` and optional `semantic_type`,
+  plus an optional `description`.
+- The declaration is stored in the existing manifest as an optional
+  `"declaration"` field
+  (`{"arguments": [{"role", "semantic_type"?}], "description"?}`). No
+  new pack paths or `Runtime_store.S` operations are involved, so any
+  reader of `/meta/<predicate>` (including the `beingdb-wasm` logical
+  pack export) carries it unchanged.
+- Declarations are descriptive only: typing, indexing, validation,
+  planning and query results do not depend on them.
+
+**Compatibility.** Manifests without a declaration are byte-identical to
+those written before declarations existed, and a missing or malformed
+`"declaration"` field reads as `None`. Existing packs therefore stay
+readable and keep their environment fingerprint; they simply have no
+declarations until recompiled from sources that contain them. Older
+BeingDB versions compile sources with declarations (they are comments)
+and ignore the extra manifest field. Adding or editing a declaration
+needs a recompile, like any other source change.
 
 ## 8. Known limitations
 
@@ -574,5 +613,6 @@ file is a fatal compile error, since arity is fixed per predicate.
   those types.
 - URI and BCP 47 language-tag validation are syntactic approximations,
   not full RFC 3986 / BCP 47 implementations.
-- No user-authored schema is supported; types are always inferred from
-  the compiled facts.
+- No user-authored type schema is supported; value types are always
+  inferred from the compiled facts. Predicate declarations (section 7.1)
+  are documentation only and are not enforced.

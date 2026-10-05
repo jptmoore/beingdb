@@ -23,7 +23,7 @@ let print_help () =
          "                       (in :dsl/:auto-detected-dsl mode, keep entering lines,";
          "                        a blank line finishes the query)";
          "  :predicates          list predicates and arities";
-         "  :describe <name>     show a predicate's argument types, fact count, and examples";
+         "  :describe <name>     show a predicate's argument types, fact count, examples and any declaration";
          "  :environment         show predicate count, fingerprint, language version, and mode";
          "  :explain <query>     show the query plan without executing it (single-line only)";
          "  :validate            enter a query (blank line to finish) and validate it without executing";
@@ -50,9 +50,16 @@ let describe_predicate store name =
   | None -> Printf.printf "Unknown predicate: %s\n" name
   | Some p ->
       Printf.printf "%s/%d  (%d facts)\n" p.Query_environment.name p.Query_environment.arity p.Query_environment.count;
+      Option.iter (Printf.printf "  %s\n") p.Query_environment.description;
       List.iter
         (fun (a : Query_environment.argument_signature) ->
-          Printf.printf "  arg %d: %s\n" a.position (String.concat " | " a.types))
+          let label =
+            match (a.role, a.semantic_type) with
+            | Some r, Some ty -> Printf.sprintf " %s (%s)" r ty
+            | Some r, None -> " " ^ r
+            | None, _ -> ""
+          in
+          Printf.printf "  arg %d%s: %s\n" a.position label (String.concat " | " a.types))
         p.Query_environment.arguments;
       if p.Query_environment.examples <> [] then (
         print_endline "  examples:";

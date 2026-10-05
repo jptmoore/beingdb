@@ -58,14 +58,14 @@ include Pack_layout.Make (Reader)
 
 (* --- writing (build-time only; not part of the runtime boundary) --- *)
 
-let write_predicate_batch store predicate facts message =
+let write_predicate_batch ?declaration store predicate facts message =
   Store.with_tree_exn store [] ~info:(info message) (fun tree_opt ->
       let tree = Option.value tree_opt ~default:(Store.Tree.empty ()) in
       let* tree =
         Lwt_list.fold_left_s
           (fun tree (path, contents) -> Store.Tree.add tree path contents)
           tree
-          (Pack_layout.predicate_entries predicate facts)
+          (Pack_layout.predicate_entries ?declaration predicate facts)
       in
       Lwt.return_some tree)
 
