@@ -36,7 +36,8 @@ end
 include Pack_layout.Make (Reader)
 
 let create = new_node
-let add_predicate t predicate facts = List.iter (fun (path, value) -> add t path value) (Pack_layout.predicate_entries predicate facts)
+let add_predicate ?declaration t predicate facts =
+  List.iter (fun (path, value) -> add t path value) (Pack_layout.predicate_entries ?declaration predicate facts)
 
 let of_facts facts =
   let t = create () in

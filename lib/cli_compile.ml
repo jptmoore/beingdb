@@ -84,10 +84,19 @@ let compile_predicate pack_store git_store predicate_name =
         let* () =
           if List.length unique_arities > 1 then Lwt.return_unit
           else
+            let items, parse_warnings = Parse_declaration.extract (String.split_on_char '\n' content) in
+            let declaration, select_warnings =
+              Parse_declaration.select ~predicate:predicate_name ~arity:(List.hd unique_arities) items
+            in
+            let* () =
+              Lwt_list.iter_s
+                (fun w -> Lwt_io.eprintlf "  Warning: %s: %s" predicate_name w)
+                (parse_warnings @ select_warnings)
+            in
             (* Batch write: all facts in single commit *)
             let facts = List.map (fun (_, args, _) -> Fact.make predicate_name args) parsed_facts in
             let message = Printf.sprintf "Compile %s (%d facts)" predicate_name (List.length facts) in
-            Pack_backend.write_predicate_batch pack_store predicate_name facts message
+            Pack_backend.write_predicate_batch ?declaration pack_store predicate_name facts message
         in
 
         let fact_count = if List.length unique_arities > 1 then 0 else List.length parsed_facts in

@@ -13,7 +13,7 @@ val create : unit -> t
 
 (** Compile one predicate's facts into the store, replacing its
     manifest (mirrors [Pack_backend.write_predicate_batch]). *)
-val add_predicate : t -> string -> Fact.t list -> unit
+val add_predicate : ?declaration:Predicate_declaration.t -> t -> string -> Fact.t list -> unit
 
 (** Build a store from facts of any predicates, grouped by predicate. *)
 val of_facts : Fact.t list -> t

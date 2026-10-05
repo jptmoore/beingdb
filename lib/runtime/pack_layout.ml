@@ -34,8 +34,8 @@ let fact_entries (fact : Fact.t) =
        (fun pos arg -> (index_key_dir fact.predicate pos (Value.type_name arg) (Value.index_key arg) @ [ fact_id ], ""))
        fact.arguments
 
-let predicate_entries predicate facts =
-  let manifest = Manifest.compute facts in
+let predicate_entries ?declaration predicate facts =
+  let manifest = Manifest.compute ?declaration facts in
   List.concat_map fact_entries facts
   @ [ (meta_path predicate, Yojson.Safe.to_string (Manifest.to_json manifest)) ]
 

@@ -11,6 +11,7 @@ module Calendar = Calendar
 module Value = Value
 module Lexer = Lexer
 module Fact = Fact
+module Predicate_declaration = Predicate_declaration
 module Manifest = Manifest
 module Query_ast = Query_ast
 module Clause_parser = Clause_parser
@@ -22,6 +23,7 @@ module Memory_store = Memory_store
 module Git_backend = Git_backend
 module Pack_backend = Pack_backend
 module Parse_predicate = Parse_predicate
+module Parse_declaration = Parse_declaration
 module Query_parser = Query_parser
 
 module Query_engine = struct

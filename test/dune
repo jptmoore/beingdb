@@ -43,6 +43,11 @@
  (libraries beingdb alcotest lwt lwt.unix)
  (modes native))
 
+(test
+ (name test_declarations)
+ (libraries beingdb beingdb_runtime alcotest lwt lwt.unix yojson digestif unix)
+ (modes native))
+
 ; Portable runtime only (plus alcotest): no Irmin, Git, Dream or lwt.unix.
 (test
  (name test_runtime)

@@ -58,6 +58,35 @@ let test_load_facts_file_writes_store () =
       cleanup dir;
       Lwt.return_unit)
 
+let test_load_facts_file_declarations () =
+  with_store (fun store ->
+      let dir = create_test_pack "facts_decl" in
+      let path = Filename.concat dir "mixed.pl" in
+      write_file path
+        "%! created(Artist:person, Work:work)\n\
+         %  Relates an artist to a work they created.\n\
+         created(tina_keane, she).\n\
+         %! person(P, Q)\n\
+         person(tina_keane).\n\
+         %! missing(X)\n";
+      let* result = Repl_support.load_facts_file store path in
+      (match result with
+      | Ok summaries ->
+          Alcotest.(check int) "arity-mismatch and orphan declarations reported" 2
+            (List.length (List.filter (String.starts_with ~prefix:"declaration warning:") summaries))
+      | Error e -> Alcotest.fail e);
+      let* created = Pack_backend.get_manifest store "created" in
+      let* person = Pack_backend.get_manifest store "person" in
+      (match created with
+      | Some { declaration = Some d; _ } ->
+          Alcotest.(check (option string)) "description" (Some "Relates an artist to a work they created.") d.description
+      | _ -> Alcotest.fail "created should carry its declaration");
+      (match person with
+      | Some { declaration = None; _ } -> ()
+      | _ -> Alcotest.fail "mismatched declaration must be ignored");
+      cleanup dir;
+      Lwt.return_unit)
+
 let test_load_facts_file_reports_parse_errors () =
   with_store (fun store ->
       let dir = create_test_pack "facts_errors" in
@@ -129,6 +158,7 @@ let () =
       ( "load_facts_file",
         [
           Alcotest.test_case "writes facts to store" `Quick test_load_facts_file_writes_store;
+          Alcotest.test_case "compiles declarations" `Quick test_load_facts_file_declarations;
           Alcotest.test_case "reports parse errors" `Quick test_load_facts_file_reports_parse_errors;
           Alcotest.test_case "arity mismatch not written" `Quick test_load_facts_file_arity_mismatch;
           Alcotest.test_case "missing file" `Quick test_load_facts_file_missing;

@@ -101,29 +101,7 @@ let list_predicates_detailed ?q ?names store =
     matches_q && matches_names
   in
   let predicates = List.filter matches_filters env.Query_environment.predicates in
-  let predicate_json (p : Query_environment.predicate_signature) =
-    `Assoc
-      [
-        ("name", `String p.name);
-        ("arity", `Int p.arity);
-        ("count", `Int p.count);
-        ( "arguments",
-          `List
-            (List.map
-               (fun (a : Query_environment.argument_signature) ->
-                 `Assoc [ ("position", `Int a.position); ("types", `List (List.map (fun t -> `String t) a.types)) ])
-               p.arguments) );
-        ("examples", `List (List.map (fun args -> `List (List.map Value.to_json args)) p.examples));
-      ]
-  in
-  Lwt.return
-    (Ok
-       (`Assoc
-         [
-           ("predicates", `List (List.map predicate_json predicates));
-           ("environmentFingerprint", `String env.Query_environment.fingerprint);
-           ("languageVersion", `String env.Query_environment.language_version);
-         ]))
+  Lwt.return (Ok (Query_environment.to_json ~predicates env))
 
 (** Query single predicate with validation *)
 let query_predicate ~max_results store predicate =

@@ -50,7 +50,79 @@ homepage(
   of arguments.
 - One fact per line, terminated with `.`.
 - Type is determined directly from literal syntax; no schema is
-  required or supported.
+  required. Optional declarations (below) document predicates but never
+  change typing.
+
+### Predicate declarations (optional)
+
+Facts work on their own: BeingDB always works out each predicate's
+arity, value types, fact count and examples. You can optionally add a
+**declaration** to say what a predicate means. A declaration is a
+comment line starting with `%!` placed in the predicate's file, usually
+just above the facts. Each part is optional; add only what helps.
+
+**Simple description.** Name the predicate on a `%!` line and describe
+it on the `%` lines that follow:
+
+```prolog
+%! created_by
+% Relates a work to the artist or creator who made it.
+created_by("Work A", "Artist A").
+```
+
+**Argument roles.** Name each argument, in order, to make clear which
+argument is which:
+
+```prolog
+%! created_by(Work, Artist)
+created_by("Work A", "Artist A").
+```
+
+**Roles plus description** (recommended):
+
+```prolog
+%! created_by(Work, Artist)
+% Relates a work to the artist or creator who made it.
+created_by("Work A", "Artist A").
+```
+
+**Advanced: semantic types.** A role may be refined with `:` and a
+semantic type, on any or all arguments:
+
+```prolog
+%! created_by(Work:work, Artist:person)
+% Relates a work to the artist or creator who made it.
+created_by("Work A", "Artist A").
+```
+
+Here `Work` and `Artist` are **argument roles**, and `work` and `person`
+are optional **semantic types**. Semantic types are never required.
+
+Rules:
+
+- A role is a capitalised name (`[A-Z][A-Za-z0-9_]*`), like a query
+  variable. Roles in one declaration must be distinct, and there must
+  be one per argument.
+- A semantic type is a lowercase label (`[a-z][a-z0-9_]*`). BeingDB
+  records it but does not check it against the facts. It is separate
+  from the value types BeingDB observes (`atom`, `string`, `year`, ...).
+- The description is the `%` lines directly after the `%!` line, up to
+  the first line that does not start with `%` (a blank line or a fact).
+  Lines are joined with spaces; an empty `%` line starts a new
+  paragraph. A bare `%! name` must have a description.
+- Only `%!` starts a declaration. Ordinary `%` comments (headers,
+  provenance notes, ...) are never treated as metadata.
+- Declarations are documentation only: they do not change query
+  results, validation or how values are typed.
+- Declarations are comments, so files containing them still compile
+  with older BeingDB versions.
+
+`beingdb compile` (and the REPL's `:load`) stores the declaration with
+the predicate. A declaration that cannot be parsed, names a different
+predicate, repeats an earlier one, or declares a different number of
+arguments from the facts is reported as a warning and ignored. It never
+fails the compile. Declarations are returned by
+[predicate introspection](#predicate-introspection-get-predicatesdetailedtrue).
 
 ### Literal types
 
@@ -410,8 +482,9 @@ that the *same* core AST, planner, and executor already understand.
   language.
 - **Functions:** no computed values or transformations.
 - **Uncertain dates or date intervals.**
-- **A user-authored schema** -- types are always inferred, never
-  declared.
+- **A user-authored type schema** -- value types are always inferred,
+  never declared. (Optional [predicate declarations](#predicate-declarations-optional)
+  document roles and meaning but do not affect typing.)
 
 ## JSON result format
 
@@ -621,7 +694,8 @@ offset 0
 Every expressive query is validated against a **query environment**
 built from the compiled store's inferred per-predicate schema (arity,
 per-argument-position observed types, fact counts, and a few bounded
-examples) -- no user-authored schema is read or required. Validation
+examples) -- no user-authored schema is required, and optional
+predicate declarations play no part in validation. Validation
 reports *every* problem found, not just the first, as a list of
 structured errors, each with a stable `code` and a human-readable
 `message`, plus `line`/`column` where applicable:
@@ -745,8 +819,10 @@ filesystem details -- no storage paths appear in it.
 
 ### Predicate introspection: `GET /predicates?detailed=true`
 
-Returns each predicate's argument type signature, fact count, and a few
-bounded examples, plus the query environment's fingerprint:
+Returns each predicate's argument type signature, fact count, a few
+bounded examples and any [declared](#predicate-declarations-optional)
+roles, semantic types and description, plus the query environment's
+fingerprint:
 
 ```bash
 curl 'http://localhost:8080/predicates?detailed=true&q=creat'
@@ -756,14 +832,15 @@ curl 'http://localhost:8080/predicates?detailed=true&q=creat'
 {
   "predicates": [
     {
-      "name": "created",
+      "name": "created_by",
       "arity": 2,
       "count": 3,
+      "description": "Relates a work to the person who created it.",
       "arguments": [
-        { "position": 0, "types": ["atom"] },
-        { "position": 1, "types": ["atom"] }
+        { "position": 0, "types": ["atom"], "role": "Work", "semanticType": "work" },
+        { "position": 1, "types": ["atom"], "role": "Creator", "semanticType": "person" }
       ],
-      "examples": [[{ "type": "atom", "value": "tina_keane" }, { "type": "atom", "value": "she" }]]
+      "examples": [[{ "type": "atom", "value": "she" }, { "type": "atom", "value": "tina_keane" }]]
     }
   ],
   "environmentFingerprint": "sha256:3a1f...c9",
@@ -771,11 +848,17 @@ curl 'http://localhost:8080/predicates?detailed=true&q=creat'
 }
 ```
 
+`types`, `count` and `examples` are always inferred from the facts.
+`description`, `role` and `semanticType` appear only when declared;
+undeclared predicates have exactly the fields they had before
+declarations existed.
+
 `q` filters by case-insensitive substring match on the predicate name;
 `names` filters to an exact comma-separated set of names. The
 fingerprint (SHA-256 of a canonical, sort-order-independent encoding of
-every predicate's name, arity, and observed argument types, plus the
-expressive-language version) changes whenever any of those change --
+every predicate's name, arity, observed argument types and any declared
+roles, semantic types and description, plus the expressive-language
+version) changes whenever any of those change --
 useful for cache invalidation in LLM prompts built from this
 introspection data. It is exposed consistently, under the same
 `environmentFingerprint` key, in `/predicates`, REPL startup, and every
@@ -797,12 +880,13 @@ predicates: 6
 environment_fingerprint: sha256:3a1f2b7c9e4d5a6f8091b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b
 language_version: beingdb-dsl/1
 mode: auto
-beingdb> :describe created
-created/2  (3 facts)
-  arg 0: atom
-  arg 1: atom
+beingdb> :describe created_by
+created_by/2  (3 facts)
+  Relates a work to the person who created it.
+  arg 0 Work (work): atom
+  arg 1 Creator (person): atom
   examples:
-    created(tina_keane, she)
+    created_by(she, tina_keane)
 beingdb> find Work
 where
   created(_, Work)
