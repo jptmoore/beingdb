@@ -358,6 +358,7 @@ A line starting with `:` is a REPL command rather than a query:
 | `:environment` | Show predicate count, fingerprint, language version, and current mode |
 | `:explain <query>` | Show the chosen query plan without executing it (single-line only) |
 | `:validate` | Enter a query (blank line to finish) and validate it without executing |
+| `:diagnose` | Enter a DSL query (blank line to finish): validation, data-aware diagnostics and proven repairs, without executing |
 | `:core` / `:dsl` / `:auto` | Switch the query-language mode |
 | `:load <file>` | Load facts (`.pl`, `.pro`, `.facts`) or run each line as a query (any other extension) |
 | `:loadfacts <file>` | Force-load a file as facts, written directly into the open Pack store |

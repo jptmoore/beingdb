@@ -724,7 +724,10 @@ optional fields:
 
 - `"language"`: `"core"` (default) or `"dsl"`.
 - `"action"`: `"execute"` (default), `"validate"` (check without
-  running), or `"explain"` (show the structured plan without running).
+  running), `"explain"` (show the structured plan without running), or
+  `"diagnose"` (DSL only: validation plus data-aware diagnostics and
+  proven repairs, without running; see
+  [API: Diagnose](api.md#diagnose-dsl)).
 
 ```bash
 curl -X POST http://localhost:8080/query \
@@ -901,7 +904,9 @@ limit 3
 ```
 
 `:validate` reads a query the same way (blank line to finish) and reports
-validation results without executing it.
+validation results without executing it. `:diagnose` does the same for a
+DSL query and adds BeingDB's data-aware diagnostics and any proven repair
+(the `diagnose` action).
 
 ## Further reading
 

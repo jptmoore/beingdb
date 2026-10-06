@@ -239,7 +239,7 @@ the core or the expressive query language.
 - `offset` (integer, optional) - Start position for pagination (default: 0); core language only
 - `limit` (integer, optional) - Maximum results to return (default: server's `max_results`, see [Safety limits](#safety-limits)); core language only -- for the expressive language, use `limit`/`offset` inside the query text itself
 - `language` (string, optional) - `"core"` (default) or `"dsl"`
-- `action` (string, optional) - `"execute"` (default), `"validate"` (check without running), or `"explain"` (show the access plan without running)
+- `action` (string, optional) - `"execute"` (default), `"validate"` (check without running), `"explain"` (show the access plan without running), or, for `"dsl"` only, `"diagnose"` (validation plus data-aware diagnostics and proven repairs, without running -- see [Diagnose](#diagnose-dsl))
 
 See [Query Language](query-language.md#expressive-query-language) for
 the full `find`/`where` syntax, validation error shapes, and REPL
@@ -357,6 +357,87 @@ returns HTTP 400 with the structured error list directly as the body
   "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
+
+### Diagnose (DSL)
+
+`"action": "diagnose"` checks a DSL query against the data without running
+it, and reports only what BeingDB can establish exactly. It is meant for
+clients that generate queries (for example a language model behind MCP or
+in the browser), so they can fix cheap, provable mistakes before spending
+another expensive generation. The response is always HTTP 200: validation
+fields exactly as `validate` reports them, plus `diagnostics`,
+`provablyEmpty` and, when BeingDB can prove a correction, `repair`.
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -H "Content-Type: application/json" \
+  -d '{"language": "dsl", "action": "diagnose", "query": "find Work\nwhere\n  created_by(david_critchley, Work)"}'
+```
+
+```json
+{
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "diagnostics": [
+    {
+      "code": "constant_not_at_position",
+      "severity": "error",
+      "message": "No created_by fact has 'david_critchley' as argument 0. 'david_critchley' occurs in created_by only at argument 1.",
+      "line": 3, "predicate": "created_by", "argumentPosition": 0,
+      "value": {"type": "atom", "value": "david_critchley"},
+      "scope": "positive",
+      "evidence": {"declaredRole": "Work", "occursAtPositions": [1], "occursIn": [{"predicate": "affiliated_with", "argumentPosition": 0}], "occursInCount": 16},
+      "repair": {"kind": "swap_arguments", "predicate": "created_by", "line": 3, "positions": [0, 1]}
+    },
+    {
+      "code": "role_name_mismatch",
+      "severity": "warning",
+      "message": "Work is argument 1 of created_by, whose declared role is Artist; Work is the role of argument 0.",
+      "line": 3, "predicate": "created_by", "argumentPosition": 1, "variable": "Work", "scope": "positive",
+      "evidence": {"declaredRole": "Artist", "matchesRoleAt": 0, "matchesRole": "Work"}
+    }
+  ],
+  "provablyEmpty": true,
+  "repair": {
+    "query": "find Work\nwhere\n  created_by(Work, david_critchley)",
+    "applied": [{"kind": "swap_arguments", "predicate": "created_by", "line": 3, "positions": [0, 1]}]
+  },
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:..."
+}
+```
+
+Diagnostic codes (all deterministic, computed from the facts and the
+predicate declarations):
+
+| Code | Meaning |
+|---|---|
+| `unknown_constant` | An atom that occurs in no fact of any predicate |
+| `constant_not_at_position` | A literal that occurs in no fact of this predicate at this argument (`evidence.occursAtPositions`: where it does occur in this predicate; `occursIn`: other predicates) |
+| `disjoint_join` | A variable joining two positive patterns whose arguments share no value |
+| `contradictory_negation` | A `not` block that only repeats clauses that must already hold |
+| `singleton_variable` | A named variable used once and not in `find`/`order by`: it matches anything, like `_` |
+| `role_name_mismatch` | A variable named after the declared role of a different argument of the same predicate |
+
+`severity: "error"` means the query as written provably returns no rows
+(`provablyEmpty` is then `true`); a provably empty clause inside
+`optional`/`either`/`not` is a `"warning"`, as is everything that does not
+prove emptiness. Diagnostics never change `valid`.
+
+A `repair` is offered only when BeingDB can prove it:
+
+- `swap_arguments`: a positive pattern has a literal that matches no fact
+  at its position, and exactly one swap of two arguments makes every
+  literal of the pattern match.
+- `replace_variable`: a positive singleton variable whose name in
+  snake_case (`OvalHouse` -> `oval_house`) is an atom that occurs at
+  exactly that argument.
+
+`repair.query` is the original text with only the repaired clauses'
+lines rewritten; it is returned only if it parses back to exactly the
+repaired query. Run it (or `diagnose` it again) like any other query.
 
 ---
 
