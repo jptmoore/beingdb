@@ -518,6 +518,36 @@ let test_run_query_unknown_language () =
      cleanup test_dir;
      Lwt.return ())
 
+(* The "diagnose" action over the native Irmin Pack store: a reversed
+   constant is diagnosed with a proven swap, and the repaired query runs. *)
+let test_run_query_dsl_diagnose () =
+  let store, test_dir = create_test_pack "run_dsl_diagnose" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let open Yojson.Safe.Util in
+     let query = "find Work\nwhere\n  created(Work, tina_keane)\n" in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"diagnose" store query ~offset:None ~limit:None in
+     let repaired =
+       match outcome with
+       | Controller.Success json ->
+           Alcotest.(check bool) "valid" true (json |> member "valid" |> to_bool);
+           Alcotest.(check bool) "provably empty" true (json |> member "provablyEmpty" |> to_bool);
+           Alcotest.(check string) "code" "constant_not_at_position"
+             (json |> member "diagnostics" |> index 0 |> member "code" |> to_string);
+           Alcotest.(check string) "language" "dsl" (json |> member "language" |> to_string);
+           json |> member "repair" |> member "query" |> to_string
+       | _ -> Alcotest.fail "expected Success"
+     in
+     Alcotest.(check string) "repaired query" "find Work\nwhere\n  created(tina_keane, Work)\n" repaired;
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store repaired ~offset:None ~limit:None in
+     (match outcome with
+     | Controller.Success json -> Alcotest.(check int) "rows" 1 (json |> member "count" |> to_int)
+     | _ -> Alcotest.fail "expected Success");
+     let* outcome = Controller.run_query ~max_results:100 ~language:"core" ~action:"diagnose" store "created(A, W)" ~offset:None ~limit:None in
+     (match outcome with Controller.Failure { code; _ } -> Alcotest.(check string) "core" "unknown_action" code | _ -> Alcotest.fail "expected Failure");
+     cleanup test_dir;
+     Lwt.return ())
+
 let () =
   Alcotest.run "BeingDB Controller" [
     "List Predicates", [
@@ -555,5 +585,6 @@ let () =
       Alcotest.test_case "dsl validate unknown predicate" `Quick test_run_query_dsl_validate_unknown_predicate;
       Alcotest.test_case "dsl explain" `Quick test_run_query_dsl_explain;
       Alcotest.test_case "unknown language" `Quick test_run_query_unknown_language;
+      Alcotest.test_case "dsl diagnose" `Quick test_run_query_dsl_diagnose;
     ];
   ]

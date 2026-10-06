@@ -55,6 +55,11 @@
  (modes native))
 
 (test
+ (name test_diagnostics)
+ (libraries beingdb_runtime alcotest lwt yojson)
+ (modes native))
+
+(test
  (name test_runtime_parity)
  (libraries beingdb alcotest lwt lwt.unix yojson unix)
  (modes native))

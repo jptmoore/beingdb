@@ -434,11 +434,21 @@ let execute_dsl ~max_results store query_str =
                    })
           | exn -> Lwt.return (Failure { code = "internal_error"; message = Printf.sprintf "Query error: %s" (Printexc.to_string exn) }))
 
+(** Run the DSL "diagnose" action: validation plus data-aware
+    diagnostics and any repair BeingDB can prove
+    ({!Query_diagnostics}), without executing. Always [Success]: an
+    invalid query is reported in the body ([valid: false]), like the
+    other diagnostics. *)
+let diagnose_dsl store query_str =
+  Db.Environment.load_or_build store >>= fun env ->
+  Db.Diagnostics.fields store env query_str >>= fun fields ->
+  Lwt.return (Success (`Assoc (fields @ with_environment_fields ~language:"dsl" env)))
+
 (** Unified query entry point: dispatches on [language] ("core" | "dsl",
     default "core") and [action] ("execute" | "validate" | "explain",
-    default "execute"). Rejects an oversized raw query string up front,
-    before either language's parser runs, so this one guard covers both
-    languages and all three actions. *)
+    default "execute"; "diagnose" for "dsl" only). Rejects an oversized
+    raw query string up front, before either language's parser runs, so
+    this one guard covers both languages and all actions. *)
 let run_query ~max_results ?(language = "core") ?(action = "execute") store query_str ~offset ~limit =
   match Query_validation.check_query_length query_str with
   | Error err -> Lwt.return (Failure { code = Query_validation.error_code err; message = Query_validation.error_message err })
@@ -450,8 +460,13 @@ let run_query ~max_results ?(language = "core") ?(action = "execute") store quer
   | "dsl", "execute" -> execute_dsl ~max_results store query_str
   | "dsl", "validate" -> validate_dsl store query_str
   | "dsl", "explain" -> explain_dsl store query_str
-  | _, ("execute" | "validate" | "explain") ->
+  | "dsl", "diagnose" -> diagnose_dsl store query_str
+  | "core", "diagnose" ->
+      Lwt.return (Failure { code = "unknown_action"; message = "Action 'diagnose' is only available for language 'dsl'" })
+  | _, ("execute" | "validate" | "explain" | "diagnose") ->
       Lwt.return (Failure { code = "unknown_language"; message = Printf.sprintf "Unknown language '%s' (expected 'core' or 'dsl')" language })
   | _, _ ->
-      Lwt.return (Failure { code = "unknown_action"; message = Printf.sprintf "Unknown action '%s' (expected 'execute', 'validate', or 'explain')" action }))
+      Lwt.return
+        (Failure
+           { code = "unknown_action"; message = Printf.sprintf "Unknown action '%s' (expected 'execute', 'validate', 'explain' or 'diagnose')" action }))
 

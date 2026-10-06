@@ -7,6 +7,9 @@ module Engine : module type of Query_engine.Make (Pack_backend)
 
 module Environment : module type of Query_environment.Make (Pack_backend)
 
+(** Data-aware query diagnostics and proven repairs (DSL "diagnose" action). *)
+module Diagnostics : module type of Query_diagnostics.Report (Pack_backend)
+
 (** Get list of all predicates with their arities *)
 val list_predicates : t -> (string * int) list Lwt.t
 

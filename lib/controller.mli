@@ -63,9 +63,11 @@ type query_outcome =
 
 (** Unified entry point for [POST /query] and the REPL's query commands.
     [language] is ["core"] (default) or ["dsl"]; [action] is ["execute"]
-    (default), ["validate"], or ["explain"]. The DSL path shares the same
-    planner/executor as the core language via {!Core_query} and
-    {!Dsl_lower}. *)
+    (default), ["validate"], ["explain"] or, for ["dsl"] only,
+    ["diagnose"] (validation plus {!Query_diagnostics} data-aware
+    diagnostics and proven repairs, without executing). The DSL path
+    shares the same planner/executor as the core language via
+    {!Core_query} and {!Dsl_lower}. *)
 val run_query :
   max_results:int ->
   ?language:string ->

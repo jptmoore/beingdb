@@ -27,6 +27,7 @@ let print_help () =
          "  :environment         show predicate count, fingerprint, language version, and mode";
          "  :explain <query>     show the query plan without executing it (single-line only)";
          "  :validate            enter a query (blank line to finish) and validate it without executing";
+         "  :diagnose            enter a DSL query (blank line to finish): diagnostics and proven repairs, no execution";
          "  :core                switch to the core predicate-pattern query language";
          "  :dsl                 switch to the expressive (find/where/...) query language";
          "  :auto                auto-detect the language per query (\"find ...\" => dsl, else core)";
@@ -143,6 +144,10 @@ let dispatch ~read_block store limit mode line =
       else
         let language = match !mode with Core -> "core" | Dsl -> "dsl" | Auto -> if looks_like_dsl text then "dsl" else "core" in
         run_query_language ~language ~action:"validate" store !limit text
+  | ":diagnose" ->
+      let lines = read_block "...> " in
+      let text = String.concat "\n" lines in
+      if String.trim text <> "" then run_query_language ~language:"dsl" ~action:"diagnose" store !limit text
   | _ when String.starts_with ~prefix:":describe " line -> describe_predicate store (String.trim (strip_prefix ":describe " line))
   | _ when String.starts_with ~prefix:":explain " line -> explain_query (strip_prefix ":explain " line)
   | _ when String.starts_with ~prefix:":limit " line -> set_limit limit (strip_prefix ":limit " line)

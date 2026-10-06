@@ -83,7 +83,7 @@ let in_flight_queries = ref 0
 
 (** Execute a query with joins. Accepts optional ["language"] ("core"
     (default) or "dsl") and ["action"] ("execute" (default), "validate",
-    or "explain") fields, dispatched via {!Controller.run_query}. Rejects
+    "explain", or "diagnose" for "dsl") fields, dispatched via {!Controller.run_query}. Rejects
     with [429] once [config.max_concurrent_queries] requests are already
     in flight, guarding against resource exhaustion from a flood of
     concurrent (possibly expensive) queries. Re-applies [config] to

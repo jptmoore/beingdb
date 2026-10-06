@@ -6,6 +6,7 @@ type t = Pack_backend.t
 
 module Engine = Query_engine.Make (Pack_backend)
 module Environment = Query_environment.Make (Pack_backend)
+module Diagnostics = Query_diagnostics.Report (Pack_backend)
 
 (** Get list of all predicates with their arities *)
 let list_predicates store =
