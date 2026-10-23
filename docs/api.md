@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.4.0"
+  "version": "0.4.1"
 }
 ```
 
@@ -439,6 +439,17 @@ example, `created_by(Work, david_critchly)` gives
 `"suggestions": ["david_critchley"]`. Suggestions are
 hints, not repairs: BeingDB cannot prove which value was meant, so the
 client chooses.
+
+If the literal's text instead appears *inside* values at that argument
+(a word, not a whole value), the diagnostic also carries
+`evidence.containsMatches` (up to five such values) and
+`evidence.containsClause`, a ready-made [`contains`](query-language.md#text-search-contains)
+comparison named after the argument's declared role, and the message ends
+with the advice to use it. For example, `uses_medium(Work, camera)` gives
+`"containsClause": "Medium contains \"camera\""` with matches
+`super_8_film_camera` and `video_camera`. Like suggestions, it is a hint, not
+a repair: searching with `contains` widens the match, so BeingDB cannot prove
+it is what was meant.
 
 A `repair` is offered only when BeingDB can prove it:
 

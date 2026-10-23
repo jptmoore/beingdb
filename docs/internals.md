@@ -598,7 +598,13 @@ Pipeline, module by module:
   side not quoted text of 1 to `Query_validation.max_contains_length`
   bytes, or a variable that only holds non-text types). Diagnostics
   treat it like any comparison, so an unmatched `contains` is reported
-  as `unsatisfiable_comparison`.
+  as `unsatisfiable_comparison`. In the other direction, when an atom or
+  string literal occurs nowhere in its predicate but values at that
+  argument contain its text (`Value.contains_text`, over the same budgeted
+  `position_values` read as misspelling suggestions), its grounding
+  diagnostic carries `containsMatches` and a `containsClause` named after
+  the argument's declared role (`Value` if undeclared): a hint, never a
+  repair.
   `Api.with_query_slot` applies `max_concurrent_queries` to `POST /query`
   and both `GET` reads; `Api.router` is the route table shared by
   `Api.serve` and the tests.

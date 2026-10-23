@@ -240,6 +240,27 @@ let test_diagnostic_budget () =
       Alcotest.(check bool) "comparison still proven" true U.(r |> member "provablyEmpty" |> to_bool);
       Alcotest.(check bool) "no range evidence" true U.(d |> member "evidence" |> member "observedRange" = `Null))
 
+(* A literal whose text appears inside values at its argument gets a
+   contains hint (never a repair); a typo or a word found nowhere does not. *)
+let test_contains_hint () =
+  let clause d = match U.member "evidence" d with `Null -> `Null | e -> U.member "containsClause" e in
+  let r = report "find Work\nwhere\n  held_at(Work, gallery)\n" in
+  let d = find_code r "unknown_constant" in
+  Alcotest.(check string) "clause" "Value contains \"gallery\"" U.(clause d |> to_string);
+  Alcotest.(check (list string)) "matches" [ "whitechapel_gallery" ]
+    U.(d |> member "evidence" |> member "containsMatches" |> to_list |> List.map to_string);
+  Alcotest.(check bool) "not a repair" false (has_repair r);
+  let r = report "find Work\nwhere\n  titled(Work, \"journey\")\n" in
+  Alcotest.(check string) "string column" "Value contains \"journey\""
+    U.(clause (find_code r "constant_not_at_position") |> to_string);
+  let r = report "find Work\nwhere\n  created_by(Work, Artist)\n  made_at(Work, oval)\n" in
+  Alcotest.(check bool) "declared role names the variable" true
+    (List.exists (fun d -> clause d = `String "Place contains \"oval\"") (diagnostics r));
+  let r = report "find Work\nwhere\n  held_at(Work, tate_modren)\n" in
+  Alcotest.(check bool) "typo: no hint" true (clause (find_code r "unknown_constant") = `Null);
+  let r = report "find Work\nwhere\n  held_at(Work, nowhere)\n" in
+  Alcotest.(check bool) "nothing contains it: no hint" true (clause (find_code r "unknown_constant") = `Null)
+
 let test_unsatisfiable_contains () =
   let r = report "find Work\nwhere\n  titled(Work, T)\n  T contains \"zzqx\"\n" in
   let d = find_code r "unsatisfiable_comparison" in
@@ -302,6 +323,7 @@ let () =
           Alcotest.test_case "unsatisfiable comparison" `Quick test_unsatisfiable_comparison;
           Alcotest.test_case "diagnostics budget" `Quick test_diagnostic_budget;
           Alcotest.test_case "unsatisfiable contains" `Quick test_unsatisfiable_contains;
+          Alcotest.test_case "contains hint" `Quick test_contains_hint;
           Alcotest.test_case "disjoint join" `Quick test_disjoint_join;
           Alcotest.test_case "contradictory negation" `Quick test_contradictory_negation;
           Alcotest.test_case "validation unchanged" `Quick test_validation_unchanged;
