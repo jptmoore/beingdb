@@ -430,6 +430,12 @@ let execute_dsl ~max_results store query_str =
                 ]
               else []
             in
+            (* An empty first page is explained by the same data-aware
+               diagnostics as the "diagnose" action. *)
+            let first_page = match cq.Core_query.offset with None | Some 0 -> true | Some _ -> false in
+            (if rows = [] && (not has_more) && first_page then Db.Diagnostics.empty_result_fields store env query_str
+             else Lwt.return [])
+            >>= fun diagnosis ->
             Lwt.return
               (Success
                  (`Assoc
@@ -441,6 +447,7 @@ let execute_dsl ~max_results store query_str =
                       ("truncated", `Bool truncated);
                       ("warnings", `List (List.map Validation_error.warning_to_json warnings @ truncation_warning));
                     ]
+                   @ diagnosis
                    @ with_environment_fields ~language:"dsl" env)))
       in
       Lwt.catch

@@ -558,6 +558,37 @@ let test_run_query_dsl_truncation () =
      cleanup test_dir;
      Lwt.return ())
 
+(* A DSL execute that returns no rows carries the same diagnostics as the
+   "diagnose" action, so a client learns why without a second call; a
+   non-empty result, or an empty later page, carries none. *)
+let test_run_query_dsl_empty_result_diagnostics () =
+  let store, test_dir = create_test_pack "run_dsl_empty_diag" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let open Yojson.Safe.Util in
+     let exec query =
+       let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query ~offset:None ~limit:None in
+       match outcome with Controller.Success json -> Lwt.return json | _ -> Alcotest.fail "expected Success"
+     in
+     let* json = exec "find Work\nwhere\n  created(tina_kean, Work)\n" in
+     Alcotest.(check int) "no rows" 0 (json |> member "count" |> to_int);
+     Alcotest.(check bool) "provably empty" true (json |> member "provablyEmpty" |> to_bool);
+     let d = json |> member "diagnostics" |> index 0 in
+     Alcotest.(check string) "code" "unknown_constant" (d |> member "code" |> to_string);
+     Alcotest.(check (list string)) "suggestion" [ "tina_keane" ]
+       (d |> member "evidence" |> member "suggestions" |> to_list |> List.map to_string);
+     Alcotest.(check string) "language still last" "dsl" (json |> member "language" |> to_string);
+     let* json = exec "find Work\nwhere\n  created(Work, tina_keane)\n" in
+     Alcotest.(check string) "proven repair" "find Work\nwhere\n  created(tina_keane, Work)\n"
+       (json |> member "repair" |> member "query" |> to_string);
+     let* json = exec "find Artist\nwhere\n  artist(Artist)\n" in
+     Alcotest.(check bool) "rows: no diagnostics" true (json |> member "diagnostics" = `Null);
+     let* json = exec "find Artist\nwhere\n  artist(Artist)\noffset 5\n" in
+     Alcotest.(check int) "empty later page" 0 (json |> member "count" |> to_int);
+     Alcotest.(check bool) "later page: no diagnostics" true (json |> member "diagnostics" = `Null);
+     cleanup test_dir;
+     Lwt.return ())
+
 (* The "diagnose" action over the native Irmin Pack store: a reversed
    constant is diagnosed with a proven swap, and the repaired query runs. *)
 let test_run_query_dsl_diagnose () =
@@ -623,6 +654,7 @@ let () =
       Alcotest.test_case "dsl execute" `Quick test_run_query_dsl_execute;
       Alcotest.test_case "dsl execute top-level alternatives" `Quick test_run_query_dsl_execute_top_level_alternatives;
       Alcotest.test_case "dsl execute hasMore/truncated" `Quick test_run_query_dsl_truncation;
+      Alcotest.test_case "dsl execute empty-result diagnostics" `Quick test_run_query_dsl_empty_result_diagnostics;
       Alcotest.test_case "dsl validate unknown predicate" `Quick test_run_query_dsl_validate_unknown_predicate;
       Alcotest.test_case "dsl explain" `Quick test_run_query_dsl_explain;
       Alcotest.test_case "unknown language" `Quick test_run_query_unknown_language;

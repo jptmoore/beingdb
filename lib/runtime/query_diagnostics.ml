@@ -17,6 +17,10 @@
       projected nor ordered on; it acts exactly like [_].
     - [role_name_mismatch]: a variable named after the declared role of
       a different argument position of the same predicate.
+    - [unsatisfiable_comparison]: a top-level comparison of a variable
+      with literals that no value at a positive pattern's argument
+      satisfies, checked by running just that pattern and the comparison
+      through {!Query_engine}, so it agrees with execution exactly.
 
     Severity ["error"] means the query as written provably returns no
     rows (for a clause in optional/alternative/negated scope the clause
@@ -180,6 +184,8 @@ let value_key (v : Value.t) = Value.type_name v ^ ":" ^ Value.canonical_string v
 let lit_list l = `List (List.map (fun i -> `Int i) l)
 
 module Make (Store : Runtime_store.S) = struct
+  module Engine = Query_engine.Make (Store)
+
   let ( let* ) = Lwt.bind
 
   type ctx = {
@@ -442,6 +448,100 @@ module Make (Store : Runtime_store.S) = struct
       [] vars
     |> Lwt.map List.rev
 
+  (* Top-level comparisons of a variable with literals, as
+     (variable, the comparison as a core clause, its literal, line, source text). *)
+  let comparisons (surface : Surface_ast.surface_query) =
+    List.filter_map
+      (function
+        | Surface_ast.Compare { left = Query_ast.Variable v; operator; right = Literal lit as right; line; _ } ->
+            Some
+              ( v,
+                Query_ast.Compare { left = Variable v; operator; right },
+                lit,
+                line,
+                Printf.sprintf "%s %s %s" v (Query_ast.string_of_operator operator) (dsl_literal lit) )
+        | Compare { left = Literal lit as left; operator; right = Variable v; line; _ } ->
+            Some
+              ( v,
+                Query_ast.Compare { left = Variable v; operator = Query_ast.flip_operator operator; right = left },
+                lit,
+                line,
+                Printf.sprintf "%s %s %s" (dsl_literal lit) (Query_ast.string_of_operator operator) v )
+        | Between { value = Variable v; lower = Literal lo as lower; upper = Literal hi as upper; line; _ } ->
+            Some
+              ( v,
+                Query_ast.Between { value = Variable v; lower; upper },
+                lo,
+                line,
+                Printf.sprintf "%s between %s and %s" v (dsl_literal lo) (dsl_literal hi) )
+        | _ -> None)
+      surface.where_
+
+  (* Smallest and largest values at a position that are ordered against [lit]. *)
+  let observed_range ctx predicate i lit =
+    let* values = position_values ctx predicate i in
+    let pick better =
+      Hashtbl.fold
+        (fun _ x acc ->
+          match Value.order_compare x lit with
+          | Error _ -> acc
+          | Ok _ -> (
+              match acc with
+              | None -> Some x
+              | Some y -> ( match Value.order_compare x y with Ok c when better c -> Some x | _ -> acc)))
+        values None
+    in
+    Lwt.return (match (pick (fun c -> c < 0), pick (fun c -> c > 0)) with Some lo, Some hi -> Some (lo, hi) | _ -> None)
+
+  (* A top-level comparison that no value at a positive pattern's argument
+     can satisfy. Checked by running just that pattern (other arguments as
+     wildcards) and the comparison through the query engine, so the verdict
+     uses exactly the semantics of execution. *)
+  let comparison_diagnostics ctx (surface : Surface_ast.surface_query) all_sites =
+    let positive = List.filter (fun (s : site) -> s.scope = Positive && signature ctx s <> None) all_sites in
+    Lwt_list.filter_map_s
+      (fun (v, clause, lit, line, text) ->
+        let candidates =
+          List.filter_map
+            (fun (s : site) ->
+              let rec index k = function [] -> None | t :: _ when t = Query_ast.Variable v -> Some k | _ :: r -> index (k + 1) r in
+              match index 0 s.arguments with
+              | None -> None
+              | Some i ->
+                  let arguments = List.map (fun t -> if t = Query_ast.Variable v then t else Query_ast.Wildcard) s.arguments in
+                  Some (s, i, arguments))
+            positive
+        in
+        let rec first = function
+          | [] -> Lwt.return None
+          | ((s : site), i, arguments) :: rest -> (
+              let query = { Query_ast.clauses = [ Pattern { predicate = s.predicate; arguments }; clause ]; variables = [ v ] } in
+              let* result = Engine.execute_streaming ctx.store query ~offset:0 ~limit:1 in
+              match result with
+              | Ok { bindings = []; _ } -> Lwt.return (Some (s, i))
+              | Ok _ | Error _ -> first rest)
+        in
+        let* found = first candidates in
+        match found with
+        | None -> Lwt.return None
+        | Some (s, i) ->
+            let p = Option.get (signature ctx s) in
+            let* range = observed_range ctx s.predicate i lit in
+            let range_evidence, range_text =
+              match range with
+              | Some (lo, hi) ->
+                  ( [ ("observedRange", `Assoc [ ("min", Value.to_json lo); ("max", Value.to_json hi) ]) ],
+                    Printf.sprintf " Values there range from %s to %s." (dsl_literal lo) (dsl_literal hi) )
+              | None -> ([], "")
+            in
+            Lwt.return
+              (Some
+                 (make ~severity:Error ~line ~predicate:s.predicate ~argument_position:i ~variable:v ~value:lit ~scope:Positive
+                    ~evidence:(role_evidence p i @ range_evidence) "unsatisfiable_comparison"
+                    (Printf.sprintf "No %s fact has a value at argument %d satisfying %s, so the query returns no rows.%s" s.predicate i
+                       text range_text))))
+      (comparisons surface)
+
   let negation_diagnostics (surface : Surface_ast.surface_query) =
     let positive =
       List.filter_map (function Surface_ast.Pattern { predicate; arguments; _ } -> Some (predicate, arguments) | _ -> None) surface.where_
@@ -467,7 +567,10 @@ module Make (Store : Runtime_store.S) = struct
     let* grounding = Lwt_list.map_s (grounding_diagnostics ctx) all_sites in
     let* singletons = singleton_diagnostics ctx surface all_sites in
     let* joins = join_diagnostics ctx all_sites in
-    let all = List.concat grounding @ singletons @ role_diagnostics ctx all_sites @ joins @ negation_diagnostics surface in
+    let* comparisons = comparison_diagnostics ctx surface all_sites in
+    let all =
+      List.concat grounding @ singletons @ role_diagnostics ctx all_sites @ joins @ comparisons @ negation_diagnostics surface
+    in
     let line_of (d : t) = Option.value d.line ~default:max_int in
     Lwt.return (List.stable_sort (fun a b -> compare (line_of a) (line_of b)) all)
 end
@@ -541,6 +644,22 @@ module Report (Store : Runtime_store.S) = struct
 
   let ( let* ) = Lwt.bind
 
+  (* [diagnostics], [provablyEmpty] and any proven [repair] for a parsed query. *)
+  let diagnosis store env text surface =
+    let* diagnostics = D.diagnose store env surface in
+    let rs = repairs diagnostics in
+    let repair =
+      match apply_repairs text surface rs with
+      | Some query -> [ ("repair", `Assoc [ ("query", `String query); ("applied", `List (List.map repair_to_json rs)) ]) ]
+      | None -> []
+    in
+    Lwt.return
+      ([
+         ("diagnostics", `List (List.map to_json diagnostics));
+         ("provablyEmpty", `Bool (List.exists (fun d -> d.severity = Error) diagnostics));
+       ]
+      @ repair)
+
   let fields store env text : (string * Yojson.Safe.t) list Lwt.t =
     match Dsl_parser.parse text with
     | Error message ->
@@ -554,20 +673,15 @@ module Report (Store : Runtime_store.S) = struct
           ]
     | Ok surface ->
         let lowered = Dsl_lower.lower env surface in
-        let* diagnostics = D.diagnose store env surface in
-        let rs = repairs diagnostics in
-        let repair =
-          match apply_repairs text surface rs with
-          | Some query -> [ ("repair", `Assoc [ ("query", `String query); ("applied", `List (List.map repair_to_json rs)) ]) ]
-          | None -> []
-        in
+        let* diagnosis = diagnosis store env text surface in
         Lwt.return
           ([
              ("valid", `Bool (lowered.errors = []));
              ("errors", `List (List.map Validation_error.to_json lowered.errors));
              ("warnings", `List (List.map Validation_error.warning_to_json lowered.warnings));
-             ("diagnostics", `List (List.map to_json diagnostics));
-             ("provablyEmpty", `Bool (List.exists (fun d -> d.severity = Error) diagnostics));
            ]
-          @ repair)
+          @ diagnosis)
+
+  let empty_result_fields store env text =
+    match Dsl_parser.parse text with Error _ -> Lwt.return [] | Ok surface -> diagnosis store env text surface
 end

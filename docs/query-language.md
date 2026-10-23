@@ -768,6 +768,13 @@ the query asked for more rows than the server returns -- and a
 capped result for the complete answer. Page on with `offset`, or narrow
 the query. Neither field needs a count of every matching row.
 
+When the first page of an `execute` is empty, the response also carries
+the [`diagnose`](api.md#diagnose-dsl) action's `diagnostics`,
+`provablyEmpty` and any proven `repair`, explaining the empty result
+(for example a misspelled constant, or `Y > @2090` when no year there is
+that late) without a second request. Non-empty results carry none of
+these fields.
+
 **Two distinct error families** (see also [API Reference](api.md#error-response-shapes)):
 
 - **Query-invalid** (the request was well-formed, but the query itself

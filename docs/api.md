@@ -299,6 +299,7 @@ loss.
 - `environmentFingerprint` - The dataset schema fingerprint (same value as `/predicates?detailed=true`); lets a client cache schema knowledge from ordinary query responses alone, without a separate `/predicates` call. Present on every `action: "execute"` response (both languages), not just `validate`/`explain`.
 - `hasMore` (expressive language only) - `true` if at least one more row matches beyond those returned, whether the query's own `limit` or the server's `max_results` stopped it
 - `truncated` (expressive language only) - `true` if the server's `max_results` cap, not the query's own `limit`, cut the result; a `results_truncated` entry is then added to `warnings`. Page on with `limit`/`offset` in the query text, or narrow the query.
+- `diagnostics`, `provablyEmpty`, `repair` (expressive language only, only when the first page is empty) - the same data-aware explanation the [`diagnose`](#diagnose-dsl) action gives, so a client learns why there are no rows without a second call. `provablyEmpty: false` with no error diagnostics means BeingDB found no reason in the query itself: the facts are simply not recorded.
 
 **Examples:**
 
@@ -422,6 +423,7 @@ predicate declarations):
 | `contradictory_negation` | A `not` block that only repeats clauses that must already hold |
 | `singleton_variable` | A named variable used once and not in `find`/`order by`: it matches anything, like `_` |
 | `role_name_mismatch` | A variable named after the declared role of a different argument of the same predicate |
+| `unsatisfiable_comparison` | A top-level comparison of a variable with literals (`<`, `>=`, `between`, ...) that no value at the variable's argument satisfies, e.g. `Y > @2090` on years from 1968 to 2004 (`evidence.observedRange`: the smallest and largest comparable values there). Checked by running that pattern and the comparison through the query engine, so it always agrees with execution |
 
 `severity: "error"` means the query as written provably returns no rows
 (`provablyEmpty` is then `true`); a provably empty clause inside
