@@ -3,7 +3,7 @@
 
     Surface syntax:
     {v
-      find [distinct] Var, Var, ...
+      find [distinct] Var | count(Var), ...
       where
         predicate(Args...)
         Term (= | != | < | <= | > | >=) Term
@@ -16,7 +16,7 @@
           <clause>*
         not
           <clause>*
-      order by Var [ascending|descending], ...
+      order by Var | count(Var) [ascending|descending], ...
       limit N
       offset N
     v}
@@ -116,8 +116,37 @@ let rec parse_clauses lines =
       let* rest_clauses, final_remaining = parse_clauses rest in
       Ok (clause :: rest_clauses, final_remaining)
 
+let is_variable n = n <> "" && Char.uppercase_ascii n.[0] = n.[0]
+
+(* Rewrite every [count ( Var )] (any case, any spacing) to [count(Var)]. *)
+let normalize_counts text =
+  let lower = String.lowercase_ascii text in
+  let n = String.length text in
+  let b = Buffer.create n in
+  let rec skip_spaces i = if i < n && (text.[i] = ' ' || text.[i] = '\t') then skip_spaces (i + 1) else i in
+  let rec go i =
+    if i >= n then ()
+    else if i + 5 <= n && String.sub lower i 5 = "count" && (i = 0 || not (Char.lowercase_ascii text.[i - 1] >= 'a' && Char.lowercase_ascii text.[i - 1] <= 'z')) then (
+      let j = skip_spaces (i + 5) in
+      if j < n && text.[j] = '(' then
+        match String.index_from_opt text j ')' with
+        | Some k ->
+            Buffer.add_string b ("count(" ^ String.trim (String.sub text (j + 1) (k - j - 1)) ^ ")");
+            go (k + 1)
+        | None ->
+            Buffer.add_string b (String.sub text i (n - i))
+      else (
+        Buffer.add_string b (String.sub text i 5);
+        go (i + 5)))
+    else (
+      Buffer.add_char b text.[i];
+      go (i + 1))
+  in
+  go 0;
+  Buffer.contents b
+
 let parse_find text =
-  let text = String.trim text in
+  let text = normalize_counts (String.trim text) in
   let distinct, rest =
     if starts_with ~prefix:"distinct" text && (String.length text = 8 || text.[8] = ' ') then
       (true, String.trim (String.sub text 8 (String.length text - 8)))
@@ -127,12 +156,19 @@ let parse_find text =
   else
     let names = String.split_on_char ',' rest |> List.map String.trim |> List.filter (( <> ) "") in
     if names = [] then Error "'find' requires at least one projected variable"
-    else if List.exists (fun n -> n = "" || Char.uppercase_ascii n.[0] <> n.[0]) names then
-      Error "'find' variables must start with an uppercase letter"
-    else Ok { Surface_ast.variables = names; distinct }
+    else
+      match
+        List.find_opt
+          (fun n -> match Core_query.counted_variable n with Some v -> not (is_variable v) | None -> not (is_variable n))
+          names
+      with
+      | Some bad when Core_query.counted_variable bad <> None ->
+          Error (Printf.sprintf "'find' item %s: count takes one variable, e.g. count(Work)" bad)
+      | Some _ -> Error "'find' items must be variables (starting with an uppercase letter) or count(Var)"
+      | None -> Ok { Surface_ast.variables = names; distinct }
 
 let parse_order_item line_no text =
-  match String.split_on_char ' ' (String.trim text) |> List.filter (( <> ) "") with
+  match String.split_on_char ' ' (normalize_counts (String.trim text)) |> List.filter (( <> ) "") with
   | [ var ] -> Ok { Core_query.variable = var; direction = Core_query.Ascending }
   | [ var; dir ] -> (
       match String.lowercase_ascii dir with
@@ -155,7 +191,8 @@ let rec parse_tail lines order_acc limit_acc offset_acc =
         |> List.filter (fun (_, p) -> p <> "")
       in
       let* items = List.fold_left (fun acc (ln, p) -> let* items = acc in let* item = parse_order_item ln p in Ok (item :: items)) (Ok []) flattened in
-      parse_tail remaining (List.rev_append items order_acc) limit_acc offset_acc
+      (* [items] and [order_acc] are both in reverse source order. *)
+      parse_tail remaining (items @ order_acc) limit_acc offset_acc
   | (line_no, _, line) :: rest when line = "limit" || starts_with ~prefix:"limit " line -> (
       let v = if line = "limit" then "" else drop_prefix "limit " line in
       match int_of_string_opt v with

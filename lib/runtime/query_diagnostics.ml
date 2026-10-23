@@ -362,7 +362,9 @@ module Make (Store : Runtime_store.S) = struct
   let singleton_diagnostics ctx (surface : Surface_ast.surface_query) all_sites =
     let occ = variable_occurrences surface.where_ in
     let count v = List.length (List.filter (( = ) v) occ) in
-    let excluded v = List.mem v surface.projection.variables || List.exists (fun (o : Core_query.order_item) -> o.variable = v) surface.order_by in
+    let excluded v =
+      List.mem v surface.projection.variables || List.mem (Core_query.count_column v) surface.projection.variables
+      || List.exists (fun (o : Core_query.order_item) -> o.variable = v) surface.order_by in
     Lwt_list.fold_left_s
       (fun acc (s : site) ->
         match signature ctx s with

@@ -304,6 +304,28 @@ let test_typed_json_uri () =
      cleanup test_dir;
      Lwt.return ())
 
+(* --- count(Var) through run_query --- *)
+
+let test_execute_count () =
+  with_pack "count" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store "find Artist, count(Work)\nwhere\n  created(Artist, Work)\norder by Artist\n" in
+      Alcotest.(check (list string)) "columns" [ "Artist"; "count(Work)" ] (json |> member "variables" |> to_list |> List.map to_string);
+      Alcotest.(check int) "total counts groups" 2 (json |> member "total" |> to_int);
+      let first = json |> member "results" |> index 0 in
+      Alcotest.(check string) "typed integer" "integer" (first |> member "count(Work)" |> member "type" |> to_string);
+      Alcotest.(check string) "count" "1" (first |> member "count(Work)" |> member "value" |> to_string);
+      Alcotest.(check bool) "no diagnostics when rows matched" true (json |> member "diagnostics" = `Null);
+      (* A zero count caused by a misspelling is explained, not just 0. *)
+      let* json = query store "find count(Work)\nwhere\n  created(tina_kean, Work)\n" in
+      Alcotest.(check string) "zero" "0" (json |> member "results" |> index 0 |> member "count(Work)" |> member "value" |> to_string);
+      Alcotest.(check bool) "provably empty" true (json |> member "provablyEmpty" |> to_bool);
+      Alcotest.(check string) "why" "unknown_constant" (json |> member "diagnostics" |> index 0 |> member "code" |> to_string);
+      let* json = query store "find A, count(A)\nwhere\n  created(A, W)\n" in
+      Alcotest.(check string) "invalid_count" "invalid_count" (json |> member "errors" |> index 0 |> member "code" |> to_string);
+      Lwt.return ())
+
 (* --- run_query: language/action dispatch --- *)
 
 let test_run_query_default_language_is_dsl () =
@@ -529,6 +551,7 @@ let () =
       Alcotest.test_case "uri output" `Quick test_typed_json_uri;
     ];
     "Run Query dispatch", [
+      Alcotest.test_case "execute count" `Quick test_execute_count;
       Alcotest.test_case "default language is dsl" `Quick test_run_query_default_language_is_dsl;
       Alcotest.test_case "core language rejected" `Quick test_run_query_core_rejected;
       Alcotest.test_case "dsl execute" `Quick test_run_query_dsl_execute;

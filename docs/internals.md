@@ -525,7 +525,16 @@ Pipeline, module by module:
   the requested variables, `distinct`-dedupe on the projected tuple (via
   `Value.equal`, across the whole result set, not just adjacent rows,
   treating two `null`s in the same position as equal), then
-  offset/limit.
+  offset/limit. A count query (any `count(Var)` column, named by its
+  source text; `Core_query.counted_variable`) instead groups the raw
+  bindings by its plain columns in first-seen order (one row overall
+  when there are none, even with no bindings), counts distinct non-null
+  values of each counted variable (keyed by type and canonical value),
+  then orders by the output columns and applies offset/limit. It runs
+  over the same already-materialised bindings, so the engine's row cap
+  and timeout bound it exactly like any query. `Explain_plan` shows a
+  single `count` operation in place of project/distinct, and
+  `Dsl_lower` rejects misuse with `invalid_count`.
 - `lib/controller.ml`'s `run_query` is the single dispatch point for
   all four actions (`execute`/`validate`/`explain`/`diagnose`), used
   identically by `Api.ml` (`POST /query`), `Cli_repl.ml` (the REPL's
@@ -652,7 +661,7 @@ needs a recompile, like any other source change.
   ordering comparisons (`Decimal.compare`, `Value.equal`,
   `Value.order_compare`) are always exact regardless.
 - No null or list literals, no uncertain dates or date intervals, no
-  aggregation, arithmetic or negation.
+  aggregation beyond `count(Var)`, no arithmetic or negation.
 - Ordering is undefined (raises an error) between two atoms, two
   strings, two booleans, or two URIs; only equality is supported for
   those types.

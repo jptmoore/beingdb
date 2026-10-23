@@ -59,8 +59,9 @@ and plan_steps_json (p : Query_planner.t) : Yojson.Safe.t list =
 
 (** The structured [plan] array for a lowered query: the planner's steps
     (recursively, for nested groups) followed by the post-execution
-    pipeline's own operations (project, distinct, sort, offset, limit),
-    in that order, matching {!Core_query.apply}. *)
+    pipeline's own operations (project, distinct, sort, offset, limit;
+    for a count query, a single [count] operation replaces project and
+    distinct), in that order, matching {!Core_query.apply}. *)
 let build (cq : Core_query.t) : Yojson.Safe.t list =
   let steps = plan_steps_json (Query_planner.plan cq.query) in
   let project_op = `Assoc [ ("operation", `String "project"); ("variables", `List (List.map (fun v -> `String v) (Core_query.projected_variables cq))) ] in
@@ -91,7 +92,27 @@ let build (cq : Core_query.t) : Yojson.Safe.t list =
   in
   let offset_op = match cq.offset with Some n -> [ `Assoc [ ("operation", `String "offset"); ("count", `Int n) ] ] | None -> [] in
   let limit_op = match cq.limit with Some n -> [ `Assoc [ ("operation", `String "limit"); ("count", `Int n) ] ] | None -> [] in
-  steps @ [ project_op ] @ distinct_op @ sort_op @ offset_op @ limit_op
+  let shape_ops =
+    if Core_query.is_count_query cq then
+      let columns = Core_query.projected_variables cq in
+      [
+        `Assoc
+          [
+            ("operation", `String "count");
+            ("groupBy", `List (List.filter_map (fun c -> if Core_query.counted_variable c = None then Some (`String c) else None) columns));
+            ( "counts",
+              `List
+                (List.filter_map
+                   (fun c ->
+                     Option.map
+                       (fun v -> `Assoc [ ("column", `String c); ("variable", `String v); ("distinct", `Bool true) ])
+                       (Core_query.counted_variable c))
+                   columns) );
+          ];
+      ]
+    else [ project_op ] @ distinct_op
+  in
+  steps @ shape_ops @ sort_op @ offset_op @ limit_op
 
 (** [{"patterns": [...], "comparisons": [...]}] -- the lowered core
     query's patterns and comparisons rendered as strings, recursively

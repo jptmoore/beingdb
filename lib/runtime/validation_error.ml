@@ -34,6 +34,7 @@ type t =
   | Unsafe_negation of { variables : string list }
   | Invalid_optional_scope of { message : string }
   | Invalid_alternative_scope of { message : string }
+  | Invalid_count of { message : string }  (** A misuse of [count(Var)] in [find] or [order by]. *)
   | Disconnected_query of { groups : string list list; message : string }
       (** The query's positive patterns form more than one connected
           component -- executing it as written would compute an
@@ -53,6 +54,7 @@ let code = function
   | Unsafe_negation _ -> "unsafe_negation"
   | Invalid_optional_scope _ -> "invalid_optional_scope"
   | Invalid_alternative_scope _ -> "invalid_alternative_scope"
+  | Invalid_count _ -> "invalid_count"
   | Disconnected_query _ -> "disconnected_query"
 
 let line = function
@@ -63,7 +65,7 @@ let line = function
   | Comparison_type_mismatch { line; _ } ->
       line
   | Unbound_projection _ | Unbound_order_variable _ | Unsafe_negation _ | Invalid_optional_scope _ | Invalid_alternative_scope _
-  | Disconnected_query _ ->
+  | Invalid_count _ | Disconnected_query _ ->
       None
 
 let column = function
@@ -74,7 +76,7 @@ let column = function
   | Comparison_type_mismatch { column; _ } ->
       column
   | Unbound_projection _ | Unbound_order_variable _ | Unsafe_negation _ | Invalid_optional_scope _ | Invalid_alternative_scope _
-  | Disconnected_query _ ->
+  | Invalid_count _ | Disconnected_query _ ->
       None
 
 let message = function
@@ -94,6 +96,7 @@ let message = function
       Printf.sprintf "'not' block uses variable(s) not bound outside it: %s" (String.concat ", " variables)
   | Invalid_optional_scope { message } -> message
   | Invalid_alternative_scope { message } -> message
+  | Invalid_count { message } -> message
   | Disconnected_query { message; _ } -> message
 
 let to_json (e : t) : Yojson.Safe.t =
@@ -120,7 +123,7 @@ let to_json (e : t) : Yojson.Safe.t =
     | Unsafe_negation { variables } -> [ ("variables", `List (List.map (fun s -> `String s) variables)) ]
     | Disconnected_query { groups; _ } ->
         [ ("groups", `List (List.map (fun g -> `List (List.map (fun s -> `String s) g)) groups)) ]
-    | Syntax_error _ | Invalid_optional_scope _ | Invalid_alternative_scope _ -> []
+    | Syntax_error _ | Invalid_optional_scope _ | Invalid_alternative_scope _ | Invalid_count _ -> []
   in
   `Assoc (base @ line_field @ column_field @ extra)
 
