@@ -16,6 +16,11 @@
       projected nor ordered on (it matches anything, like [_]).
     - ["role_name_mismatch"]: a variable named after the declared role of a
       different argument of the same predicate.
+    - ["unsatisfiable_comparison"]: a top-level comparison of a variable
+      with literals that no value at a positive pattern's argument
+      satisfies (checked by running that pattern and the comparison
+      through the query engine; evidence: [observedRange] of comparable
+      values there).
 
     Severity ["error"] means the query as written provably returns no rows;
     a provably empty clause inside optional/alternative/negated scope is a
@@ -90,4 +95,9 @@ module Report (Store : Runtime_store.S) : sig
       [repair] = [{query, applied}]. Transports append their own
       language/environment fields. *)
   val fields : Store.t -> Query_environment.t -> string -> (string * Yojson.Safe.t) list Lwt.t
+
+  (** For a DSL [execute] that returned no rows: [diagnostics],
+      [provablyEmpty] and any proven [repair], as in {!fields}; [[]] if the
+      text does not parse. *)
+  val empty_result_fields : Store.t -> Query_environment.t -> string -> (string * Yojson.Safe.t) list Lwt.t
 end

@@ -174,6 +174,36 @@ let test_constant_suggestions () =
   Alcotest.(check (list string)) "close spelling, one shared word" [ "david_critchley" ]
     (Predicate_suggest.suggest_value ~known:[ "david_critchley"; "david_hall" ] "david_critchly")
 
+let test_unsatisfiable_comparison () =
+  let q = "find Work\nwhere\n  year_created(Work, Y)\n  Y > @2090\n" in
+  let r = report q in
+  let d = find_code r "unsatisfiable_comparison" in
+  Alcotest.(check string) "severity" "error" U.(d |> member "severity" |> to_string);
+  Alcotest.(check string) "variable" "Y" U.(d |> member "variable" |> to_string);
+  Alcotest.(check int) "position" 1 U.(d |> member "argumentPosition" |> to_int);
+  Alcotest.(check string) "message"
+    "No year_created fact has a value at argument 1 satisfying Y > @2090, so the query returns no rows. Values there range from @1979 to @1985."
+    U.(d |> member "message" |> to_string);
+  Alcotest.(check string) "min" "1979" U.(d |> member "evidence" |> member "observedRange" |> member "min" |> member "value" |> to_string);
+  Alcotest.(check bool) "provably empty" true U.(r |> member "provablyEmpty" |> to_bool);
+  Alcotest.(check (list string)) "and it is" [] (rows q);
+  (* Literal on the left, and between, through a join. *)
+  let r = report "find Work\nwhere\n  created_by(Work, A)\n  year_created(Work, Y)\n  @2090 < Y\n" in
+  Alcotest.(check string) "flipped" "year_created" U.(find_code r "unsatisfiable_comparison" |> member "predicate" |> to_string);
+  let r = report "find Work\nwhere\n  year_created(Work, Y)\n  Y between @1990 and @2000\n" in
+  Alcotest.(check bool) "between" true (List.mem "unsatisfiable_comparison" (codes r));
+  (* Satisfiable comparisons, including a value in the gap between facts. *)
+  List.iter
+    (fun c ->
+      let r = report ("find Work\nwhere\n  year_created(Work, Y)\n  " ^ c ^ "\n") in
+      Alcotest.(check bool) c false (List.mem "unsatisfiable_comparison" (codes r)))
+    [ "Y > @1980"; "Y >= @1985"; "Y = @1979"; "Y between @1979 and @1979"; "Y != @1979" ];
+  Alcotest.(check bool) "gap" true
+    (List.mem "unsatisfiable_comparison" (codes (report "find Work\nwhere\n  year_created(Work, Y)\n  Y between @1980 and @1984\n")));
+  (* Only top-level comparisons on positively bound variables are judged. *)
+  let r = report "find Work, Y\nwhere\n  created_by(Work, A)\n  optional\n    year_created(Work, Y)\n  Y > @2090\n" in
+  Alcotest.(check bool) "optional binding" false (List.mem "unsatisfiable_comparison" (codes r))
+
 let test_disjoint_join () =
   let q = "find Work\nwhere\n  created_by(Work, A)\n  employed_by(Work, E)\n" in
   let r = report q in
@@ -220,6 +250,7 @@ let () =
           Alcotest.test_case "singleton variable" `Quick test_singleton_variable;
           Alcotest.test_case "role name mismatch" `Quick test_role_name_mismatch;
           Alcotest.test_case "constant suggestions" `Quick test_constant_suggestions;
+          Alcotest.test_case "unsatisfiable comparison" `Quick test_unsatisfiable_comparison;
           Alcotest.test_case "disjoint join" `Quick test_disjoint_join;
           Alcotest.test_case "contradictory negation" `Quick test_contradictory_negation;
           Alcotest.test_case "validation unchanged" `Quick test_validation_unchanged;
