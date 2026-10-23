@@ -40,18 +40,8 @@ let create_test_pack name =
   )
 
 (** Helper: Create Dream test app *)
-let create_app_with_config pack config =
-  let max_results = config.Beingdb.Server_config.max_results in
-  let router = Dream.router [
-    Dream.get "/" Beingdb.Api.handle_root;
-    Dream.get "/version" Beingdb.Api.handle_version;
-    Dream.get "/predicates" (Beingdb.Api.handle_list_predicates pack);
-    Dream.get "/query/:predicate" (fun req ->
-      let predicate = Dream.param req "predicate" in
-      Beingdb.Api.handle_query max_results pack predicate req);
-    Dream.post "/query" (Beingdb.Api.handle_query_language config pack);
-  ] in
-  router
+(* The server's real routes, including the shared concurrency limit. *)
+let create_app_with_config pack config = Beingdb.Api.router config pack
 
 let create_app pack max_results = create_app_with_config pack { Beingdb.Server_config.default with max_results }
 
@@ -545,6 +535,25 @@ let test_post_query_concurrency_limit () =
       let status = Dream.status response in
       Alcotest.(check int) "status 429 when at concurrency limit" 429 (Dream.status_to_int status))
 
+(** Test: the GET endpoints share the same concurrency limit. *)
+let test_get_concurrency_limit () =
+  let (pack, test_dir) = create_test_pack "get_concurrency" in
+  let app = create_app_with_config pack { Beingdb.Server_config.default with max_concurrent_queries = 1 } in
+  Beingdb.Api.in_flight_queries := 1;
+  Fun.protect
+    ~finally:(fun () ->
+      Beingdb.Api.in_flight_queries := 0;
+      ignore (Unix.system (Printf.sprintf "rm -rf %s" (Filename.quote test_dir))))
+    (fun () ->
+      List.iter
+        (fun target ->
+          let status = Dream.status (Dream.test app (Dream.request ~target "")) in
+          Alcotest.(check int) (target ^ " busy") 429 (Dream.status_to_int status))
+        [ "/predicates"; "/predicates?detailed=true"; "/query/created" ];
+      Beingdb.Api.in_flight_queries := 0;
+      let status = Dream.status (Dream.test app (Dream.request ~target:"/predicates" "")) in
+      Alcotest.(check int) "free again" 200 (Dream.status_to_int status))
+
 (** Test: Result limiting enforcement *)
 let test_result_limit_enforcement () =
   let (pack, test_dir) = create_test_pack "result_limit" in
@@ -692,6 +701,7 @@ let () =
       Alcotest.test_case "cartesian product" `Quick test_post_query_cartesian_product;
       Alcotest.test_case "query too long" `Quick test_post_query_too_long;
       Alcotest.test_case "concurrency limit" `Quick test_post_query_concurrency_limit;
+      Alcotest.test_case "GET concurrency limit" `Quick test_get_concurrency_limit;
     ];
     "Result Limiting", [
       Alcotest.test_case "max_results enforcement" `Quick test_result_limit_enforcement;

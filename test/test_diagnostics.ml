@@ -204,6 +204,37 @@ let test_unsatisfiable_comparison () =
   let r = report "find Work, Y\nwhere\n  created_by(Work, A)\n  optional\n    year_created(Work, Y)\n  Y > @2090\n" in
   Alcotest.(check bool) "optional binding" false (List.mem "unsatisfiable_comparison" (codes r))
 
+(* Above max_diagnostic_facts, checks that read a whole predicate are
+   skipped and reported as info; index-based checks still run. *)
+let test_diagnostic_budget () =
+  let saved = !Query_validation.Config.max_diagnostic_facts in
+  Query_validation.Config.max_diagnostic_facts := 1;
+  Fun.protect
+    ~finally:(fun () -> Query_validation.Config.max_diagnostic_facts := saved)
+    (fun () ->
+      let skipped r =
+        List.filter_map
+          (fun d ->
+            if U.(d |> member "code" |> to_string) = "check_skipped" then
+              Some (U.(d |> member "evidence" |> member "check" |> to_string), U.(d |> member "predicate" |> to_string))
+            else None)
+          (diagnostics r)
+      in
+      let r = report "find Work\nwhere\n  held_at(Work, tate_modren)\n" in
+      let d = find_code r "unknown_constant" in
+      Alcotest.(check (list string)) "no suggestions" [] (suggestions d);
+      Alcotest.(check (list (pair string string))) "suggestions skipped" [ ("suggestions", "held_at") ] (skipped r);
+      Alcotest.(check string) "info" "info" U.(find_code r "check_skipped" |> member "severity" |> to_string);
+      Alcotest.(check bool) "still provably empty" true U.(r |> member "provablyEmpty" |> to_bool);
+      let r = report "find Work\nwhere\n  created_by(Work, A)\n  employed_by(Work, E)\n" in
+      Alcotest.(check bool) "join check skipped" false (List.mem "disjoint_join" (codes r));
+      Alcotest.(check bool) "reported" true (List.mem ("disjoint_join", "created_by") (skipped r));
+      Alcotest.(check bool) "not claimed empty" false U.(r |> member "provablyEmpty" |> to_bool);
+      let r = report "find Work\nwhere\n  year_created(Work, Y)\n  Y > @2090\n" in
+      let d = find_code r "unsatisfiable_comparison" in
+      Alcotest.(check bool) "comparison still proven" true U.(r |> member "provablyEmpty" |> to_bool);
+      Alcotest.(check bool) "no range evidence" true U.(d |> member "evidence" |> member "observedRange" = `Null))
+
 let test_disjoint_join () =
   let q = "find Work\nwhere\n  created_by(Work, A)\n  employed_by(Work, E)\n" in
   let r = report q in
@@ -251,6 +282,7 @@ let () =
           Alcotest.test_case "role name mismatch" `Quick test_role_name_mismatch;
           Alcotest.test_case "constant suggestions" `Quick test_constant_suggestions;
           Alcotest.test_case "unsatisfiable comparison" `Quick test_unsatisfiable_comparison;
+          Alcotest.test_case "diagnostics budget" `Quick test_diagnostic_budget;
           Alcotest.test_case "disjoint join" `Quick test_disjoint_join;
           Alcotest.test_case "contradictory negation" `Quick test_contradictory_negation;
           Alcotest.test_case "validation unchanged" `Quick test_validation_unchanged;

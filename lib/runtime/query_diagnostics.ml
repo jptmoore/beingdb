@@ -193,6 +193,7 @@ module Make (Store : Runtime_store.S) = struct
     env : Query_environment.t;
     occurs_cache : (string * int * string, bool) Hashtbl.t;
     values_cache : (string * int, (string, Value.t) Hashtbl.t) Hashtbl.t;
+    skipped : (string * string) list ref;  (** (check, predicate) skipped for the budget *)
   }
 
   let occurs ctx predicate i v =
@@ -200,6 +201,8 @@ module Make (Store : Runtime_store.S) = struct
     match Hashtbl.find_opt ctx.occurs_cache key with
     | Some b -> Lwt.return b
     | None ->
+        (* Yield so the query timeout can interrupt a long diagnosis. *)
+        let* () = Lwt.pause () in
         let* facts = Store.equality_lookup ctx.store predicate i v in
         let b = facts <> [] in
         Hashtbl.replace ctx.occurs_cache key b;
@@ -222,15 +225,30 @@ module Make (Store : Runtime_store.S) = struct
       [] ctx.env.predicates
     |> Lwt.map (fun l -> List.sort compare l)
 
-  let position_values ctx predicate i =
+  let fact_count ctx predicate =
+    match Query_environment.find ctx.env predicate with Some p -> p.count | None -> 0
+
+  (* Distinct values at a position, read from every fact of the predicate;
+     [None] (and [check] recorded as skipped) when the predicate has more
+     facts than [max_diagnostic_facts]. *)
+  let position_values ~check ctx predicate i =
     match Hashtbl.find_opt ctx.values_cache (predicate, i) with
-    | Some t -> Lwt.return t
+    | Some t -> Lwt.return (Some t)
+    | None when fact_count ctx predicate > !Query_validation.Config.max_diagnostic_facts ->
+        if not (List.mem (check, predicate) !(ctx.skipped)) then ctx.skipped := (check, predicate) :: !(ctx.skipped);
+        Lwt.return None
     | None ->
         let* facts = Store.query_all ctx.store predicate in
         let t = Hashtbl.create (List.length facts) in
-        List.iter (fun (f : Fact.t) -> match List.nth_opt f.arguments i with Some v -> Hashtbl.replace t (value_key v) v | None -> ()) facts;
+        let* () =
+          Lwt_list.iteri_s
+            (fun n (f : Fact.t) ->
+              (match List.nth_opt f.arguments i with Some v -> Hashtbl.replace t (value_key v) v | None -> ());
+              if n mod 1000 = 999 then Lwt.pause () else Lwt.return_unit)
+            facts
+        in
         Hashtbl.replace ctx.values_cache (predicate, i) t;
-        Lwt.return t
+        Lwt.return (Some t)
 
   let signature ctx (s : site) =
     match Query_environment.find ctx.env s.predicate with
@@ -249,10 +267,13 @@ module Make (Store : Runtime_store.S) = struct
     match text_of v with
     | None -> Lwt.return []
     | Some text ->
-        let* values = position_values ctx predicate i in
-        let known = Hashtbl.fold (fun _ x acc -> match text_of x with Some s -> s :: acc | None -> acc) values [] in
-        let rebuild s : Value.t = match v with String _ -> String s | _ -> Atom s in
-        Lwt.return (List.map (fun s -> dsl_literal (rebuild s)) (Predicate_suggest.suggest_value ~known text))
+        let* values = position_values ~check:"suggestions" ctx predicate i in
+        match values with
+        | None -> Lwt.return []
+        | Some values ->
+            let known = Hashtbl.fold (fun _ x acc -> match text_of x with Some s -> s :: acc | None -> acc) values [] in
+            let rebuild s : Value.t = match v with String _ -> String s | _ -> Atom s in
+            Lwt.return (List.map (fun s -> dsl_literal (rebuild s)) (Predicate_suggest.suggest_value ~known text))
 
   let suggestion_fields = function
     | [] -> ([], "")
@@ -423,10 +444,13 @@ module Make (Store : Runtime_store.S) = struct
             (fun found (((s1 : site), i1), ((s2 : site), i2)) ->
               if found <> None || numeric s1 i1 || numeric s2 i2 || (s1.predicate = s2.predicate && i1 = i2) then Lwt.return found
               else
-                let* a = position_values ctx s1.predicate i1 in
-                let* b = position_values ctx s2.predicate i2 in
-                let shared = Hashtbl.fold (fun k _ n -> if Hashtbl.mem b k then n + 1 else n) a 0 in
-                Lwt.return (if shared = 0 then Some ((s1, i1), (s2, i2)) else None))
+                let* a = position_values ~check:"disjoint_join" ctx s1.predicate i1 in
+                let* b = position_values ~check:"disjoint_join" ctx s2.predicate i2 in
+                match (a, b) with
+                | Some a, Some b ->
+                    let shared = Hashtbl.fold (fun k _ n -> if Hashtbl.mem b k then n + 1 else n) a 0 in
+                    Lwt.return (if shared = 0 then Some ((s1, i1), (s2, i2)) else None)
+                | _ -> Lwt.return None)
             None pairs
         in
         match found with
@@ -479,7 +503,10 @@ module Make (Store : Runtime_store.S) = struct
 
   (* Smallest and largest values at a position that are ordered against [lit]. *)
   let observed_range ctx predicate i lit =
-    let* values = position_values ctx predicate i in
+    let* values = position_values ~check:"observed_range" ctx predicate i in
+    match values with
+    | None -> Lwt.return None
+    | Some values ->
     let pick better =
       Hashtbl.fold
         (fun _ x acc ->
@@ -562,14 +589,26 @@ module Make (Store : Runtime_store.S) = struct
       surface.where_
 
   let diagnose store env (surface : Surface_ast.surface_query) =
-    let ctx = { store; env; occurs_cache = Hashtbl.create 64; values_cache = Hashtbl.create 16 } in
+    let ctx = { store; env; occurs_cache = Hashtbl.create 64; values_cache = Hashtbl.create 16; skipped = ref [] } in
     let all_sites = sites Positive surface.where_ in
     let* grounding = Lwt_list.map_s (grounding_diagnostics ctx) all_sites in
     let* singletons = singleton_diagnostics ctx surface all_sites in
     let* joins = join_diagnostics ctx all_sites in
     let* comparisons = comparison_diagnostics ctx surface all_sites in
+    let skipped =
+      List.rev_map
+        (fun (check, predicate) ->
+          let facts = fact_count ctx predicate and budget = !Query_validation.Config.max_diagnostic_facts in
+          make ~severity:Info ~predicate
+            ~evidence:[ ("check", `String check); ("facts", `Int facts); ("budget", `Int budget) ]
+            "check_skipped"
+            (Printf.sprintf "Skipped the %s check on %s: it has %d facts, more than the diagnostics budget of %d." check predicate facts
+               budget))
+        !(ctx.skipped)
+    in
     let all =
       List.concat grounding @ singletons @ role_diagnostics ctx all_sites @ joins @ comparisons @ negation_diagnostics surface
+      @ skipped
     in
     let line_of (d : t) = Option.value d.line ~default:max_int in
     Lwt.return (List.stable_sort (fun a b -> compare (line_of a) (line_of b)) all)

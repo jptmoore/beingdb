@@ -587,13 +587,20 @@ Built-in safety limits prevent runaway or malicious queries, all
 configurable per-server without recompiling (see
 [Safety limits](api.md#safety-limits) for the config file and defaults):
 
-- **Timeout:** 5 seconds maximum execution time by default.
-- **Intermediate results:** 10,000 row limit during joins by default.
+- **Timeout:** 5 seconds maximum execution time by default, for
+  `execute` and `diagnose` alike.
+- **Matching rows:** a query may match at most 10,000 rows by default
+  (`max_intermediate_results`); one that matches more fails with
+  `result_too_large` instead of returning a partial result.
+- **Diagnostics budget:** data-aware checks that read a whole predicate
+  skip predicates with more than 50,000 facts (`max_diagnostic_facts`)
+  and say so with an info-level `check_skipped` diagnostic.
 - **Result limit:** 1000 by default, via `--max-results` or the config
   file's `max_results`.
 - **Query length:** 20,000 bytes by default; longer raw query strings
   are rejected (`query_too_long`, HTTP 413) before parsing.
-- **Concurrency:** 20 simultaneously in-flight queries by default;
+- **Concurrency:** 20 simultaneously in-flight requests by default
+  (queries and the `GET /predicates`/`GET /query/:predicate` reads);
   further requests get `server_busy` (HTTP 429) until one finishes.
 - **Connectivity:** a query's predicate patterns must form a single
   connected component -- every pattern must be reachable from every

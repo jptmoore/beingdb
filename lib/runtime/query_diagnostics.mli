@@ -21,6 +21,10 @@
       satisfies (checked by running that pattern and the comparison
       through the query engine; evidence: [observedRange] of comparable
       values there).
+    - ["check_skipped"] (severity ["info"]): a check that reads every fact
+      of a predicate ([disjoint_join], [suggestions], [observed_range])
+      was skipped because the predicate has more facts than
+      {!Query_validation.Config.max_diagnostic_facts}.
 
     Severity ["error"] means the query as written provably returns no rows;
     a provably empty clause inside optional/alternative/negated scope is a

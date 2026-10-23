@@ -21,7 +21,25 @@ module Config = struct
       before parsing -- guards against oversized payloads wasting
       lexing/parsing work. *)
   let max_query_length = ref 20_000
+
+  (** Facts a single data-aware diagnostic check may scan (join and
+      suggestion checks read every fact of a predicate); larger
+      predicates are skipped and reported as [check_skipped]. *)
+  let max_diagnostic_facts = ref 50_000
 end
+
+let result_too_large_prefix = "Result too large:"
+
+(** The engine's error when a query matches more rows than
+    [max_intermediate_results]: the result cannot be returned, counted or
+    ordered completely, so it is an error rather than a partial answer. *)
+let result_too_large_message () =
+  Printf.sprintf
+    "%s the query matches more than %d rows (max_intermediate_results), so it cannot be evaluated, counted or ordered \
+     completely. Add constraints to narrow it."
+    result_too_large_prefix !Config.max_intermediate_results
+
+let is_result_too_large message = String.starts_with ~prefix:result_too_large_prefix message
 
 (** Validation errors *)
 type validation_error =

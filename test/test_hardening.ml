@@ -375,6 +375,67 @@ let with_temporary_limits ?query_timeout ?max_intermediate_results ?max_query_le
       Query_validation.Config.max_query_length := saved_length;
       Lwt.return_unit)
 
+let expect_failure_code expected outcome =
+  match outcome with
+  | Controller.Failure { code; _ } -> Alcotest.(check string) "failure code" expected code
+  | Controller.Success json | Controller.Invalid json -> Alcotest.failf "expected Failure %s, got %s" expected (Yojson.Safe.to_string json)
+
+(* More matching rows than the cap is an error, never a partial result
+   presented as complete (wrong total, ordering over a subset). *)
+let test_result_too_large_is_an_error () =
+  with_pack "result_too_large" (fun store ->
+      let q = "find P, C\nwhere\n  parent(P, C)\n" in
+      let* () =
+        with_temporary_limits ~max_intermediate_results:1 (fun () ->
+            let* outcome = run_dsl ~action:None store q in
+            expect_failure_code "result_too_large" outcome;
+            let* outcome = run_dsl ~action:None store (q ^ "order by P descending\nlimit 1\n") in
+            expect_failure_code "result_too_large" outcome;
+            Lwt.return_unit)
+      in
+      with_temporary_limits ~max_intermediate_results:2 (fun () ->
+          let* outcome = run_dsl ~action:None store q in
+          expect_success outcome (fun json -> Alcotest.(check int) "exactly at the cap" 2 Yojson.Safe.Util.(json |> member "total" |> to_int));
+          Lwt.return_unit))
+
+let test_streaming_cap_is_an_error () =
+  with_pack "streaming_cap" (fun store ->
+      let query = match Query_parser.parse_query_result "parent(P, C)" with Ok q -> q | Error e -> failwith e in
+      with_temporary_limits ~max_intermediate_results:1 (fun () ->
+          let* full_page = Model.execute_query_streaming store query ~offset:0 ~limit:1 in
+          Alcotest.(check bool) "page filled before the cap" true (Result.is_ok full_page);
+          let* past_cap = Model.execute_query_streaming store query ~offset:5 ~limit:1 in
+          (match past_cap with
+          | Error e -> Alcotest.(check bool) "result too large" true (Query_validation.is_result_too_large e)
+          | Ok _ -> Alcotest.fail "expected the cap to be an error, not an empty page");
+          Lwt.return_unit))
+
+let test_diagnose_respects_query_timeout () =
+  with_pack "diagnose_timeout" (fun store ->
+      let q = "find X\nwhere\n  person(X)\n  works_for(X, nobody_here)\n" in
+      let* () =
+        with_temporary_limits ~query_timeout:1e-9 (fun () ->
+            let* outcome = run_dsl ~action:(Some "diagnose") store q in
+            expect_failure_code "timeout" outcome;
+            Lwt.return_unit)
+      in
+      let* outcome = run_dsl ~action:(Some "diagnose") store q in
+      expect_success outcome (fun json -> Alcotest.(check bool) "diagnosed normally" true Yojson.Safe.Util.(json |> member "provablyEmpty" |> to_bool));
+      Lwt.return_unit)
+
+let test_server_config_diagnostic_budget () =
+  Alcotest.(check int) "default" 50_000 Server_config.default.Server_config.max_diagnostic_facts;
+  (match Server_config.of_json (`Assoc [ ("max_diagnostic_facts", `Int 10) ]) with
+  | Ok cfg ->
+      let saved = !Query_validation.Config.max_diagnostic_facts in
+      Server_config.apply cfg;
+      Alcotest.(check int) "applied" 10 !Query_validation.Config.max_diagnostic_facts;
+      Query_validation.Config.max_diagnostic_facts := saved
+  | Error e -> Alcotest.fail e);
+  match Server_config.of_json (`Assoc [ ("max_diagnostic_facts", `Int 0) ]) with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "expected an error for a non-positive max_diagnostic_facts"
+
 let test_server_config_default_matches_previous_hardcoded_values () =
   Alcotest.(check int) "max_results" 1000 Server_config.default.Server_config.max_results;
   Alcotest.(check (float 0.001)) "query_timeout" 5.0 Server_config.default.Server_config.query_timeout;
@@ -496,6 +557,10 @@ let () =
           Alcotest.test_case "rejects wrong type" `Quick test_server_config_rejects_wrong_type;
           Alcotest.test_case "rejects non-positive value" `Quick test_server_config_rejects_non_positive;
           Alcotest.test_case "rejects non-object JSON" `Quick test_server_config_rejects_non_object;
+          Alcotest.test_case "diagnostics budget" `Quick test_server_config_diagnostic_budget;
+          Alcotest.test_case "result too large is an error" `Quick test_result_too_large_is_an_error;
+          Alcotest.test_case "streaming cap is an error" `Quick test_streaming_cap_is_an_error;
+          Alcotest.test_case "diagnose respects the query timeout" `Quick test_diagnose_respects_query_timeout;
           Alcotest.test_case "load_file: missing file" `Quick test_server_config_load_missing_file;
           Alcotest.test_case "check_query_length: rejects oversized query" `Quick test_check_query_length_rejects_oversized_query;
           Alcotest.test_case "check_query_length: accepts within limit" `Quick test_check_query_length_accepts_within_limit;

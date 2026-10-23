@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.2.0"
+  "version": "0.2.1"
 }
 ```
 
@@ -420,6 +420,7 @@ predicate declarations):
 | `contradictory_negation` | A `not` block that only repeats clauses that must already hold |
 | `singleton_variable` | A named variable used once and not in `find`/`order by`: it matches anything, like `_` |
 | `role_name_mismatch` | A variable named after the declared role of a different argument of the same predicate |
+| `check_skipped` | Info only: a check that reads every fact of a predicate (`evidence.check`: `disjoint_join`, `suggestions` or `observed_range`) was skipped because the predicate has more facts than `max_diagnostic_facts` (`evidence.facts`, `evidence.budget`). Never affects `provablyEmpty` |
 | `unsatisfiable_comparison` | A top-level comparison of a variable with literals (`<`, `>=`, `between`, ...) that no value at the variable's argument satisfies, e.g. `Y > @2090` on years from 1968 to 2004 (`evidence.observedRange`: the smallest and largest comparable values there). Checked by running that pattern and the comparison through the query engine, so it always agrees with execution |
 
 `severity: "error"` means the query as written provably returns no rows
@@ -491,10 +492,19 @@ Unrelated to whether the query text is valid. Always:
 
 `code` is one of: `malformed_request`, `invalid_request` (the simpler
 endpoints that don't yet carry a specific code), `timeout`,
-`internal_error`, `execution_error`, `unsupported_language`,
-`unknown_language`, `unknown_action`, `unsupported_parameter`,
-`query_too_long` (HTTP 413), `server_busy` (HTTP 429).
-See [Safety limits](#safety-limits) for the last two.
+`internal_error`, `execution_error`, `result_too_large`,
+`unsupported_language`, `unknown_language`, `unknown_action`,
+`unsupported_parameter`, `query_too_long` (HTTP 413), `server_busy`
+(HTTP 429). See [Safety limits](#safety-limits) for the last three.
+
+`result_too_large` means the query matches more rows than
+`max_intermediate_results`. BeingDB returns this error rather than a
+partial result, because a partial result would give a wrong `total` and
+order rows from an arbitrary subset:
+
+```json
+{ "error": { "code": "result_too_large", "message": "Result too large: the query matches more than 10000 rows (max_intermediate_results), so it cannot be evaluated, counted or ordered completely. Add constraints to narrow it." } }
+```
 
 ### Common Errors
 
@@ -567,10 +577,11 @@ malicious queries, overridable via an optional `--config <file.json>`
 | Field | Default | Effect |
 |---|---|---|
 | `max_results` | 1000 | Hard cap on results returned per query |
-| `query_timeout` | 5.0 | Seconds before an executing query is aborted (`timeout`) |
-| `max_intermediate_results` | 10000 | Cap on intermediate join rows before aborting |
+| `query_timeout` | 5.0 | Seconds before an executing or diagnosing query is aborted (`timeout`) |
+| `max_intermediate_results` | 10000 | Cap on the rows a query may match; a query matching more fails with `result_too_large` rather than returning a partial result |
 | `max_query_length` | 20000 | Cap, in bytes, on a raw query string, rejected before parsing (`query_too_long`, HTTP 413) |
-| `max_concurrent_queries` | 20 | Cap on simultaneously in-flight `POST /query` requests; further requests get `server_busy` (HTTP 429) until one finishes |
+| `max_concurrent_queries` | 20 | Cap on simultaneously in-flight `POST /query`, `GET /predicates` and `GET /query/:predicate` requests; further requests get `server_busy` (HTTP 429) until one finishes |
+| `max_diagnostic_facts` | 50000 | Facts one data-aware diagnostic check may read. The join and misspelling-suggestion checks (and the observed-range evidence) read every fact of a predicate; above this size they are skipped and reported as an info-level `check_skipped` diagnostic |
 
 ```bash
 beingdb-serve --pack ./pack_store --config ./beingdb.config.json
@@ -609,7 +620,7 @@ For read-only deployments, consider network isolation (VPC, firewall rules).
 requested page is returned, so `total` is always exact
 - Fast for small result sets (< 1000 rows)
 - `limit`/`offset` reduce the response size, not the work; add constants or comparisons to narrow large joins
-- Intermediate join rows are capped by `max_intermediate_results` (see [Safety limits](#safety-limits))
+- A query may match at most `max_intermediate_results` rows; beyond that it fails with `result_too_large` (see [Safety limits](#safety-limits))
 
 **Query optimization:** Automatic pattern reordering by selectivity
 
