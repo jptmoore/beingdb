@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.1.0"
+  "version": "0.1.5"
 }
 ```
 
@@ -297,6 +297,8 @@ loss.
 - `language` - Echo of the request's `"core"`/`"dsl"` language
 - `languageVersion` - The query language version (same value as `/predicates?detailed=true`)
 - `environmentFingerprint` - The dataset schema fingerprint (same value as `/predicates?detailed=true`); lets a client cache schema knowledge from ordinary query responses alone, without a separate `/predicates` call. Present on every `action: "execute"` response (both languages), not just `validate`/`explain`.
+- `hasMore` (expressive language only) - `true` if at least one more row matches beyond those returned, whether the query's own `limit` or the server's `max_results` stopped it
+- `truncated` (expressive language only) - `true` if the server's `max_results` cap, not the query's own `limit`, cut the result; a `results_truncated` entry is then added to `warnings`. Page on with `limit`/`offset` in the query text, or narrow the query.
 
 **Examples:**
 
@@ -414,8 +416,8 @@ predicate declarations):
 
 | Code | Meaning |
 |---|---|
-| `unknown_constant` | An atom that occurs in no fact of any predicate |
-| `constant_not_at_position` | A literal that occurs in no fact of this predicate at this argument (`evidence.occursAtPositions`: where it does occur in this predicate; `occursIn`: other predicates) |
+| `unknown_constant` | An atom that occurs in no fact of any predicate (`evidence.suggestions`: likely corrections, see below) |
+| `constant_not_at_position` | A literal that occurs in no fact of this predicate at this argument (`evidence.occursAtPositions`: where it does occur in this predicate; `occursIn`: other predicates; `suggestions`: likely corrections, see below) |
 | `disjoint_join` | A variable joining two positive patterns whose arguments share no value |
 | `contradictory_negation` | A `not` block that only repeats clauses that must already hold |
 | `singleton_variable` | A named variable used once and not in `find`/`order by`: it matches anything, like `_` |
@@ -425,6 +427,17 @@ predicate declarations):
 (`provablyEmpty` is then `true`); a provably empty clause inside
 `optional`/`either`/`not` is a `"warning"`, as is everything that does not
 prove emptiness. Diagnostics never change `valid`.
+
+When an atom or string literal occurs nowhere in its predicate, its
+`unknown_constant`/`constant_not_at_position` diagnostic also carries
+`evidence.suggestions`: up to five values of the same type that do occur
+at that argument, ranked as likely corrections (edit distance and shared
+words, ignoring case, spaces, hyphens and underscores) and written as
+DSL literals, and the message ends with `Did you mean <best>?`. For
+example, `created_by(Work, david_critchly)` gives
+`"suggestions": ["david_critchley", "david_hall"]`. Suggestions are
+hints, not repairs: BeingDB cannot prove which value was meant, so the
+client chooses.
 
 A `repair` is offered only when BeingDB can prove it:
 

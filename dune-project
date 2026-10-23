@@ -1,6 +1,6 @@
 (lang dune 3.7)
 (name beingdb)
-(version 0.1.4)
+(version 0.1.5)
 
 (generate_opam_files true)
 

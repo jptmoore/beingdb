@@ -1,6 +1,6 @@
 (** See {!Predicate_suggest} (mli) for documentation. *)
 
-let normalize name = String.lowercase_ascii name |> String.map (function '-' -> '_' | c -> c)
+let normalize name = String.lowercase_ascii name |> String.map (function '-' | ' ' -> '_' | c -> c)
 
 let tokens name = String.split_on_char '_' (normalize name) |> List.filter (( <> ) "")
 
@@ -50,4 +50,28 @@ let suggest ?arity ~known name =
   |> List.map (fun p -> (p, score p))
   |> List.sort (fun (p1, s1) (p2, s2) -> if s1 <> s2 then compare s1 s2 else compare (fst p1) (fst p2))
   |> List.map (fun ((name, _), _) -> name)
+  |> List.filteri (fun i _ -> i < 5)
+
+let suggest_value ~known value =
+  let normalized_value = normalize value in
+  let significant t = String.length t >= 3 && not (String.for_all (function '0' .. '9' -> true | _ -> false) t) in
+  let shares_token candidate =
+    let tv = List.filter significant (tokens value) in
+    List.exists (fun t -> List.mem t tv) (List.filter significant (tokens candidate))
+  in
+  let max_distance = max 2 (String.length normalized_value / 3) in
+  let score candidate =
+    let normalized_candidate = normalize candidate in
+    let exact_normalized = if normalized_candidate = normalized_value then 0.0 else 1.0 in
+    let dist = float_of_int (edit_distance normalized_value normalized_candidate) in
+    (exact_normalized *. 100.0) +. (dist -. (token_overlap normalized_value candidate *. 3.0))
+  in
+  known
+  |> List.sort_uniq String.compare
+  |> List.filter (fun candidate ->
+         candidate <> value
+         && (edit_distance normalized_value (normalize candidate) <= max_distance || shares_token candidate))
+  |> List.map (fun c -> (c, score c))
+  |> List.sort (fun (c1, s1) (c2, s2) -> if s1 <> s2 then compare s1 s2 else compare c1 c2)
+  |> List.map fst
   |> List.filteri (fun i _ -> i < 5)

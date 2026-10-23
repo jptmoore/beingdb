@@ -35,6 +35,9 @@ let store =
      add ~declaration:(declare [ "Work"; "Place" ] "Where a work was made.") "made_at" [ [ atom "work_1"; atom "oval_house" ] ];
      add ~declaration:(declare [ "Person"; "Employer" ] "Who employed a person.") "employed_by" [ [ atom "artist_1"; atom "bbc" ] ];
      add "person" [ [ atom "artist_1" ]; [ atom "artist_2" ] ];
+     add "held_at"
+       [ [ atom "work_1"; atom "tate_modern" ]; [ atom "work_2"; atom "tate_britain" ]; [ atom "work_3"; atom "whitechapel_gallery" ] ];
+     add "titled" [ [ atom "work_1"; Value.String "Hey Bud" ]; [ atom "work_2"; Value.String "Shadow of a Journey" ] ];
      s)
 
 let env = lazy (run (Env.build (Lazy.force store)))
@@ -134,6 +137,36 @@ let test_role_name_mismatch () =
   Alcotest.(check int) "both arguments" 2 (List.length ds);
   Alcotest.(check bool) "no repair from names alone" false (has_repair r)
 
+let suggestions d =
+  match U.member "evidence" d with
+  | `Null -> []
+  | e -> ( match U.member "suggestions" e with `Null -> [] | l -> U.(l |> to_list |> List.map to_string))
+
+let test_constant_suggestions () =
+  (* A misspelled atom: ranked suggestions from that position, as a hint only. *)
+  let r = report "find Work\nwhere\n  held_at(Work, tate_modren)\n" in
+  let d = find_code r "unknown_constant" in
+  Alcotest.(check (list string)) "typo" [ "tate_modern"; "tate_britain" ] (suggestions d);
+  Alcotest.(check bool) "did you mean" true
+    (let m = U.(d |> member "message" |> to_string) in
+     let s = "Did you mean tate_modern?" in
+     String.length m >= String.length s && String.sub m (String.length m - String.length s) (String.length s) = s);
+  Alcotest.(check bool) "not a repair" false (has_repair r);
+  (* A shared word: closest first. *)
+  let r = report "find Work\nwhere\n  held_at(Work, tate)\n" in
+  Alcotest.(check (list string)) "partial" [ "tate_modern"; "tate_britain" ] (suggestions (find_code r "unknown_constant"));
+  (* Strings, case- and space-insensitively, rendered as DSL literals. *)
+  let r = report "find Work\nwhere\n  titled(Work, \"hey  bud\")\n" in
+  Alcotest.(check (list string)) "string" [ "\"Hey Bud\"" ] (suggestions (find_code r "constant_not_at_position"));
+  (* Nothing similar: no suggestions field at all. *)
+  let r = report "find Work\nwhere\n  held_at(Work, nowhere)\n" in
+  Alcotest.(check (list string)) "none" [] (suggestions (find_code r "unknown_constant"));
+  (* Present elsewhere in the predicate: the position is wrong, not the spelling. *)
+  let r = report "find Work\nwhere\n  created_by(artist_1, Work)\n" in
+  Alcotest.(check (list string)) "wrong position" [] (suggestions (find_code r "constant_not_at_position"));
+  (* Numeric tokens alone are not similarity. *)
+  Alcotest.(check (list string)) "numeric token" [] (Predicate_suggest.suggest_value ~known:[ "work_1"; "work_2" ] "artist_1")
+
 let test_disjoint_join () =
   let q = "find Work\nwhere\n  created_by(Work, A)\n  employed_by(Work, E)\n" in
   let r = report q in
@@ -179,6 +212,7 @@ let () =
           Alcotest.test_case "no unproven repairs" `Quick test_no_unproven_repairs;
           Alcotest.test_case "singleton variable" `Quick test_singleton_variable;
           Alcotest.test_case "role name mismatch" `Quick test_role_name_mismatch;
+          Alcotest.test_case "constant suggestions" `Quick test_constant_suggestions;
           Alcotest.test_case "disjoint join" `Quick test_disjoint_join;
           Alcotest.test_case "contradictory negation" `Quick test_contradictory_negation;
           Alcotest.test_case "validation unchanged" `Quick test_validation_unchanged;

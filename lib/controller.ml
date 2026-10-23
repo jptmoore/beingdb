@@ -389,24 +389,46 @@ let execute_dsl ~max_results store query_str =
       Lwt.return (Invalid (validation_envelope ~language:"dsl" ~env ~valid:false errors_json warnings_json []))
   | `Valid (env, cq, warnings) ->
       let effective_limit = match cq.Core_query.limit with Some n -> min n max_results | None -> max_results in
+      (* One row beyond the limit is fetched only to detect whether more exist. *)
+      let probe_limit = effective_limit + 1 in
       let pattern_count = List.length (List.filter (function Query_ast.Pattern _ -> true | _ -> false) cq.Core_query.query.Query_ast.clauses) in
       let is_join = pattern_count > 1 in
       let use_streaming = is_join && cq.Core_query.projection = None && (not cq.Core_query.distinct) && cq.Core_query.order_by = [] in
       let run_body () =
         let run_model () =
           if use_streaming then
-            Model.execute_query_streaming store cq.Core_query.query ~offset:(Option.value cq.Core_query.offset ~default:0) ~limit:effective_limit
+            Model.execute_query_streaming store cq.Core_query.query ~offset:(Option.value cq.Core_query.offset ~default:0) ~limit:probe_limit
           else Model.execute_query store cq.Core_query.query
         in
         run_model () >>= function
         | Error message -> Lwt.return (Failure { code = "execution_error"; message })
         | Ok model_result ->
-            let vars, rows =
+            let vars, probed =
               if use_streaming then (model_result.Model.variables, List.map (List.map (fun (_, v) -> Some v)) model_result.Model.bindings)
               else
                 let engine_result : Query_engine.result = { variables = model_result.Model.variables; bindings = model_result.Model.bindings } in
-                let cq_bounded = { cq with Core_query.limit = Some effective_limit } in
+                let cq_bounded = { cq with Core_query.limit = Some probe_limit } in
                 Core_query.apply cq_bounded engine_result
+            in
+            let has_more = List.length probed > effective_limit in
+            let rows = List.filteri (fun i _ -> i < effective_limit) probed in
+            (* Truncated: the server cap, not the query's own limit, cut the result. *)
+            let truncated = has_more && (match cq.Core_query.limit with Some n -> n > max_results | None -> true) in
+            let truncation_warning =
+              if truncated then
+                [
+                  `Assoc
+                    [
+                      ("code", `String "results_truncated");
+                      ( "message",
+                        `String
+                          (Printf.sprintf
+                             "Only the first %d rows are returned (the server's max_results limit); more rows match. Page through \
+                              them with 'offset', or add constraints to narrow the query."
+                             max_results) );
+                    ];
+                ]
+              else []
             in
             Lwt.return
               (Success
@@ -415,7 +437,9 @@ let execute_dsl ~max_results store query_str =
                       ("variables", `List (List.map (fun v -> `String v) vars));
                       ("results", `List (List.map (row_to_json vars) rows));
                       ("count", `Int (List.length rows));
-                      ("warnings", `List (List.map Validation_error.warning_to_json warnings));
+                      ("hasMore", `Bool has_more);
+                      ("truncated", `Bool truncated);
+                      ("warnings", `List (List.map Validation_error.warning_to_json warnings @ truncation_warning));
                     ]
                    @ with_environment_fields ~language:"dsl" env)))
       in
