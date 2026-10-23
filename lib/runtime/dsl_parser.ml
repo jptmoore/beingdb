@@ -116,7 +116,7 @@ let rec parse_clauses lines =
       let* rest_clauses, final_remaining = parse_clauses rest in
       Ok (clause :: rest_clauses, final_remaining)
 
-let is_variable n = n <> "" && Char.uppercase_ascii n.[0] = n.[0] && not (String.contains n ' ')
+let is_variable n = n <> "" && Char.uppercase_ascii n.[0] = n.[0]
 
 (* Rewrite every [count ( Var )] (any case, any spacing) to [count(Var)]. *)
 let normalize_counts text =
@@ -191,7 +191,8 @@ let rec parse_tail lines order_acc limit_acc offset_acc =
         |> List.filter (fun (_, p) -> p <> "")
       in
       let* items = List.fold_left (fun acc (ln, p) -> let* items = acc in let* item = parse_order_item ln p in Ok (item :: items)) (Ok []) flattened in
-      parse_tail remaining (List.rev_append items order_acc) limit_acc offset_acc
+      (* [items] and [order_acc] are both in reverse source order. *)
+      parse_tail remaining (items @ order_acc) limit_acc offset_acc
   | (line_no, _, line) :: rest when line = "limit" || starts_with ~prefix:"limit " line -> (
       let v = if line = "limit" then "" else drop_prefix "limit " line in
       match int_of_string_opt v with

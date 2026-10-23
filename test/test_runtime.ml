@@ -211,6 +211,18 @@ let test_count_overall () =
   Alcotest.(check (list string)) "grouped with no matches has no rows" []
     (render (dsl "find A, count(W)\nwhere\n  created_by(W, A)\n  A = nobody\n"))
 
+(* The first order-by key is the primary one. *)
+let test_order_by_keys_in_order () =
+  Alcotest.(check (list string)) "count first, then name"
+    [ "A=alice,count(W)=2"; "A=bob,count(W)=1" ]
+    (render (dsl "find A, count(W)\nwhere\n  created_by(W, A)\norder by count(W) descending, A descending\n"));
+  Alcotest.(check (list string)) "plain keys"
+    [ "A=alice,W=work2"; "A=alice,W=work1"; "A=bob,W=work3" ]
+    (render (dsl "find A, W\nwhere\n  created_by(W, A)\norder by A ascending, W descending\n"));
+  Alcotest.(check (list string)) "keys over several lines"
+    [ "A=bob,W=work3"; "A=alice,W=work1"; "A=alice,W=work2" ]
+    (render (dsl "find A, W\nwhere\n  created_by(W, A)\norder by\n  A descending,\n  W ascending\n"))
+
 let test_count_syntax_and_errors () =
   Alcotest.(check (list string)) "case and spacing" [ "A=alice,count(W)=2" ]
     (render (dsl "find A, COUNT ( W )\nwhere\n  created_by(W, A)\norder by count( W ) desc\nlimit 1\n"));
@@ -250,6 +262,7 @@ let () =
           Alcotest.test_case "per group" `Quick test_count_per_group;
           Alcotest.test_case "distinct and nulls" `Quick test_count_distinct_and_nulls;
           Alcotest.test_case "overall" `Quick test_count_overall;
+          Alcotest.test_case "order-by keys in order" `Quick test_order_by_keys_in_order;
           Alcotest.test_case "syntax and errors" `Quick test_count_syntax_and_errors;
         ] );
       ("Introspection", [ Alcotest.test_case "predicates and environment" `Quick test_introspection ]);
