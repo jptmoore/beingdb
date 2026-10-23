@@ -211,6 +211,24 @@ let explain_dsl store query_str =
                 ("planText", `String (Query_engine.explain cq.Core_query.query));
               ]))
 
+(** Run [f] under the configured query timeout; a timeout or an
+    unexpected exception becomes a structured [Failure]. *)
+let with_query_timeout f =
+  Lwt.catch
+    (fun () -> Lwt_unix.with_timeout !Query_validation.Config.query_timeout f)
+    (function
+      | Lwt_unix.Timeout ->
+          Lwt.return
+            (Failure
+               {
+                 code = "timeout";
+                 message =
+                   Printf.sprintf
+                     "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints."
+                     !Query_validation.Config.query_timeout;
+               })
+      | exn -> Lwt.return (Failure { code = "internal_error"; message = Printf.sprintf "Query error: %s" (Printexc.to_string exn) }))
+
 (** Execute a lowered DSL query: the safety-checked, timed execution
     through {!Model.execute_query}, followed by {!Core_query.apply} for
     projection/distinct/order. The full projected result is always
@@ -232,7 +250,9 @@ let execute_dsl ~max_results store query_str =
       let offset = max 0 (Option.value cq.Core_query.offset ~default:0) in
       let run_body () =
         Model.execute_query store cq.Core_query.query >>= function
-        | Error message -> Lwt.return (Failure { code = "execution_error"; message })
+        | Error message ->
+            let code = if Query_validation.is_result_too_large message then "result_too_large" else "execution_error" in
+            Lwt.return (Failure { code; message })
         | Ok model_result ->
             let engine_result : Query_engine.result = { variables = model_result.Model.variables; bindings = model_result.Model.bindings } in
             let vars, all_rows = Core_query.apply { cq with Core_query.offset = None; limit = None } engine_result in
@@ -278,30 +298,18 @@ let execute_dsl ~max_results store query_str =
                    @ diagnosis
                    @ with_environment_fields ~language:"dsl" env)))
       in
-      Lwt.catch
-        (fun () -> Lwt_unix.with_timeout !Query_validation.Config.query_timeout run_body)
-        (function
-          | Lwt_unix.Timeout ->
-              Lwt.return
-                (Failure
-                   {
-                     code = "timeout";
-                     message =
-                       Printf.sprintf
-                         "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints."
-                         !Query_validation.Config.query_timeout;
-                   })
-          | exn -> Lwt.return (Failure { code = "internal_error"; message = Printf.sprintf "Query error: %s" (Printexc.to_string exn) }))
+      with_query_timeout run_body
 
 (** Run the DSL "diagnose" action: validation plus data-aware
     diagnostics and any repair BeingDB can prove
-    ({!Query_diagnostics}), without executing. Always [Success]: an
-    invalid query is reported in the body ([valid: false]), like the
-    other diagnostics. *)
+    ({!Query_diagnostics}), without executing, under the same query
+    timeout as [execute]. An invalid query is reported in the body
+    ([valid: false]), like the other diagnostics. *)
 let diagnose_dsl store query_str =
-  Db.Environment.load_or_build store >>= fun env ->
-  Db.Diagnostics.fields store env query_str >>= fun fields ->
-  Lwt.return (Success (`Assoc (fields @ with_environment_fields ~language:"dsl" env)))
+  with_query_timeout (fun () ->
+      Db.Environment.load_or_build store >>= fun env ->
+      Db.Diagnostics.fields store env query_str >>= fun fields ->
+      Lwt.return (Success (`Assoc (fields @ with_environment_fields ~language:"dsl" env))))
 
 (** Unified query entry point for [POST /query] and the REPL. Queries are
     always the find/where language: [language] may be omitted or

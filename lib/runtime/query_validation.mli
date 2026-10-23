@@ -17,7 +17,22 @@ module Config : sig
   (** Maximum accepted length (in bytes) of a raw query string, checked
       before parsing *)
   val max_query_length : int ref
+
+  (** Facts a single data-aware diagnostic check may scan; checks over
+      larger predicates are skipped and reported as [check_skipped]. *)
+  val max_diagnostic_facts : int ref
 end
+
+(** Prefix of {!result_too_large_message}. *)
+val result_too_large_prefix : string
+
+(** The query engine's error when a query matches more rows than
+    [max_intermediate_results]: it cannot be returned, counted or
+    ordered completely, so it is reported instead of a partial result. *)
+val result_too_large_message : unit -> string
+
+(** Whether an engine error message is {!result_too_large_message}. *)
+val is_result_too_large : string -> bool
 
 (** Validation errors that can occur during query validation *)
 type validation_error =

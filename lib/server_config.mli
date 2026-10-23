@@ -10,7 +10,8 @@
       "query_timeout": 5.0,
       "max_intermediate_results": 10000,
       "max_query_length": 20000,
-      "max_concurrent_queries": 20
+      "max_concurrent_queries": 20,
+      "max_diagnostic_facts": 50000
     }
     v}
     Any field may be omitted; omitted fields fall back to {!default}. *)
@@ -20,7 +21,8 @@ type t = {
   query_timeout : float;  (** Seconds before an executing query is aborted *)
   max_intermediate_results : int;  (** Cap on intermediate join rows before aborting *)
   max_query_length : int;  (** Cap, in bytes, on a raw query string before parsing *)
-  max_concurrent_queries : int;  (** Cap on simultaneously in-flight [POST /query] requests *)
+  max_concurrent_queries : int;  (** Cap on simultaneously in-flight query and predicate requests *)
+  max_diagnostic_facts : int;  (** Facts one data-aware diagnostic check may scan before it is skipped *)
 }
 
 (** Built-in defaults, matching BeingDB's previous hardcoded limits. *)

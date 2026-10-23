@@ -102,8 +102,10 @@ module Make (Store : Runtime_store.S) = struct
         Store.range_lookup store step.predicate position ~lower ~upper
     | Query_planner.Full_scan -> Store.query_all store step.predicate >|= fun l -> Ok l
 
-  (** Execute a query, returning all matching results (subject to the
-      Cartesian-product intermediate-result safety limit).
+  (** Execute a query, returning all matching results. A query matching
+      more than [max_intermediate_results] rows is an [Error]
+      ({!Query_validation.result_too_large_message}), never a partial
+      result.
 
       [Optional]/[Alternatives]/[Not_exists] groups are executed by the
       same recursive traversal as plain patterns: [run_group] runs a
@@ -171,6 +173,7 @@ module Make (Store : Runtime_store.S) = struct
     run_group p [] (fun bindings ->
         incr result_count;
         if !result_count > !Query_validation.Config.max_intermediate_results then (
+          error := Some (Query_validation.result_too_large_message ());
           aborted := true;
           Lwt.return_unit)
         else (
@@ -256,6 +259,9 @@ module Make (Store : Runtime_store.S) = struct
     >>= fun () ->
     match !error with
     | Some e -> Lwt.return (Error e)
+    | None when List.length !collected < limit && !processed > !Query_validation.Config.max_intermediate_results ->
+        (* Stopped by the cap, not by filling the page: the page would be partial. *)
+        Lwt.return (Error (Query_validation.result_too_large_message ()))
     | None ->
         let bindings = List.rev_map (ordered_bindings p.variables) !collected in
         Lwt.return (Ok { bindings; variables = p.variables })

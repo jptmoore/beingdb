@@ -75,74 +75,73 @@ let handle_query max_results pack_store predicate _req =
   | Ok json -> json_response json
   | Error msg -> error_response msg
 
-(** Count of currently in-flight {!handle_query_language} requests,
-    checked against [config.max_concurrent_queries]. Safe as plain
-    mutable state: Lwt is cooperative, and the check-then-increment
-    below never yields, so there is no race between requests. *)
+(** Count of currently in-flight store-reading requests ([POST /query],
+    [GET /predicates], [GET /query/:predicate]), checked against
+    [config.max_concurrent_queries]. Safe as plain mutable state: Lwt is
+    cooperative, and the check-then-increment in {!with_query_slot}
+    never yields, so there is no race between requests. *)
 let in_flight_queries = ref 0
+
+(** Run [handler] if fewer than [config.max_concurrent_queries]
+    store-reading requests are in flight, otherwise reject with [429]
+    ([server_busy]), guarding against resource exhaustion from a flood of
+    concurrent requests. Re-applies [config] to {!Query_validation.Config}
+    on every call (cheap ref writes; idempotent for a deployment's single
+    config), so a [Server_config.t] here is always self-sufficient. *)
+let with_query_slot (config : Server_config.t) handler =
+  Server_config.apply config;
+  if !in_flight_queries >= config.Server_config.max_concurrent_queries then
+    error_response ~status:`Too_Many_Requests ~code:"server_busy" "Too many concurrent queries; please retry shortly."
+  else (
+    incr in_flight_queries;
+    Lwt.finalize handler (fun () ->
+        decr in_flight_queries;
+        Lwt.return_unit))
 
 (** Run a find/where query. Accepts optional ["language"] (only "dsl";
     "core" is rejected as [unsupported_language]) and ["action"]
     ("execute" (default), "validate", "explain" or "diagnose") fields,
     dispatched via {!Controller.run_query}. Request-level ["offset"] and
     ["limit"] fields are rejected as [unsupported_parameter]: paging is
-    [limit N]/[offset N] in the query text. Rejects
-    with [429] once [config.max_concurrent_queries] requests are already
-    in flight, guarding against resource exhaustion from a flood of
-    concurrent (possibly expensive) queries. Re-applies [config] to
-    {!Query_validation.Config} on every call (cheap -- three ref
-    writes); idempotent for a real deployment's single, unchanging
-    config, and it means passing a [Server_config.t] here is always
-    self-sufficient rather than depending on a separate startup call. *)
+    [limit N]/[offset N] in the query text. Subject to
+    {!with_query_slot}. *)
 let handle_query_language (config : Server_config.t) pack_store req =
   let open Lwt.Infix in
-  Server_config.apply config;
-  if !in_flight_queries >= config.Server_config.max_concurrent_queries then
-    error_response ~status:`Too_Many_Requests ~code:"server_busy"
-      "Too many concurrent queries; please retry shortly."
-  else (
-    incr in_flight_queries;
-    Lwt.finalize
-      (fun () ->
-        Dream.body req
-        >>= fun body ->
-        (* Parse JSON request *)
-        match Yojson.Safe.from_string body with
-        | exception _ -> error_response ~code:"malformed_request" "The request body is not valid JSON."
-        | json -> (
-            match json with
-            | `Assoc fields -> (
-                match List.assoc_opt "query" fields with
-                | Some (`String _) when List.mem_assoc "offset" fields || List.mem_assoc "limit" fields ->
-                    error_response ~code:"unsupported_parameter"
-                      "Request-level 'offset' and 'limit' are not supported; put 'limit N' and 'offset N' at the end of the query text."
-                | Some (`String query_str) ->
-                    let language = match List.assoc_opt "language" fields with Some (`String s) -> Some s | _ -> None in
-                    let action = match List.assoc_opt "action" fields with Some (`String s) -> Some s | _ -> None in
-                    Controller.run_query ~max_results:config.Server_config.max_results ?language ?action pack_store query_str
-                    >>= (function
-                    | Controller.Success json -> json_response json
-                    | Controller.Invalid json -> Dream.json ~status:`Bad_Request (Yojson.Safe.to_string json)
-                    | Controller.Failure { code; message } -> error_response ~status:(status_for_failure_code code) ~code message)
-                | _ -> error_response ~code:"malformed_request" "Missing 'query' field")
-            | _ -> error_response ~code:"malformed_request" "Expected a JSON object"))
-      (fun () ->
-        decr in_flight_queries;
-        Lwt.return_unit))
+  with_query_slot config (fun () ->
+      Dream.body req
+      >>= fun body ->
+      match Yojson.Safe.from_string body with
+      | exception _ -> error_response ~code:"malformed_request" "The request body is not valid JSON."
+      | `Assoc fields -> (
+          match List.assoc_opt "query" fields with
+          | Some (`String _) when List.mem_assoc "offset" fields || List.mem_assoc "limit" fields ->
+              error_response ~code:"unsupported_parameter"
+                "Request-level 'offset' and 'limit' are not supported; put 'limit N' and 'offset N' at the end of the query text."
+          | Some (`String query_str) -> (
+              let language = match List.assoc_opt "language" fields with Some (`String s) -> Some s | _ -> None in
+              let action = match List.assoc_opt "action" fields with Some (`String s) -> Some s | _ -> None in
+              Controller.run_query ~max_results:config.Server_config.max_results ?language ?action pack_store query_str
+              >>= function
+              | Controller.Success json -> json_response json
+              | Controller.Invalid json -> Dream.json ~status:`Bad_Request (Yojson.Safe.to_string json)
+              | Controller.Failure { code; message } -> error_response ~status:(status_for_failure_code code) ~code message)
+          | _ -> error_response ~code:"malformed_request" "Missing 'query' field")
+      | _ -> error_response ~code:"malformed_request" "Expected a JSON object")
+
+(** The HTTP routes, shared by {!serve} and the tests. *)
+let router (config : Server_config.t) pack_store =
+  Dream.router [
+    Dream.get "/" handle_root;
+    Dream.get "/version" handle_version;
+    Dream.get "/predicates" (fun req -> with_query_slot config (fun () -> handle_list_predicates pack_store req));
+    Dream.get "/query/:predicate" (fun req ->
+      let predicate = Dream.param req "predicate" in
+      with_query_slot config (fun () -> handle_query config.Server_config.max_results pack_store predicate req));
+    Dream.post "/query" (handle_query_language config pack_store);
+  ]
 
 (** Start the API server. [?stop], if given, is a promise that triggers
     a graceful shutdown when it resolves (see {!Dream.run}: stops
     accepting new connections but lets in-flight requests finish). *)
 let serve ?stop (config : Server_config.t) pack_store port =
-  let router = Dream.router [
-    Dream.get "/" handle_root;
-    Dream.get "/version" handle_version;
-    Dream.get "/predicates" (handle_list_predicates pack_store);
-    Dream.get "/query/:predicate" (fun req ->
-      let predicate = Dream.param req "predicate" in
-      handle_query config.Server_config.max_results pack_store predicate req);
-    Dream.post "/query" (handle_query_language config pack_store);
-  ] in
-  
-  Dream.run ~interface:"0.0.0.0" ~port ?stop (Dream.logger @@ router)
-
+  Dream.run ~interface:"0.0.0.0" ~port ?stop (Dream.logger @@ router config pack_store)

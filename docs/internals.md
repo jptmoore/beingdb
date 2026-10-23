@@ -562,6 +562,21 @@ Pipeline, module by module:
   `validate`/`explain`'s envelope -- so a client can learn the
   dataset's schema fingerprint from any query response, not just
   `/predicates` or the validate/explain actions.
+- Safety: `Query_engine.execute` returns `Error`
+  (`Query_validation.result_too_large_message`) once a query matches
+  more than `max_intermediate_results` rows, and `execute_streaming` does
+  the same if the cap stops it before the page is full, so a partial
+  result is never presented as complete; the controller reports it as
+  `result_too_large`. `diagnose` runs under the same query timeout as
+  `execute` (`Controller.with_query_timeout`). `Query_diagnostics`
+  yields (`Lwt.pause`) before each index lookup and every 1,000 facts
+  while reading a predicate, so the timeout can interrupt it, and checks
+  that read a whole predicate (`disjoint_join`, misspelling
+  `suggestions`, `observedRange`) skip predicates larger than
+  `max_diagnostic_facts`, reporting an info-level `check_skipped`.
+  `Api.with_query_slot` applies `max_concurrent_queries` to `POST /query`
+  and both `GET` reads; `Api.router` is the route table shared by
+  `Api.serve` and the tests.
 
 ## 7. Schema inference and predicate declarations
 
