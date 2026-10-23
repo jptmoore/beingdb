@@ -146,7 +146,7 @@ let test_constant_suggestions () =
   (* A misspelled atom: ranked suggestions from that position, as a hint only. *)
   let r = report "find Work\nwhere\n  held_at(Work, tate_modren)\n" in
   let d = find_code r "unknown_constant" in
-  Alcotest.(check (list string)) "typo" [ "tate_modern"; "tate_britain" ] (suggestions d);
+  Alcotest.(check (list string)) "typo" [ "tate_modern" ] (suggestions d);
   Alcotest.(check bool) "did you mean" true
     (let m = U.(d |> member "message" |> to_string) in
      let s = "Did you mean tate_modern?" in
@@ -165,7 +165,14 @@ let test_constant_suggestions () =
   let r = report "find Work\nwhere\n  created_by(artist_1, Work)\n" in
   Alcotest.(check (list string)) "wrong position" [] (suggestions (find_code r "constant_not_at_position"));
   (* Numeric tokens alone are not similarity. *)
-  Alcotest.(check (list string)) "numeric token" [] (Predicate_suggest.suggest_value ~known:[ "work_1"; "work_2" ] "artist_1")
+  Alcotest.(check (list string)) "numeric token" [] (Predicate_suggest.suggest_value ~known:[ "work_1"; "work_2" ] "artist_1");
+  (* Nor is one common word between otherwise unrelated values. *)
+  Alcotest.(check (list string)) "one common word" []
+    (Predicate_suggest.suggest_value ~known:[ "The Video Stairs" ] "Scratch Video Volume 1");
+  Alcotest.(check (list string)) "most words shared" [ "The Video Stairs" ]
+    (Predicate_suggest.suggest_value ~known:[ "The Video Stairs" ] "Video Stairs");
+  Alcotest.(check (list string)) "close spelling, one shared word" [ "david_critchley" ]
+    (Predicate_suggest.suggest_value ~known:[ "david_critchley"; "david_hall" ] "david_critchly")
 
 let test_disjoint_join () =
   let q = "find Work\nwhere\n  created_by(Work, A)\n  employed_by(Work, E)\n" in

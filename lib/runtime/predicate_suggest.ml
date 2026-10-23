@@ -55,9 +55,15 @@ let suggest ?arity ~known name =
 let suggest_value ~known value =
   let normalized_value = normalize value in
   let significant t = String.length t >= 3 && not (String.for_all (function '0' .. '9' -> true | _ -> false) t) in
-  let shares_token candidate =
-    let tv = List.filter significant (tokens value) in
-    List.exists (fun t -> List.mem t tv) (List.filter significant (tokens candidate))
+  let significant_tokens s = List.sort_uniq String.compare (List.filter significant (tokens s)) in
+  let value_tokens = significant_tokens value in
+  (* Shared words must make up at least half of both values' words together,
+     so one common word ("video") does not link unrelated titles. *)
+  let shares_words candidate =
+    let tc = significant_tokens candidate in
+    let shared = List.length (List.filter (fun t -> List.mem t value_tokens) tc) in
+    let union = List.length (List.sort_uniq String.compare (value_tokens @ tc)) in
+    shared > 0 && 2 * shared >= union
   in
   let max_distance = max 2 (String.length normalized_value / 3) in
   let score candidate =
@@ -70,7 +76,7 @@ let suggest_value ~known value =
   |> List.sort_uniq String.compare
   |> List.filter (fun candidate ->
          candidate <> value
-         && (edit_distance normalized_value (normalize candidate) <= max_distance || shares_token candidate))
+         && (edit_distance normalized_value (normalize candidate) <= max_distance || shares_words candidate))
   |> List.map (fun c -> (c, score c))
   |> List.sort (fun (c1, s1) (c2, s2) -> if s1 <> s2 then compare s1 s2 else compare c1 c2)
   |> List.map fst
