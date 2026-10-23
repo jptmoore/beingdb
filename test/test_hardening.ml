@@ -65,8 +65,7 @@ let contains haystack needle =
     let rec go i = i + nl <= hl && (String.sub haystack i nl = needle || go (i + 1)) in
     go 0
 
-let run_dsl ~action store text = Controller.run_query ~max_results:100 ~language:"dsl" ?action store text ~offset:None ~limit:None
-let run_core ~action store text = Controller.run_query ~max_results:100 ~language:"core" ?action store text ~offset:None ~limit:None
+let run_dsl ~action store text = Controller.run_query ~max_results:100 ?action store text
 
 let expect_success outcome f =
   match outcome with
@@ -124,12 +123,16 @@ let test_instant_year_mismatch () =
           Alcotest.(check string) "rightType year" "year" Yojson.Safe.Util.(err |> member "rightType" |> to_string));
       Lwt.return_unit)
 
+(* The DSL lowers to BeingDB's internal core form; running that form
+   directly must give the same rows. *)
 let test_core_dsl_semantic_parity () =
   with_pack "core_dsl_parity" (fun store ->
-      let* core_outcome = run_core ~action:None store "birth_year(X, Y), Y >= 1970" in
-      let* dsl_outcome = run_dsl ~action:None store "find X\nwhere\n  birth_year(X, Y)\n  Y >= 1970\n" in
-      expect_success core_outcome (fun core_json ->
-          expect_success dsl_outcome (fun dsl_json -> Alcotest.(check int) "same result count" (result_count core_json) (result_count dsl_json)));
+      let core = match Query_parser.parse_query_result "birth_year(X, Y), Y >= 1970" with Ok q -> q | Error e -> failwith e in
+      let* core_result = Model.execute_query store core in
+      let* dsl_outcome = run_dsl ~action:None store "find X, Y\nwhere\n  birth_year(X, Y)\n  Y >= 1970\n" in
+      (match core_result with
+      | Ok r -> expect_success dsl_outcome (fun dsl_json -> Alcotest.(check int) "same result count" (List.length r.Model.bindings) (result_count dsl_json))
+      | Error e -> Alcotest.fail e);
       Lwt.return_unit)
 
 (* --- 2. connectivity (replaces blanket duplicate-predicate rejection) --- *)
@@ -204,9 +207,9 @@ let test_validate_envelope_shape () =
           Alcotest.(check bool) "fingerprint sha256-tagged" true (contains fp "sha256:"));
       Lwt.return_unit)
 
-let test_core_validation_failure_is_invalid_not_failure () =
-  with_pack "core_invalid_not_failure" (fun store ->
-      let* outcome = run_core ~action:None store "person(A), organisation(B)" in
+let test_execute_validation_failure_is_invalid_not_failure () =
+  with_pack "execute_invalid_not_failure" (fun store ->
+      let* outcome = run_dsl ~action:None store "find A, B\nwhere\n  person(A)\n  organisation(B)\n" in
       (match outcome with
       | Controller.Invalid json -> Alcotest.(check bool) "valid false" false Yojson.Safe.Util.(json |> member "valid" |> to_bool)
       | Controller.Success _ -> Alcotest.fail "expected Invalid"
@@ -215,9 +218,19 @@ let test_core_validation_failure_is_invalid_not_failure () =
 
 let test_runtime_failure_has_code () =
   with_pack "runtime_failure_code" (fun store ->
-      let* outcome = Controller.run_query ~max_results:100 ~language:"sparql" store "person(X)" ~offset:None ~limit:None in
+      let* outcome = Controller.run_query ~max_results:100 ~language:"sparql" store "person(X)" in
       (match outcome with
       | Controller.Failure { code; _ } -> Alcotest.(check string) "unknown_language code" "unknown_language" code
+      | _ -> Alcotest.fail "expected Failure");
+      Lwt.return_unit)
+
+let test_core_language_rejected () =
+  with_pack "core_rejected" (fun store ->
+      let* outcome = Controller.run_query ~max_results:100 ~language:"core" store "person(X)" in
+      (match outcome with
+      | Controller.Failure { code; message } ->
+          Alcotest.(check string) "unsupported_language code" "unsupported_language" code;
+          Alcotest.(check bool) "points to find/where" true (contains message "find/where")
       | _ -> Alcotest.fail "expected Failure");
       Lwt.return_unit)
 
@@ -417,13 +430,15 @@ let test_check_query_length_accepts_within_limit () =
   | Ok () -> ()
   | Error _ -> Alcotest.fail "expected a short query to be accepted"
 
-let test_execute_query_rejects_oversized_query_string () =
+let test_run_query_rejects_oversized_query_string () =
   with_pack "query_too_long" (fun store ->
       with_temporary_limits ~max_query_length:10 (fun () ->
-          let* result = Controller.execute_query ~max_results:100 store "person(P), works_for(P, O)" ~offset:None ~limit:None in
-          (match result with
-          | Error msg -> Alcotest.(check bool) "mentions 'too long'" true (contains_substring msg "too long")
-          | Ok _ -> Alcotest.fail "expected the oversized query to be rejected");
+          let* outcome = run_dsl ~action:None store "find P\nwhere\n  person(P)\n  works_for(P, O)\n" in
+          (match outcome with
+          | Controller.Failure { code; message } ->
+              Alcotest.(check string) "code" "query_too_long" code;
+              Alcotest.(check bool) "mentions 'too long'" true (contains_substring message "too long")
+          | _ -> Alcotest.fail "expected the oversized query to be rejected");
           Lwt.return_unit))
 
 let () =
@@ -452,8 +467,9 @@ let () =
       ( "Normalized error envelope",
         [
           Alcotest.test_case "validate envelope shape" `Quick test_validate_envelope_shape;
-          Alcotest.test_case "core validation failure is Invalid not Failure" `Quick test_core_validation_failure_is_invalid_not_failure;
+          Alcotest.test_case "execute validation failure is Invalid not Failure" `Quick test_execute_validation_failure_is_invalid_not_failure;
           Alcotest.test_case "runtime failure has code" `Quick test_runtime_failure_has_code;
+          Alcotest.test_case "core language rejected" `Quick test_core_language_rejected;
         ] );
       ( "SHA-256 environment fingerprint",
         [
@@ -483,6 +499,6 @@ let () =
           Alcotest.test_case "load_file: missing file" `Quick test_server_config_load_missing_file;
           Alcotest.test_case "check_query_length: rejects oversized query" `Quick test_check_query_length_rejects_oversized_query;
           Alcotest.test_case "check_query_length: accepts within limit" `Quick test_check_query_length_accepts_within_limit;
-          Alcotest.test_case "execute_query rejects oversized query string" `Quick test_execute_query_rejects_oversized_query_string;
+          Alcotest.test_case "run_query rejects oversized query string" `Quick test_run_query_rejects_oversized_query_string;
         ] );
     ]

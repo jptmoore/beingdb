@@ -165,10 +165,15 @@ curl http://localhost:8080/query/created
 ```
 
 **Pattern matching query:**
+
+Queries use the `find`/`where` language: `find` names the variables to
+return, and each line after `where` is a pattern or comparison. In JSON,
+line breaks are written `\n`:
+
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "created(Artist, Work)"}'
+  -d '{"query": "find Artist, Work\nwhere\n  created(Artist, Work)"}'
 ```
 
 Response:
@@ -181,7 +186,13 @@ Response:
     { "Artist": {"type": "atom", "value": "tina_keane"}, "Work": {"type": "atom", "value": "shadow_of_a_journey"} }
   ],
   "count": 3,
-  "total": 3
+  "total": 3,
+  "hasMore": false,
+  "truncated": false,
+  "warnings": [],
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:..."
 }
 ```
 
@@ -192,18 +203,16 @@ Each value is a typed object (`{"type": ..., "value": ...}`); see
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)"}'
+  -d '{"query": "find Artist, Work, Exhibition\nwhere\n  created(Artist, Work)\n  shown_in(Work, Exhibition)"}'
 ```
 
-**Paginated query:**
+**Paginated query** (`limit`/`offset` go at the end of the query text;
+the response's `total` and `hasMore` tell you whether there are more
+pages):
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "created(Artist, Work)",
-    "offset": 0,
-    "limit": 10
-  }'
+  -d '{"query": "find Artist, Work\nwhere\n  created(Artist, Work)\norder by Work\nlimit 10\noffset 0"}'
 ```
 
 ## Creating Your Own Facts Repository
@@ -276,7 +285,8 @@ beingdb-serve --pack ./pack_store
 Query:
 ```bash
 curl -X POST http://localhost:8080/query \
-  -d '{"query": "person(P), lives_in(P, City)"}'
+  -H "Content-Type: application/json" \
+  -d '{"query": "find P, City\nwhere\n  person(P)\n  lives_in(P, City)"}'
 ```
 
 ## Update Workflow
@@ -303,17 +313,24 @@ curl http://localhost:8080/predicates
 ## Interactive REPL
 
 `beingdb repl` (equivalently, the standalone `beingdb-repl`) opens a
-compiled Pack store and reads queries from the terminal, one per line,
+compiled Pack store and reads `find`/`where` queries from the terminal,
 printing typed JSON results -- useful for exploring a store or trying
-out query syntax without an HTTP server:
+out queries without an HTTP server:
 
 ```bash
 beingdb repl --pack ./pack_store
 # or: beingdb-repl --pack ./pack_store
 ```
 
+Type the lines of a query and finish with a blank line to run it:
+
 ```
-beingdb> created(Artist, Work)
+BeingDB REPL. 5 predicates, fingerprint sha256:3a1f...c9, beingdb-dsl/1. Enter a find/where query (blank line to run), :help for commands, :quit to exit.
+beingdb> find Artist, Work
+...> where
+...>   created(Artist, Work)
+...> limit 5
+...>
 {
   "variables": [ "Artist", "Work" ],
   "results": [
@@ -321,31 +338,12 @@ beingdb> created(Artist, Work)
   ],
   "count": 1,
   "total": 1,
-  "limit": 1000
-}
-```
-
-The REPL has three query-language modes, switched with `:core`, `:dsl`,
-and `:auto` (the default, which detects the expressive language when a
-query starts with `find`). In `:dsl` mode (or when auto-detected as
-`dsl`), keep entering lines and finish with a blank line, since the
-expressive syntax spans multiple lines:
-
-```
-beingdb> :dsl
-mode: dsl
-beingdb> find Artist, Work
-where
-  created(Artist, Work)
-limit 5
-
-{
-  "variables": [ "Artist", "Work" ],
-  "results": [
-    { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
-  ],
-  "count": 1,
-  "warnings": []
+  "hasMore": false,
+  "truncated": false,
+  "warnings": [],
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
 
@@ -355,14 +353,13 @@ A line starting with `:` is a REPL command rather than a query:
 |---|---|
 | `:predicates` | List predicates and their arities |
 | `:describe <predicate>` | Show a predicate's argument types, fact count, examples, and any declared roles and description |
-| `:environment` | Show predicate count, fingerprint, language version, and current mode |
-| `:explain <query>` | Show the chosen query plan without executing it (single-line only) |
+| `:environment` | Show predicate count, fingerprint and language version |
+| `:explain` | Enter a query (blank line to finish) and show its plan without executing it; `:explain find ...` also works, with the rest of the query on the following lines |
 | `:validate` | Enter a query (blank line to finish) and validate it without executing |
-| `:diagnose` | Enter a DSL query (blank line to finish): validation, data-aware diagnostics and proven repairs, without executing |
-| `:core` / `:dsl` / `:auto` | Switch the query-language mode |
-| `:load <file>` | Load facts (`.pl`, `.pro`, `.facts`) or run each line as a query (any other extension) |
+| `:diagnose` | Enter a query (blank line to finish): validation, data-aware diagnostics and proven repairs, without executing |
+| `:load <file>` | Load facts (`.pl`, `.pro`, `.facts`) or run the file's queries (any other extension) |
 | `:loadfacts <file>` | Force-load a file as facts, written directly into the open Pack store |
-| `:loadqueries <file>` | Force-run every non-blank, non-comment line of a file as a query |
+| `:loadqueries <file>` | Force-run a file of queries; queries are separated by blank lines, and lines starting with `%` or `#` are comments |
 | `:limit <n>` | Set the default max rows shown per query for the rest of the session |
 | `:help` | List commands |
 | `:quit` / `:exit` | Leave the REPL |
@@ -373,7 +370,5 @@ go through the Git-first compile workflow, so anything loaded this way
 is not reflected in the source repository and will be lost the next
 time the store is recompiled from Git.
 
-See [Query Language](query-language.md#expressive-query-language) for
-the full `find`/`where` syntax reference.
-
-
+See [Query Language](query-language.md#query-syntax) for the full
+`find`/`where` syntax reference.

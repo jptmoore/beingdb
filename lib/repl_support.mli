@@ -4,7 +4,7 @@
     module only touches the store for the one operation the HTTP API
     intentionally does not expose: loading a fact file directly into an
     already-compiled Pack store. Ordinary queries are executed through
-    {!Controller.execute_query}, exactly as the HTTP API does. *)
+    {!Controller.run_query}, exactly as the HTTP API does. *)
 
 (** Whether a `:load` target should be treated as a predicate source file
     (facts, written into the store) or a batch of queries (executed and
@@ -27,9 +27,11 @@ val load_kind_of_filename : string -> load_kind
     cannot be read, or it contains no recognizable facts at all). *)
 val load_facts_file : Pack_backend.t -> string -> (string list, string) result Lwt.t
 
-(** Run every non-blank, non-comment line of [path] as a query (via
-    {!Controller.execute_query}), returning [(query_text, result)] pairs
-    in file order. Never writes to the store. *)
+(** Run every query in [path] (find/where queries separated by blank
+    lines; [%] and [#] comment lines are ignored) via
+    {!Controller.run_query}, returning [(query_text, result)] pairs in file
+    order: [Ok json] for results and structured validation failures,
+    [Error msg] for runtime failures. Never writes to the store. *)
 val run_queries_file :
   max_results:int ->
   Pack_backend.t ->

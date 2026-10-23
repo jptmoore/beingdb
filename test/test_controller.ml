@@ -167,198 +167,98 @@ let test_query_nonexistent_predicate () =
         Alcotest.fail ("Query failed: " ^ err)
   )
 
-(** Test: execute_query simple query *)
+(* --- find/where queries through run_query --- *)
+
+(* Run a query and return its JSON: [Success] and [Invalid] bodies alike. *)
+let query ?(max_results = 100) store text =
+  let open Lwt.Syntax in
+  let* outcome = Controller.run_query ~max_results store text in
+  match outcome with
+  | Controller.Success json | Controller.Invalid json -> Lwt.return json
+  | Controller.Failure { code; message } -> Alcotest.failf "unexpected Failure [%s]: %s" code message
+
+let with_pack name f =
+  let store, test_dir = create_test_pack name in
+  Fun.protect ~finally:(fun () -> cleanup test_dir) (fun () -> Lwt_main.run (f store))
+
+let created = "find Artist, Work\nwhere\n  created(Artist, Work)\n"
+
 let test_execute_query_simple () =
-  let (store, test_dir) = create_test_pack "simple_query" in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let query = "created(Artist, Work)" in
-    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:None ~limit:None in
-    
-    match result with
-    | Ok json ->
-        let results = Yojson.Safe.Util.member "results" json in
-        let results_list = Yojson.Safe.Util.to_list results in
-        Alcotest.(check bool) "has results" true (List.length results_list > 0);
-        
-        (* Check variables *)
-        let vars = Yojson.Safe.Util.member "variables" json in
-        let vars_list = Yojson.Safe.Util.to_list vars in
-        Alcotest.(check int) "has 2 variables" 2 (List.length vars_list);
-        
-        cleanup test_dir;
-        Lwt.return ()
-    | Error err ->
-        cleanup test_dir;
-        Alcotest.fail ("Query failed: " ^ err)
-  )
+  with_pack "simple_query" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store created in
+      Alcotest.(check int) "2 rows" 2 (json |> member "results" |> to_list |> List.length);
+      Alcotest.(check (list string)) "variables" [ "Artist"; "Work" ] (json |> member "variables" |> to_list |> List.map to_string);
+      Lwt.return ())
 
-(** Test: execute_query with join *)
 let test_execute_query_join () =
-  let (store, test_dir) = create_test_pack "join_query" in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let query = "created(Artist, Work), shown_in(Work, Event)" in
-    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:None ~limit:None in
-    
-    match result with
-    | Ok json ->
-        let results = Yojson.Safe.Util.member "results" json in
-        let results_list = Yojson.Safe.Util.to_list results in
-        Alcotest.(check bool) "has results" true (List.length results_list > 0);
-        
-        cleanup test_dir;
-        Lwt.return ()
-    | Error err ->
-        cleanup test_dir;
-        Alcotest.fail ("Query failed: " ^ err)
-  )
+  with_pack "join_query" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store "find Artist, Work, Event\nwhere\n  created(Artist, Work)\n  shown_in(Work, Event)\n" in
+      Alcotest.(check int) "1 row" 1 (json |> member "results" |> to_list |> List.length);
+      Lwt.return ())
 
-(** Test: execute_query with pagination *)
 let test_execute_query_pagination () =
-  let (store, test_dir) = create_test_pack "pagination" in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let query = "created(Artist, Work)" in
-    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:(Some 1) ~limit:(Some 1) in
-    
-    match result with
-    | Ok json ->
-        let open Yojson.Safe.Util in
-        
-        (* Check results *)
-        let results = member "results" json in
-        let results_list = to_list results in
-        Alcotest.(check bool) "respects limit" true (List.length results_list <= 1);
-        
-        (* Check pagination metadata *)
-        let count = member "count" json |> to_int in
-        let total = member "total" json |> to_int in
-        let offset = member "offset" json |> to_int in
-        let limit = member "limit" json |> to_int in
-        
-        Alcotest.(check int) "count matches results" (List.length results_list) count;
-        Alcotest.(check bool) "total >= count" true (total >= count);
-        Alcotest.(check int) "offset is 1" 1 offset;
-        Alcotest.(check int) "limit is 1" 1 limit;
-        
-        cleanup test_dir;
-        Lwt.return ()
-    | Error err ->
-        cleanup test_dir;
-        Alcotest.fail ("Query failed: " ^ err)
-  )
+  with_pack "pagination" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store (created ^ "order by Artist ascending\nlimit 1\noffset 1\n") in
+      Alcotest.(check int) "count" 1 (json |> member "count" |> to_int);
+      Alcotest.(check int) "total ignores the page" 2 (json |> member "total" |> to_int);
+      Alcotest.(check bool) "last page" false (json |> member "hasMore" |> to_bool);
+      Alcotest.(check string) "second artist" "tina_keane"
+        (json |> member "results" |> index 0 |> member "Artist" |> member "value" |> to_string);
+      Lwt.return ())
 
-(** Test: execute_query validation - empty query *)
 let test_execute_query_empty () =
-  let (store, test_dir) = create_test_pack "empty_query" in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let query = "" in
-    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:None ~limit:None in
-    
-    match result with
-    | Ok _ ->
-        cleanup test_dir;
-        Alcotest.fail "Empty query should fail"
-    | Error err ->
-        Alcotest.(check bool) "error mentions empty" true (String.length err > 0);
-        cleanup test_dir;
-        Lwt.return ()
-  )
+  with_pack "empty_query" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store "" in
+      Alcotest.(check bool) "invalid" false (json |> member "valid" |> to_bool);
+      Lwt.return ())
 
-(** Test: execute_query validation - invalid syntax *)
 let test_execute_query_invalid () =
-  let (store, test_dir) = create_test_pack "invalid_query" in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let query = "this is not a valid query!!!" in
-    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:None ~limit:None in
-    
-    match result with
-    | Ok _ ->
-        cleanup test_dir;
-        Alcotest.fail "Invalid query should fail"
-    | Error err ->
-        Alcotest.(check bool) "returns error" true (String.length err > 0);
-        cleanup test_dir;
-        Lwt.return ()
-  )
+  with_pack "invalid_query" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store "this is not a valid query!!!" in
+      Alcotest.(check bool) "invalid" false (json |> member "valid" |> to_bool);
+      Alcotest.(check string) "syntax error" "syntax_error" (json |> member "errors" |> index 0 |> member "code" |> to_string);
+      Lwt.return ())
 
-(** Test: execute_query respects max_results *)
 let test_execute_query_max_results () =
-  let (store, test_dir) = create_test_pack "max_query_results" in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let query = "created(Artist, Work)" in
-    let* result = Beingdb.Controller.execute_query ~max_results:1 store query ~offset:None ~limit:None in
-    
-    match result with
-    | Ok json ->
-        let results = Yojson.Safe.Util.member "results" json in
-        let results_list = Yojson.Safe.Util.to_list results in
-        Alcotest.(check bool) "respects max_results" true (List.length results_list <= 1);
-        
-        cleanup test_dir;
-        Lwt.return ()
-    | Error err ->
-        cleanup test_dir;
-        Alcotest.fail ("Query failed: " ^ err)
-  )
+  with_pack "max_query_results" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query ~max_results:1 store created in
+      Alcotest.(check int) "capped" 1 (json |> member "count" |> to_int);
+      Alcotest.(check int) "total still counts every row" 2 (json |> member "total" |> to_int);
+      Alcotest.(check bool) "truncated" true (json |> member "truncated" |> to_bool);
+      Lwt.return ())
 
-(** Test: execute_query JSON structure without pagination *)
 let test_execute_query_json_structure () =
-  let (store, test_dir) = create_test_pack "json_structure" in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let query = "created(Artist, Work)" in
-    let* result = Beingdb.Controller.execute_query ~max_results:100 store query ~offset:None ~limit:None in
-    
-    match result with
-    | Ok json ->
-        let open Yojson.Safe.Util in
-        
-        (* Verify required fields exist *)
-        let variables = member "variables" json |> to_list in
-        let results = member "results" json |> to_list in
-        let count = member "count" json |> to_int in
-        let total = member "total" json |> to_int in
-        
-        (* Verify basic structure *)
-        Alcotest.(check bool) "has variables" true (List.length variables > 0);
-        Alcotest.(check bool) "has results" true (List.length results > 0);
-        Alcotest.(check int) "count matches results" (List.length results) count;
-        Alcotest.(check bool) "total >= count" true (total >= count);
-        
-        (* When no explicit pagination, limit is set to max_results (safety feature) *)
-        let limit = member "limit" json |> to_int in
-        Alcotest.(check int) "limit equals max_results" 100 limit;
-        
-        cleanup test_dir;
-        Lwt.return ()
-    | Error err ->
-        cleanup test_dir;
-        Alcotest.fail ("Query failed: " ^ err)
-  )
+  with_pack "json_structure" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store created in
+      let keys = match json with `Assoc kvs -> List.map fst kvs | _ -> [] in
+      Alcotest.(check (list string)) "fields"
+        [ "variables"; "results"; "count"; "total"; "hasMore"; "truncated"; "warnings"; "language"; "languageVersion"; "environmentFingerprint" ]
+        keys;
+      Alcotest.(check int) "count = total" (json |> member "count" |> to_int) (json |> member "total" |> to_int);
+      Alcotest.(check string) "language" "dsl" (json |> member "language" |> to_string);
+      Lwt.return ())
 
 (* --- typed JSON serialization --- *)
 
-let json_value_field predicate store field =
+let json_value_field pattern store field =
   let open Lwt.Syntax in
-  let* result = Controller.execute_query ~max_results:100 store predicate ~offset:None ~limit:None in
-  match result with
-  | Error e -> Alcotest.fail e
-  | Ok json ->
-      let open Yojson.Safe.Util in
-      let first_result = json |> member "results" |> to_list |> List.hd in
-      Lwt.return (first_result |> member field)
+  let open Yojson.Safe.Util in
+  let* json = query store (Printf.sprintf "find %s\nwhere\n  %s\n" field pattern) in
+  Lwt.return (json |> member "results" |> to_list |> List.hd |> member field)
 
 let test_typed_json_decimal () =
   let (store, test_dir) = create_test_pack "typed_json_decimal" in
@@ -404,52 +304,35 @@ let test_typed_json_uri () =
      cleanup test_dir;
      Lwt.return ())
 
-(* --- run_query: unified language/action dispatch --- *)
+(* --- run_query: language/action dispatch --- *)
 
-let test_run_query_core_execute () =
-  let store, test_dir = create_test_pack "run_core_exec" in
-  Lwt_main.run
-    (let open Lwt.Syntax in
-     let* outcome = Controller.run_query ~max_results:100 store "created(Artist, Work)" ~offset:None ~limit:None in
-     (match outcome with
-     | Controller.Success json ->
-         let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
-         Alcotest.(check bool) "has results" true (List.length results > 0)
-     | Controller.Invalid _ -> Alcotest.fail "expected Success, got Invalid"
-     | Controller.Failure { message; _ } -> Alcotest.fail ("expected Success, got Failure: " ^ message));
-     cleanup test_dir;
-     Lwt.return ())
+let test_run_query_default_language_is_dsl () =
+  with_pack "run_default_dsl" (fun store ->
+      let open Lwt.Syntax in
+      let* outcome = Controller.run_query ~max_results:100 store created in
+      (match outcome with
+      | Controller.Success json -> Alcotest.(check string) "language" "dsl" Yojson.Safe.Util.(json |> member "language" |> to_string)
+      | _ -> Alcotest.fail "expected Success");
+      Lwt.return ())
 
-let test_run_query_core_validate () =
-  let store, test_dir = create_test_pack "run_core_validate" in
-  Lwt_main.run
-    (let open Lwt.Syntax in
-     let* outcome = Controller.run_query ~max_results:100 ~action:"validate" store "created(Artist, Work)" ~offset:None ~limit:None in
-     (match outcome with
-     | Controller.Success json -> Alcotest.(check bool) "valid true" true (Yojson.Safe.Util.(json |> member "valid" |> to_bool))
-     | _ -> Alcotest.fail "expected Success");
-     cleanup test_dir;
-     Lwt.return ())
-
-let test_run_query_core_explain () =
-  let store, test_dir = create_test_pack "run_core_explain" in
-  Lwt_main.run
-    (let open Lwt.Syntax in
-     let* outcome = Controller.run_query ~max_results:100 ~action:"explain" store "created(Artist, Work)" ~offset:None ~limit:None in
-     (match outcome with
-     | Controller.Success json ->
-         Alcotest.(check bool) "has plan steps" true (List.length Yojson.Safe.Util.(json |> member "plan" |> to_list) > 0);
-         Alcotest.(check bool) "has planText" true (String.length Yojson.Safe.Util.(json |> member "planText" |> to_string) > 0)
-     | _ -> Alcotest.fail "expected Success");
-     cleanup test_dir;
-     Lwt.return ())
+let test_run_query_core_rejected () =
+  with_pack "run_core_rejected" (fun store ->
+      let open Lwt.Syntax in
+      Lwt_list.iter_s
+        (fun action ->
+          let* outcome = Controller.run_query ~max_results:100 ~language:"core" ~action store "created(Artist, Work)" in
+          (match outcome with
+          | Controller.Failure { code; _ } -> Alcotest.(check string) action "unsupported_language" code
+          | _ -> Alcotest.fail "expected Failure");
+          Lwt.return ())
+        [ "execute"; "validate"; "explain"; "diagnose" ])
 
 let test_run_query_dsl_execute () =
   let store, test_dir = create_test_pack "run_dsl_exec" in
   Lwt_main.run
     (let open Lwt.Syntax in
      let query = "find Artist\nwhere\n  artist(Artist)\n" in
-     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query ~offset:None ~limit:None in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query in
      (match outcome with
      | Controller.Success json ->
          let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
@@ -469,7 +352,7 @@ let test_run_query_dsl_execute_top_level_alternatives () =
   Lwt_main.run
     (let open Lwt.Syntax in
      let query = "find Artist\nwhere\n  either\n    artist(Artist)\n  or\n    artist(Artist)\n" in
-     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query ~offset:None ~limit:None in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query in
      (match outcome with
      | Controller.Success json ->
          let results = Yojson.Safe.Util.(json |> member "results" |> to_list) in
@@ -484,7 +367,7 @@ let test_run_query_dsl_validate_unknown_predicate () =
   Lwt_main.run
     (let open Lwt.Syntax in
      let query = "find X\nwhere\n  artst(X)\n" in
-     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"validate" store query ~offset:None ~limit:None in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"validate" store query in
      (match outcome with
      | Controller.Invalid json ->
          Alcotest.(check bool) "valid false" false (Yojson.Safe.Util.(json |> member "valid" |> to_bool));
@@ -500,7 +383,7 @@ let test_run_query_dsl_explain () =
   Lwt_main.run
     (let open Lwt.Syntax in
      let query = "find Artist\nwhere\n  artist(Artist)\n" in
-     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"explain" store query ~offset:None ~limit:None in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"explain" store query in
      (match outcome with
      | Controller.Success json ->
          Alcotest.(check bool) "has plan steps" true (List.length Yojson.Safe.Util.(json |> member "plan" |> to_list) > 0);
@@ -513,7 +396,7 @@ let test_run_query_unknown_language () =
   let store, test_dir = create_test_pack "run_unknown_lang" in
   Lwt_main.run
     (let open Lwt.Syntax in
-     let* outcome = Controller.run_query ~max_results:100 ~language:"sparql" store "created(A, W)" ~offset:None ~limit:None in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"sparql" store "created(A, W)" in
      (match outcome with Controller.Failure _ -> () | _ -> Alcotest.fail "expected Failure");
      cleanup test_dir;
      Lwt.return ())
@@ -527,7 +410,7 @@ let test_run_query_dsl_truncation () =
     (let open Lwt.Syntax in
      let open Yojson.Safe.Util in
      let check name ~max_results query ~count ~has_more ~truncated =
-       let* outcome = Controller.run_query ~max_results ~language:"dsl" store query ~offset:None ~limit:None in
+       let* outcome = Controller.run_query ~max_results ~language:"dsl" store query in
        (match outcome with
        | Controller.Success json ->
            Alcotest.(check int) (name ^ ": count") count (json |> member "count" |> to_int);
@@ -567,7 +450,7 @@ let test_run_query_dsl_empty_result_diagnostics () =
     (let open Lwt.Syntax in
      let open Yojson.Safe.Util in
      let exec query =
-       let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query ~offset:None ~limit:None in
+       let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store query in
        match outcome with Controller.Success json -> Lwt.return json | _ -> Alcotest.fail "expected Success"
      in
      let* json = exec "find Work\nwhere\n  created(tina_kean, Work)\n" in
@@ -597,7 +480,7 @@ let test_run_query_dsl_diagnose () =
     (let open Lwt.Syntax in
      let open Yojson.Safe.Util in
      let query = "find Work\nwhere\n  created(Work, tina_keane)\n" in
-     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"diagnose" store query ~offset:None ~limit:None in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" ~action:"diagnose" store query in
      let repaired =
        match outcome with
        | Controller.Success json ->
@@ -610,12 +493,10 @@ let test_run_query_dsl_diagnose () =
        | _ -> Alcotest.fail "expected Success"
      in
      Alcotest.(check string) "repaired query" "find Work\nwhere\n  created(tina_keane, Work)\n" repaired;
-     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store repaired ~offset:None ~limit:None in
+     let* outcome = Controller.run_query ~max_results:100 ~language:"dsl" store repaired in
      (match outcome with
      | Controller.Success json -> Alcotest.(check int) "rows" 1 (json |> member "count" |> to_int)
      | _ -> Alcotest.fail "expected Success");
-     let* outcome = Controller.run_query ~max_results:100 ~language:"core" ~action:"diagnose" store "created(A, W)" ~offset:None ~limit:None in
-     (match outcome with Controller.Failure { code; _ } -> Alcotest.(check string) "core" "unknown_action" code | _ -> Alcotest.fail "expected Failure");
      cleanup test_dir;
      Lwt.return ())
 
@@ -648,9 +529,8 @@ let () =
       Alcotest.test_case "uri output" `Quick test_typed_json_uri;
     ];
     "Run Query dispatch", [
-      Alcotest.test_case "core execute" `Quick test_run_query_core_execute;
-      Alcotest.test_case "core validate" `Quick test_run_query_core_validate;
-      Alcotest.test_case "core explain" `Quick test_run_query_core_explain;
+      Alcotest.test_case "default language is dsl" `Quick test_run_query_default_language_is_dsl;
+      Alcotest.test_case "core language rejected" `Quick test_run_query_core_rejected;
       Alcotest.test_case "dsl execute" `Quick test_run_query_dsl_execute;
       Alcotest.test_case "dsl execute top-level alternatives" `Quick test_run_query_dsl_execute_top_level_alternatives;
       Alcotest.test_case "dsl execute hasMore/truncated" `Quick test_run_query_dsl_truncation;

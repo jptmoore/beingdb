@@ -23,22 +23,7 @@ val list_predicates_detailed :
 val query_predicate : 
   max_results:int -> Db.t -> string -> (Yojson.Safe.t, string) result Lwt.t
 
-(** Execute complex query with validation, timeout, and result limiting
-    @param max_results Maximum number of results to return
-    @param store Pack store
-    @param query_str Query string to parse
-    @param offset Optional offset for pagination
-    @param limit Optional limit for pagination
-    @return JSON representation of results or error *)
-val execute_query : 
-  max_results:int -> 
-  Db.t -> 
-  string -> 
-  offset:int option -> 
-  limit:int option -> 
-  (Yojson.Safe.t, string) result Lwt.t
-
-(** {2 Expressive query language and unified query dispatch} *)
+(** {2 Queries (the find/where language)} *)
 
 (** Outcome of {!run_query}:
     - [Success json]: executed/validated/explained successfully. For all
@@ -52,28 +37,29 @@ val execute_query :
       shape without the explain/validate-specific extras (for
       [execute]). Covers syntax errors, unknown predicates, arity/type
       mismatches, disconnected queries, unsafe negation, and unbound
-      projections/ordering, for both languages and all three actions.
+      projections/ordering, for every action.
     - [Failure { code; message }]: a transport or runtime failure
-      unrelated to the query's validity (timeout, internal error, or a
-      bad [language]/[action] parameter). *)
+      unrelated to the query's validity (timeout, internal error, an
+      [unsupported_language] ["core"], or a bad [language]/[action]
+      parameter). *)
 type query_outcome =
   | Success of Yojson.Safe.t
   | Invalid of Yojson.Safe.t
   | Failure of { code : string; message : string }
 
 (** Unified entry point for [POST /query] and the REPL's query commands.
-    [language] is ["core"] (default) or ["dsl"]; [action] is ["execute"]
-    (default), ["validate"], ["explain"] or, for ["dsl"] only,
-    ["diagnose"] (validation plus {!Query_diagnostics} data-aware
-    diagnostics and proven repairs, without executing). The DSL path
-    shares the same planner/executor as the core language via
-    {!Core_query} and {!Dsl_lower}. *)
+    Queries use the find/where language: [language] may be omitted or
+    ["dsl"]; ["core"] fails with [unsupported_language], anything else
+    with [unknown_language]. [action] is ["execute"] (default),
+    ["validate"], ["explain"] or ["diagnose"] (validation plus
+    {!Query_diagnostics} data-aware diagnostics and proven repairs,
+    without executing). Execute responses carry [count] (rows returned),
+    [total] (rows the query matches), [hasMore] and [truncated]; paging
+    is [limit]/[offset] in the query text. *)
 val run_query :
   max_results:int ->
   ?language:string ->
   ?action:string ->
   Db.t ->
   string ->
-  offset:int option ->
-  limit:int option ->
   query_outcome Lwt.t

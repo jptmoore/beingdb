@@ -135,15 +135,19 @@ let test_run_queries_file () =
       in
       let dir = create_test_pack "queries_file" in
       let path = Filename.concat dir "queries.ql" in
-      write_file path "% a comment\ncreated(Artist, Work)\ncreated(tina_keane, nobody)\n";
+      write_file path
+        "% a comment\nfind Artist, Work\nwhere\n  created(Artist, Work)\n\n# another comment\n\nfind Work\nwhere\n  created(tina_keane, Work)\n  Work = nobody\n\n\nfind W where x\n";
       let* results = Repl_support.run_queries_file ~max_results:100 store path in
-      Alcotest.(check int) "two queries run (comment skipped)" 2 (List.length results);
+      Alcotest.(check (list string)) "blank-line separated queries (comments skipped)"
+        [ "find Artist, Work\nwhere\n  created(Artist, Work)"; "find Work\nwhere\n  created(tina_keane, Work)\n  Work = nobody"; "find W where x" ]
+        (List.map fst results);
       (match results with
-      | [ (_, Ok first_json); (_, Ok second_json) ] ->
-          let count j = Yojson.Safe.Util.member "count" j |> Yojson.Safe.Util.to_int in
-          Alcotest.(check int) "first query has a match" 1 (count first_json);
-          Alcotest.(check int) "second query has no match" 0 (count second_json)
-      | _ -> Alcotest.fail "expected two Ok results");
+      | [ (_, Ok first_json); (_, Ok second_json); (_, Ok third_json) ] ->
+          let open Yojson.Safe.Util in
+          Alcotest.(check int) "first query has a match" 1 (first_json |> member "count" |> to_int);
+          Alcotest.(check int) "second query has no match" 0 (second_json |> member "count" |> to_int);
+          Alcotest.(check bool) "third query is reported invalid" false (third_json |> member "valid" |> to_bool)
+      | _ -> Alcotest.fail "expected three Ok results");
       cleanup dir;
       Lwt.return_unit)
 
@@ -163,5 +167,5 @@ let () =
           Alcotest.test_case "arity mismatch not written" `Quick test_load_facts_file_arity_mismatch;
           Alcotest.test_case "missing file" `Quick test_load_facts_file_missing;
         ] );
-      ("run_queries_file", [ Alcotest.test_case "runs each line as a query" `Quick test_run_queries_file ]);
+      ("run_queries_file", [ Alcotest.test_case "runs blank-line separated queries" `Quick test_run_queries_file ]);
     ]

@@ -79,14 +79,31 @@ let load_facts_file store path =
              @ List.map (fun e -> "parse error: " ^ e) parse_errors)))
     (fun exn -> Lwt.return (Error (Printf.sprintf "Could not read %s: %s" path (Printexc.to_string exn))))
 
+(* Queries in a file are separated by blank lines; comment lines
+   ([%] or [#]) are dropped. *)
+let query_blocks lines =
+  let flush acc blocks = match acc with [] -> blocks | _ -> String.concat "\n" (List.rev acc) :: blocks in
+  let rec go acc blocks = function
+    | [] -> List.rev (flush acc blocks)
+    | line :: rest ->
+        let trimmed = String.trim line in
+        if trimmed = "" then go [] (flush acc blocks) rest
+        else if not (is_significant line) then go acc blocks rest
+        else go (line :: acc) blocks rest
+  in
+  go [] [] lines
+
 let run_queries_file ~max_results store path =
   Lwt.catch
     (fun () ->
       let* lines = read_lines path in
-      let queries = List.filter is_significant lines in
       Lwt_list.map_s
         (fun query_text ->
-          let* result = Controller.execute_query ~max_results store query_text ~offset:None ~limit:None in
-          Lwt.return (query_text, result))
-        queries)
+          let* outcome = Controller.run_query ~max_results store query_text in
+          Lwt.return
+            ( query_text,
+              match outcome with
+              | Controller.Success json | Controller.Invalid json -> Ok json
+              | Controller.Failure { code; message } -> Error (Printf.sprintf "[%s] %s" code message) ))
+        (query_blocks lines))
     (fun exn -> Lwt.return [ (path, Error (Printf.sprintf "Could not read %s: %s" path (Printexc.to_string exn))) ])

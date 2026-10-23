@@ -5,44 +5,6 @@ open Lwt.Infix
 (** Convert fact arguments to typed JSON: a list of [{"type":..,"value":..}]. *)
 let fact_to_json (args : Value.t list) = `List (List.map Value.to_json args)
 
-(** Convert a single typed binding to JSON: [{"Var": {"type":..,"value":..}, ...}]. *)
-let binding_to_json (binding : Model.binding) =
-  `Assoc (List.map (fun (var, value) -> (var, Value.to_json value)) binding)
-
-(** Convert query result to JSON *)
-let query_result_to_json ?offset ?limit result =
-  let total_count = result.Model.total_count in
-  
-  (* Apply pagination *)
-  let offset_val = Option.value offset ~default:0 in
-  let limit_val = Option.value limit ~default:total_count in
-  
-  let paginated_bindings = 
-    result.Model.bindings
-    |> (fun l -> List.filteri (fun i _ -> i >= offset_val) l)
-    |> (fun l -> List.filteri (fun i _ -> i < limit_val) l)
-  in
-  
-  let bindings_json = List.map binding_to_json paginated_bindings in
-  
-  let response = [
-    "variables", `List (List.map (fun v -> `String v) result.Model.variables);
-    "results", `List bindings_json;
-    "count", `Int (List.length paginated_bindings);
-    "total", `Int total_count;
-  ] in
-  
-  let response = match offset with
-    | Some o -> response @ ["offset", `Int o]
-    | None -> response
-  in
-  let response = match limit with
-    | Some l -> response @ ["limit", `Int l]
-    | None -> response
-  in
-  
-  `Assoc response
-
 (** List predicates with optional samples *)
 let list_predicates ~samples store =
   match samples with
@@ -120,78 +82,13 @@ let query_predicate ~max_results store predicate =
       ] in
       Lwt.return (Ok json)
 
-(** Execute query with timeout and validation *)
-let execute_query ~max_results store query_str ~offset ~limit =
-  (* Reject oversized payloads before even tokenizing/parsing *)
-  match Query_validation.check_query_length query_str with
-  | Error err -> Lwt.return (Error (Query_validation.error_message err))
-  | Ok () -> (
-  (* Parse query *)
-  match Query_parser.parse_query_result query_str with
-  | Error msg -> Lwt.return (Error msg)
-  | Ok query ->
-      (* Validate query structure and parameters *)
-      match Query_validation.validate_query query offset limit with
-      | Error err -> Lwt.return (Error (Query_validation.error_message err))
-      | Ok (valid_offset, valid_limit) ->
-          (* Enforce max results limit *)
-          let limit_to_use = 
-            match valid_limit with
-            | Some user_limit -> Some (min user_limit max_results)
-            | None -> Some max_results
-          in
-          
-          (* Determine execution strategy *)
-          let pattern_count =
-            List.length
-              (List.filter (function Query_ast.Pattern _ -> true | _ -> false) query.Query_ast.clauses)
-          in
-          let is_join = pattern_count > 1 in
-          let use_streaming = is_join && Option.is_some limit_to_use in
-          
-          (* Execute with timeout *)
-          Lwt.catch
-            (fun () ->
-              Lwt_unix.with_timeout !Query_validation.Config.query_timeout (fun () ->
-                if use_streaming then
-                  let offset_val = Option.value valid_offset ~default:0 in
-                  let limit_val = Option.get limit_to_use in
-                  
-                  Model.execute_query_streaming store query ~offset:offset_val ~limit:limit_val
-                  >>= (function
-                  | Error msg -> Lwt.return (Error msg)
-                  | Ok result ->
-                      let result_json = `Assoc [
-                        "variables", `List (List.map (fun v -> `String v) result.Model.variables);
-                        "results", `List (List.map binding_to_json result.Model.bindings);
-                        "count", `Int (List.length result.Model.bindings);
-                      ] in
-                      Lwt.return (Ok result_json))
-                else
-                  Model.execute_query store query
-                  >>= (function
-                  | Error msg -> Lwt.return (Error msg)
-                  | Ok result -> Lwt.return (Ok (query_result_to_json ?offset:valid_offset ?limit:limit_to_use result)))
-              )
-            )
-            (function
-              | Lwt_unix.Timeout ->
-                  let msg = Printf.sprintf "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints." 
-                    !Query_validation.Config.query_timeout in
-                  Lwt.return (Error msg)
-              | exn ->
-                  Lwt.return (Error (Printf.sprintf "Query error: %s" (Printexc.to_string exn)))
-            ))
-
 (** {2 Expressive query language and unified query dispatch}
 
     [run_query] is the single entry point for [POST /query] and the REPL's
-    query commands, covering both the core and expressive (DSL) query
-    languages and all three actions (execute/validate/explain). It shares
-    the exact same planner/executor as {!execute_query} above -- the DSL
-    path only adds parsing, environment-aware validation, and the
-    projection/order/distinct/limit/offset post-processing pipeline
-    ({!Core_query.apply}).
+    query commands. Queries are always the find/where language; BeingDB
+    lowers them to its internal core form ({!Core_query}) and runs them
+    through the one planner/executor, then applies the
+    projection/order/distinct/limit/offset pipeline ({!Core_query.apply}).
 
     Every response is one of:
     - [Success json]: executed/validated/explained successfully. For all
@@ -204,8 +101,7 @@ let execute_query ~max_results store query_str ~offset ~limit =
       "warnings": [...], "language", "languageVersion",
       "environmentFingerprint"}]. This covers syntax errors, unknown
       predicates, arity/type mismatches, disconnected queries, unsafe
-      negation, and unbound projections/ordering -- for both languages
-      and all three actions.
+      negation, and unbound projections/ordering -- for every action.
     - [Failure {code; message}]: a transport or runtime failure that has
       nothing to do with the query's validity (malformed request,
       timeout, an internal error, or a bad [language]/[action]
@@ -225,10 +121,6 @@ let core_error_json ~code ~message ?groups () =
   let extra = match groups with Some g -> [ ("groups", `List (List.map (fun grp -> `List (List.map (fun s -> `String s) grp)) g)) ] | None -> [] in
   `Assoc ([ ("code", `String code); ("message", `String message) ] @ extra)
 
-let validation_error_error_json (err : Query_validation.validation_error) =
-  let groups = match err with Query_validation.DisconnectedQuery groups -> Some groups | _ -> None in
-  core_error_json ~code:(Query_validation.error_code err) ~message:(Query_validation.error_message err) ?groups ()
-
 (** [language]/[languageVersion]/[environmentFingerprint] fields, as
     appended to "execute" action success responses (in addition to
     validate/explain's {!validation_envelope}, which carries the same
@@ -242,7 +134,7 @@ let with_environment_fields ~language (env : Query_environment.t) =
   ]
 
 (** The single response envelope for [action: "validate"] and
-    [action: "explain"], in both languages: [valid], the [errors]/
+    [action: "explain"]: [valid], the [errors]/
     [warnings] arrays (structured, per {!Validation_error.to_json}), and
     the dataset-identifying [language]/[languageVersion]/
     [environmentFingerprint] fields, plus whatever action-specific
@@ -258,58 +150,6 @@ let validation_envelope ~language ~(env : Query_environment.t) ~valid errors_jso
        ("environmentFingerprint", `String env.Query_environment.fingerprint);
      ]
     @ extra)
-
-(** Run the core-language "validate" action: parse + structural
-    validation only, no execution. *)
-let validate_core store query_str =
-  Db.Environment.load_or_build store >>= fun env ->
-  match Query_parser.parse_query_result query_str with
-  | Error msg -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
-  | Ok query -> (
-      match Query_validation.validate_query query None None with
-      | Error err -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ validation_error_error_json err ] [] []))
-      | Ok _ ->
-          Lwt.return
-            (Success
-               (validation_envelope ~language:"core" ~env ~valid:true [] []
-                  [ ("variables", `List (List.map (fun v -> `String v) query.Query_ast.variables)) ])))
-
-(** Run the core-language "explain" action: parse then produce the
-    structured plan and human-readable [planText], without executing. *)
-let explain_core store query_str =
-  Db.Environment.load_or_build store >>= fun env ->
-  match Query_parser.parse_query_result query_str with
-  | Error msg -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
-  | Ok query ->
-      let cq = Core_query.of_query query in
-      Lwt.return
-        (Success
-           (validation_envelope ~language:"core" ~env ~valid:true [] []
-              [
-                ("projection", `List (List.map (fun v -> `String v) (Core_query.projected_variables cq)));
-                ("distinct", `Bool cq.Core_query.distinct);
-                ("normalizedCoreQuery", Explain_plan.normalized_core_query_json query);
-                ("plan", `List (Explain_plan.build cq));
-                ("planText", `String (Query_engine.explain query));
-              ]))
-
-(** The unified, structured counterpart to {!execute_query} for
-    [language: "core"], reusing its exact execution behaviour (same
-    parse, validate, timeout, and streaming strategy) but classifying
-    parse/validation failures as [Invalid] (query-invalid) rather than a
-    bare runtime [Failure]. *)
-let execute_core_structured ~max_results store query_str ~offset ~limit =
-  Db.Environment.load_or_build store >>= fun env ->
-  match Query_parser.parse_query_result query_str with
-  | Error msg -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ core_error_json ~code:"syntax_error" ~message:msg () ] [] []))
-  | Ok query -> (
-      match Query_validation.validate_query query offset limit with
-      | Error err -> Lwt.return (Invalid (validation_envelope ~language:"core" ~env ~valid:false [ validation_error_error_json err ] [] []))
-      | Ok _ -> (
-          execute_query ~max_results store query_str ~offset ~limit >>= function
-          | Ok (`Assoc fields) -> Lwt.return (Success (`Assoc (fields @ with_environment_fields ~language:"core" env)))
-          | Ok json -> Lwt.return (Success json)
-          | Error message -> Lwt.return (Failure { code = "execution_error"; message })))
 
 let errors_warnings_json errors warnings =
   (List.map Validation_error.to_json errors, List.map Validation_error.warning_to_json warnings)
@@ -371,13 +211,13 @@ let explain_dsl store query_str =
                 ("planText", `String (Query_engine.explain cq.Core_query.query));
               ]))
 
-(** Execute a lowered DSL query: the same safety-checked, timed,
-    optionally-streamed execution strategy as {!execute_query}, followed
-    by {!Core_query.apply} for projection/distinct/order/limit/offset.
-    Predicate names, arities, connectivity, and safe negation are all
-    already guaranteed by {!Dsl_lower.lower} by the time a query reaches
-    here, so (unlike the core-language path) there is no separate
-    post-lowering safety-validation step to re-run. *)
+(** Execute a lowered DSL query: the safety-checked, timed execution
+    through {!Model.execute_query}, followed by {!Core_query.apply} for
+    projection/distinct/order. The full projected result is always
+    materialised, so [total] is exact; [offset]/[limit] and the server's
+    [max_results] cap then select the page. Predicate names, arities,
+    connectivity, and safe negation are all already guaranteed by
+    {!Dsl_lower.lower} by the time a query reaches here. *)
 let execute_dsl ~max_results store query_str =
   lower_dsl store query_str >>= function
   | `Parse_error msg ->
@@ -389,29 +229,16 @@ let execute_dsl ~max_results store query_str =
       Lwt.return (Invalid (validation_envelope ~language:"dsl" ~env ~valid:false errors_json warnings_json []))
   | `Valid (env, cq, warnings) ->
       let effective_limit = match cq.Core_query.limit with Some n -> min n max_results | None -> max_results in
-      (* One row beyond the limit is fetched only to detect whether more exist. *)
-      let probe_limit = effective_limit + 1 in
-      let pattern_count = List.length (List.filter (function Query_ast.Pattern _ -> true | _ -> false) cq.Core_query.query.Query_ast.clauses) in
-      let is_join = pattern_count > 1 in
-      let use_streaming = is_join && cq.Core_query.projection = None && (not cq.Core_query.distinct) && cq.Core_query.order_by = [] in
+      let offset = max 0 (Option.value cq.Core_query.offset ~default:0) in
       let run_body () =
-        let run_model () =
-          if use_streaming then
-            Model.execute_query_streaming store cq.Core_query.query ~offset:(Option.value cq.Core_query.offset ~default:0) ~limit:probe_limit
-          else Model.execute_query store cq.Core_query.query
-        in
-        run_model () >>= function
+        Model.execute_query store cq.Core_query.query >>= function
         | Error message -> Lwt.return (Failure { code = "execution_error"; message })
         | Ok model_result ->
-            let vars, probed =
-              if use_streaming then (model_result.Model.variables, List.map (List.map (fun (_, v) -> Some v)) model_result.Model.bindings)
-              else
-                let engine_result : Query_engine.result = { variables = model_result.Model.variables; bindings = model_result.Model.bindings } in
-                let cq_bounded = { cq with Core_query.limit = Some probe_limit } in
-                Core_query.apply cq_bounded engine_result
-            in
-            let has_more = List.length probed > effective_limit in
-            let rows = List.filteri (fun i _ -> i < effective_limit) probed in
+            let engine_result : Query_engine.result = { variables = model_result.Model.variables; bindings = model_result.Model.bindings } in
+            let vars, all_rows = Core_query.apply { cq with Core_query.offset = None; limit = None } engine_result in
+            let total = List.length all_rows in
+            let rows = List.filteri (fun i _ -> i >= offset && i < offset + effective_limit) all_rows in
+            let has_more = offset + List.length rows < total in
             (* Truncated: the server cap, not the query's own limit, cut the result. *)
             let truncated = has_more && (match cq.Core_query.limit with Some n -> n > max_results | None -> true) in
             let truncation_warning =
@@ -432,7 +259,7 @@ let execute_dsl ~max_results store query_str =
             in
             (* An empty first page is explained by the same data-aware
                diagnostics as the "diagnose" action. *)
-            let first_page = match cq.Core_query.offset with None | Some 0 -> true | Some _ -> false in
+            let first_page = offset = 0 in
             (if rows = [] && (not has_more) && first_page then Db.Diagnostics.empty_result_fields store env query_str
              else Lwt.return [])
             >>= fun diagnosis ->
@@ -443,6 +270,7 @@ let execute_dsl ~max_results store query_str =
                       ("variables", `List (List.map (fun v -> `String v) vars));
                       ("results", `List (List.map (row_to_json vars) rows));
                       ("count", `Int (List.length rows));
+                      ("total", `Int total);
                       ("hasMore", `Bool has_more);
                       ("truncated", `Bool truncated);
                       ("warnings", `List (List.map Validation_error.warning_to_json warnings @ truncation_warning));
@@ -475,29 +303,36 @@ let diagnose_dsl store query_str =
   Db.Diagnostics.fields store env query_str >>= fun fields ->
   Lwt.return (Success (`Assoc (fields @ with_environment_fields ~language:"dsl" env)))
 
-(** Unified query entry point: dispatches on [language] ("core" | "dsl",
-    default "core") and [action] ("execute" | "validate" | "explain",
-    default "execute"; "diagnose" for "dsl" only). Rejects an oversized
-    raw query string up front, before either language's parser runs, so
-    this one guard covers both languages and all actions. *)
-let run_query ~max_results ?(language = "core") ?(action = "execute") store query_str ~offset ~limit =
-  match Query_validation.check_query_length query_str with
-  | Error err -> Lwt.return (Failure { code = Query_validation.error_code err; message = Query_validation.error_message err })
-  | Ok () -> (
+(** Unified query entry point for [POST /query] and the REPL. Queries are
+    always the find/where language: [language] may be omitted or
+    ["dsl"]; ["core"] is rejected as [unsupported_language] (BeingDB keeps
+    the core form only internally, as the target the DSL lowers to).
+    [action] is ["execute"] (default), ["validate"], ["explain"] or
+    ["diagnose"]. An oversized query string is rejected before parsing. *)
+let run_query ~max_results ?(language = "dsl") ?(action = "execute") store query_str =
   match (language, action) with
-  | "core", "execute" -> execute_core_structured ~max_results store query_str ~offset ~limit
-  | "core", "validate" -> validate_core store query_str
-  | "core", "explain" -> explain_core store query_str
-  | "dsl", "execute" -> execute_dsl ~max_results store query_str
-  | "dsl", "validate" -> validate_dsl store query_str
-  | "dsl", "explain" -> explain_dsl store query_str
-  | "dsl", "diagnose" -> diagnose_dsl store query_str
-  | "core", "diagnose" ->
-      Lwt.return (Failure { code = "unknown_action"; message = "Action 'diagnose' is only available for language 'dsl'" })
-  | _, ("execute" | "validate" | "explain" | "diagnose") ->
-      Lwt.return (Failure { code = "unknown_language"; message = Printf.sprintf "Unknown language '%s' (expected 'core' or 'dsl')" language })
+  | "core", _ ->
+      Lwt.return
+        (Failure
+           {
+             code = "unsupported_language";
+             message =
+               "The core query language is no longer accepted; send a find/where query instead (omit 'language' or set it to \"dsl\"), e.g. \"find A, W\\nwhere\\n  created(A, W)\".";
+           })
+  | "dsl", ("execute" | "validate" | "explain" | "diagnose") -> (
+      match Query_validation.check_query_length query_str with
+      | Error err -> Lwt.return (Failure { code = Query_validation.error_code err; message = Query_validation.error_message err })
+      | Ok () -> (
+          match action with
+          | "execute" -> execute_dsl ~max_results store query_str
+          | "validate" -> validate_dsl store query_str
+          | "explain" -> explain_dsl store query_str
+          | _ -> diagnose_dsl store query_str))
+  | "dsl", _ ->
+      Lwt.return
+        (Failure
+           { code = "unknown_action"; message = Printf.sprintf "Unknown action '%s' (expected 'execute', 'validate', 'explain' or 'diagnose')" action })
   | _, _ ->
       Lwt.return
         (Failure
-           { code = "unknown_action"; message = Printf.sprintf "Unknown action '%s' (expected 'execute', 'validate', 'explain' or 'diagnose')" action }))
-
+           { code = "unknown_language"; message = Printf.sprintf "Unknown language '%s'; BeingDB queries use the find/where language (omit 'language' or set it to \"dsl\")" language })

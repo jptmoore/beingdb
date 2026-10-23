@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.1.6"
+  "version": "0.2.0"
 }
 ```
 
@@ -164,14 +164,14 @@ before declarations existed, so existing clients are unaffected.
 
 The fingerprint is deterministic (SHA-256 over sorted predicate names,
 arities, observed argument types, any declared roles, semantic types and
-descriptions, and the expressive query-language version; formatted as
+descriptions, and the query-language version; formatted as
 `"sha256:<lowercase hex digest>"`) and changes whenever any of those
 change. Packs without declarations keep the fingerprint they had before
 declarations existed. This is useful for invalidating cached prompts
 or schema descriptions built from this endpoint. The same fingerprint
 is exposed, under the same `environmentFingerprint` key, in REPL
 startup and every `POST /query` response (`execute`, `validate`, and
-`explain` alike, both languages) -- so a client never has to make a
+`explain` and `diagnose` alike) -- so a client never has to make a
 separate call to this endpoint just to learn it.
 
 **Use cases:** 
@@ -222,30 +222,30 @@ curl http://localhost:8080/query/created
 POST /query
 ```
 
-Execute pattern matching queries with joins and pagination, in either
-the core or the expressive query language.
+Run a `find`/`where` query: pattern matching, joins, typed comparisons,
+`optional`/`either`/`or`/`not`, ordering and paging.
 
 **Request Body:**
 ```json
 {
-  "query": "created(Artist, Work), shown_in(Work, Exhibition)",
-  "offset": 0,
-  "limit": 10
+  "query": "find Artist, Work, Exhibition\nwhere\n  created(Artist, Work)\n  shown_in(Work, Exhibition)\nlimit 10"
 }
 ```
 
 **Body Parameters:**
-- `query` (string, required) - Query text: core language pattern(s), or (with `"language": "dsl"`) an expressive `find`/`where` query
-- `offset` (integer, optional) - Start position for pagination (default: 0); core language only
-- `limit` (integer, optional) - Maximum results to return (default: server's `max_results`, see [Safety limits](#safety-limits)); core language only -- for the expressive language, use `limit`/`offset` inside the query text itself
-- `language` (string, optional) - `"core"` (default) or `"dsl"`
-- `action` (string, optional) - `"execute"` (default), `"validate"` (check without running), `"explain"` (show the access plan without running), or, for `"dsl"` only, `"diagnose"` (validation plus data-aware diagnostics and proven repairs, without running -- see [Diagnose](#diagnose-dsl))
+- `query` (string, required) - The `find`/`where` query text. Line breaks are written `\n` in JSON. Paging is part of the text: `limit N` and `offset N` lines at the end of the query.
+- `action` (string, optional) - `"execute"` (default), `"validate"` (check without running), `"explain"` (show the access plan without running), or `"diagnose"` (validation plus data-aware diagnostics and proven repairs, without running -- see [Diagnose](#diagnose-dsl))
+- `language` (string, optional) - May be omitted; the only accepted value is `"dsl"`. `"core"` is rejected with `unsupported_language`, any other value with `unknown_language`.
 
-See [Query Language](query-language.md#expressive-query-language) for
-the full `find`/`where` syntax, validation error shapes, and REPL
-equivalents.
+Request-level `offset` and `limit` fields are not accepted; a request
+that includes either is rejected with `unsupported_parameter` (HTTP
+400). Text that is not a `find`/`where` query, such as a bare pattern
+`created(A, W)`, fails validation with a `syntax_error`.
 
-**Response (without pagination):**
+See [Query Language](query-language.md#query-syntax) for the full
+`find`/`where` syntax, validation error shapes, and REPL equivalents.
+
+**Response:**
 ```json
 {
   "variables": ["Artist", "Work", "Exhibition"],
@@ -258,13 +258,16 @@ equivalents.
   ],
   "count": 1,
   "total": 1,
-  "language": "core",
+  "hasMore": false,
+  "truncated": false,
+  "warnings": [],
+  "language": "dsl",
   "languageVersion": "beingdb-dsl/1",
   "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
 
-**Response (with pagination):**
+**Response (one page of a larger result, `limit 2`):**
 ```json
 {
   "variables": ["Artist", "Work"],
@@ -274,32 +277,33 @@ equivalents.
   ],
   "count": 2,
   "total": 156,
-  "offset": 0,
-  "limit": 10,
-  "language": "core",
+  "hasMore": true,
+  "truncated": false,
+  "warnings": [],
+  "language": "dsl",
   "languageVersion": "beingdb-dsl/1",
   "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
 
 Each value in a result is a typed object, `{"type": ..., "value": ...}`
-(see [query-language.md](query-language.md#json-result-format)). Exact
-decimal values are always encoded as JSON strings to avoid precision
-loss.
+(see [query-language.md](query-language.md#json-result-format)), or
+`null` for a variable left unbound by an unmatched `optional` block.
+Exact decimal values are always encoded as JSON strings to avoid
+precision loss.
 
-**Response Fields:**
-- `variables` - Array of variable names in order
-- `results` - Array of result tuples (each tuple matches variable order)
-- `count` - Number of results in this response
-- `total` - Total results across all pages (only with pagination)
-- `offset` - Echo of request offset (only with pagination)
-- `limit` - Echo of request limit (only with pagination)
-- `language` - Echo of the request's `"core"`/`"dsl"` language
+**Response Fields** (in this order):
+- `variables` - Array of variable names in `find` order
+- `results` - Array of result rows, each an object keyed by variable name
+- `count` - Number of rows in this response
+- `total` - Number of rows the whole query matches (after `distinct`), independent of the query's `limit`/`offset` and the server's `max_results`
+- `hasMore` - `true` if more matching rows exist after this page, whether the query's own `limit` or the server's `max_results` stopped it
+- `truncated` - `true` if the server's `max_results` cap, not the query's own `limit`, cut the result; a `results_truncated` entry is then added to `warnings`. Page on with `limit`/`offset` in the query text, or narrow the query.
+- `warnings` - Advisory warnings (for example `heterogeneous_position`, `results_truncated`)
+- `diagnostics`, `provablyEmpty`, `repair` (only when the first page is empty) - the same data-aware explanation the [`diagnose`](#diagnose-dsl) action gives, so a client learns why there are no rows without a second call. `provablyEmpty: false` with no error diagnostics means BeingDB found no reason in the query itself: the facts are simply not recorded.
+- `language` - Always `"dsl"`
 - `languageVersion` - The query language version (same value as `/predicates?detailed=true`)
-- `environmentFingerprint` - The dataset schema fingerprint (same value as `/predicates?detailed=true`); lets a client cache schema knowledge from ordinary query responses alone, without a separate `/predicates` call. Present on every `action: "execute"` response (both languages), not just `validate`/`explain`.
-- `hasMore` (expressive language only) - `true` if at least one more row matches beyond those returned, whether the query's own `limit` or the server's `max_results` stopped it
-- `truncated` (expressive language only) - `true` if the server's `max_results` cap, not the query's own `limit`, cut the result; a `results_truncated` entry is then added to `warnings`. Page on with `limit`/`offset` in the query text, or narrow the query.
-- `diagnostics`, `provablyEmpty`, `repair` (expressive language only, only when the first page is empty) - the same data-aware explanation the [`diagnose`](#diagnose-dsl) action gives, so a client learns why there are no rows without a second call. `provablyEmpty: false` with no error diagnostics means BeingDB found no reason in the query itself: the facts are simply not recorded.
+- `environmentFingerprint` - The dataset schema fingerprint (same value as `/predicates?detailed=true`); lets a client cache schema knowledge from ordinary query responses alone, without a separate `/predicates` call. Present on every `POST /query` response body, not just `validate`/`explain`.
 
 **Examples:**
 
@@ -307,47 +311,40 @@ Simple pattern:
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "created(Artist, Work)"}'
+  -d '{"query": "find Artist, Work\nwhere\n  created(Artist, Work)"}'
 ```
 
-Join with pagination:
+Join, first page of 10:
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)", "offset": 0, "limit": 10}'
+  -d '{"query": "find Artist, Work, Exhibition\nwhere\n  created(Artist, Work)\n  shown_in(Work, Exhibition)\norder by Work\nlimit 10\noffset 0"}'
 ```
 
 With constants:
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "created(tina_keane, Work)"}'
+  -d '{"query": "find Work\nwhere\n  created(tina_keane, Work)"}'
 ```
 
 String literals:
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "keyword(Doc, \"neural networks\")"}'
-```
-
-Expressive query language:
-```bash
-curl -X POST http://localhost:8080/query \
-  -H "Content-Type: application/json" \
-  -d '{"language": "dsl", "query": "find Artist, Work\nwhere\n  created(Artist, Work)\nlimit 10"}'
+  -d '{"query": "find Doc\nwhere\n  keyword(Doc, \"neural networks\")"}'
 ```
 
 Validate without executing:
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"language": "dsl", "action": "validate", "query": "find X\nwhere\n  artst(X)"}'
+  -d '{"action": "validate", "query": "find X\nwhere\n  artst(X)"}'
 ```
 
-A query that fails validation (`execute` or `validate`, either language)
-returns HTTP 400 with the structured error list directly as the body
-(not wrapped in `"error"`) -- see [Error response shapes](#error-response-shapes):
+A query that fails validation (`execute` or `validate`) returns HTTP 400
+with the structured error list directly as the body (not wrapped in
+`"error"`) -- see [Error response shapes](#error-response-shapes):
 ```json
 {
   "valid": false,
@@ -466,15 +463,15 @@ object under the same `"error"` key:
 invalid (syntax error, unknown predicate, arity/type mismatch,
 disconnected query, unsafe negation, unbound projection/ordering
 variable, ...). Returned by `POST /query` for `action: "validate"`, for
-`action: "explain"` when lowering fails, and for `action: "execute"` 
-(either language) when the query fails validation. Always:
+`action: "explain"` when lowering fails, and for `action: "execute"`
+when the query fails validation. Always:
 
 ```json
 {
   "valid": false,
   "errors": [ { "code": "...", "message": "..." } ],
   "warnings": [],
-  "language": "core",
+  "language": "dsl",
   "languageVersion": "beingdb-dsl/1",
   "environmentFingerprint": "sha256:..."
 }
@@ -484,8 +481,9 @@ See [Query Language](query-language.md#validation) for the full list of
 error codes.
 
 **Request/runtime failure** -- malformed JSON, a missing required field,
-a query timeout, an internal error, or an unrecognized `language`/
-`action` value. Unrelated to whether the query text is valid. Always:
+a query timeout, an internal error, an unsupported or unrecognized
+`language`/`action` value, or request-level `offset`/`limit` fields.
+Unrelated to whether the query text is valid. Always:
 
 ```json
 { "error": { "code": "malformed_request", "message": "The request body is not valid JSON." } }
@@ -493,8 +491,9 @@ a query timeout, an internal error, or an unrecognized `language`/
 
 `code` is one of: `malformed_request`, `invalid_request` (the simpler
 endpoints that don't yet carry a specific code), `timeout`,
-`internal_error`, `execution_error`, `unknown_language`,
-`unknown_action`, `query_too_long` (HTTP 413), `server_busy` (HTTP 429).
+`internal_error`, `execution_error`, `unsupported_language`,
+`unknown_language`, `unknown_action`, `unsupported_parameter`,
+`query_too_long` (HTTP 413), `server_busy` (HTTP 429).
 See [Safety limits](#safety-limits) for the last two.
 
 ### Common Errors
@@ -507,6 +506,16 @@ See [Safety limits](#safety-limits) for the last two.
 **400 Bad Request - Missing Query Field**
 ```json
 { "error": { "code": "malformed_request", "message": "Missing 'query' field" } }
+```
+
+**400 Bad Request - Core query language**
+```json
+{ "error": { "code": "unsupported_language", "message": "The core query language is no longer accepted; send a find/where query instead (omit 'language' or set it to \"dsl\"), e.g. \"find A, W\\nwhere\\n  created(A, W)\"." } }
+```
+
+**400 Bad Request - Request-level offset/limit**
+```json
+{ "error": { "code": "unsupported_parameter", "message": "Request-level 'offset' and 'limit' are not supported; put 'limit N' and 'offset N' at the end of the query text." } }
 ```
 
 **400 Bad Request - Query Timeout**
@@ -526,7 +535,7 @@ See [Safety limits](#safety-limits) for the last two.
     }
   ],
   "warnings": [],
-  "language": "core",
+  "language": "dsl",
   "languageVersion": "beingdb-dsl/1",
   "environmentFingerprint": "sha256:..."
 }
@@ -596,14 +605,11 @@ For read-only deployments, consider network isolation (VPC, firewall rules).
 
 **Single predicate queries:** Sub-millisecond for most datasets
 
-**Joins without pagination:** Full materialization in memory
+**Joins:** The full projected result is computed in memory, then the
+requested page is returned, so `total` is always exact
 - Fast for small result sets (< 1000 rows)
-- Can hit memory limits on large joins
-
-**Joins with pagination:** Streaming execution
-- Two-pass: count total, then stream to page
-- Constant memory usage
-- Recommended for all production joins
+- `limit`/`offset` reduce the response size, not the work; add constants or comparisons to narrow large joins
+- Intermediate join rows are capped by `max_intermediate_results` (see [Safety limits](#safety-limits))
 
 **Query optimization:** Automatic pattern reordering by selectivity
 
@@ -620,10 +626,8 @@ No official client libraries yet. Use standard HTTP libraries:
 const response = await fetch('http://localhost:8080/query', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ 
-    query: 'created(Artist, Work)', 
-    offset: 0, 
-    limit: 10 
+  body: JSON.stringify({
+    query: 'find Artist, Work\nwhere\n  created(Artist, Work)\nlimit 10\noffset 0'
   })
 });
 const data = await response.json();
@@ -634,9 +638,7 @@ const data = await response.json();
 import requests
 
 response = requests.post('http://localhost:8080/query', json={
-    'query': 'created(Artist, Work)',
-    'offset': 0,
-    'limit': 10
+    'query': 'find Artist, Work\nwhere\n  created(Artist, Work)\nlimit 10\noffset 0'
 })
 data = response.json()
 ```
@@ -645,7 +647,7 @@ data = response.json()
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "created(Artist, Work)", "offset": 0, "limit": 10}'
+  -d '{"query": "find Artist, Work\nwhere\n  created(Artist, Work)\nlimit 10\noffset 0"}'
 ```
 
 ---

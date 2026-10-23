@@ -17,7 +17,7 @@ The source is split into three Dune libraries along those lines:
 
 | Library | Directory | Contents | Dependencies |
 |---|---|---|---|
-| `beingdb_runtime` | `lib/runtime/` | `Value`, `Decimal`, `Calendar`, `Fact`, `Manifest`, lexer and both query parsers, AST, validation, connectivity, planner, `Query_engine`, `Query_environment`, DSL lowering, `Core_query`, explain, `Runtime_store`, `Pack_layout`, `Memory_store` | `lwt`, `yojson`, `digestif` only |
+| `beingdb_runtime` | `lib/runtime/` | `Value`, `Decimal`, `Calendar`, `Fact`, `Manifest`, lexer, the `find`/`where` parser and the internal core parser, AST, validation, connectivity, planner, `Query_engine`, `Query_environment`, DSL lowering, `Core_query`, explain, `Runtime_store`, `Pack_layout`, `Memory_store` | `lwt`, `yojson`, `digestif` only |
 | `beingdb_pack_unix` | `lib/pack_unix/` | `Pack_backend`: the Irmin Pack Unix store, open/close, and the pack writer | runtime + `irmin-pack.unix`, `irmin.unix` |
 | `beingdb` | `lib/` | Git backend, source-fact parsing (`Parse_predicate`), compile/import/clone/pull, `Db`/`Model`/`Controller`, Dream API, REPL, CLI | everything |
 
@@ -310,7 +310,11 @@ Did you mean @1979 (year only) or @1979-04-01 (full date)?
 ## 5. Query language, planning and execution
 
 See [query-language.md](query-language.md) for the user-facing syntax
-and semantics. In summary:
+and semantics. The only public query language is the `find`/`where`
+language (section 6). It is lowered to the *core* form described here:
+a flat list of predicate patterns and comparisons (`Query_ast.query`).
+The core form is an internal representation only; `POST /query` rejects
+`"language": "core"` with `unsupported_language`. In summary:
 
 - `lib/runtime/query_ast.ml` defines the structured AST (`term`, `clause`,
   `comparison_operator`) produced by `lib/runtime/query_parser.ml`; comparisons
@@ -319,10 +323,13 @@ and semantics. In summary:
   `Not_exists`, each holding a nested `clause list` (or, for
   `Alternatives`, a `clause list list`, one per branch) -- used to
   express the expressive query language's `optional`/`either`-`or`/`not`
-  (see section 6). The core predicate-pattern parser never produces
-  these directly; only `Dsl_lower` does, so the core language's surface
-  syntax is unchanged.
-- The core language's grammar (approximately):
+  (see section 6). The core text parser never produces these directly;
+  only `Dsl_lower` does.
+- The core form also has a text syntax, parsed by `Query_parser`. It is
+  not accepted from clients; it is used by tests, and `explain`'s
+  `normalizedCoreQuery` shows the lowered query in this syntax. Its
+  grammar
+  (approximately):
 
   ```
   query       := clause ("," clause)*
@@ -346,9 +353,9 @@ and semantics. In summary:
   `title(Work, "Smith, Jones and Brown")` parse as a single two-argument
   pattern rather than being split on the embedded comma.
   `Query_parser.parse_query_result : string -> (query, string) result`
-  is the single entry point used by the REST API (`Controller`), the
-  REPL (`Cli_repl`), and the CLI -- there is no separate parsing path
-  per consumer.
+  is its entry point. Client queries never go through it: the REST API,
+  the REPL and query files all parse with `Dsl_parser` (section 6),
+  which shares `Lexer` and `Clause_parser` for each `where` line.
 - `lib/runtime/query_planner.ml` is pure (it never touches the store): it
   collects every `Compare`/`Between` clause that constrains a variable
   with a literal (normalizing `literal OP variable` to `variable OP'
@@ -400,24 +407,24 @@ and semantics. In summary:
   ```
 
   It is available both internally (to tests) and via `POST /query` with
-  `"action": "explain"` (either language -- see section 6 and
+  `"action": "explain"` (as `planText` -- see section 6 and
   [query-language.md](query-language.md)).
 
 ## 6. Expressive query language and query environment
 
-The expressive query language (`find`/`where`/...) is a *surface*
-syntax that lowers into the same `Query_ast.query` the core language
-produces, plus a thin wrapper (`Core_query.t`) carrying the
-post-execution directives the core AST has no concept of: `projection`,
-`distinct`, `order_by`, `limit`, `offset`. There is exactly one planner
-and executor underneath either language.
+The `find`/`where` query language is BeingDB's only public query
+language. It is a *surface* syntax that lowers into the core
+`Query_ast.query` (section 5), plus a thin wrapper (`Core_query.t`)
+carrying the post-execution directives the core AST has no concept of:
+`projection`, `distinct`, `order_by`, `limit`, `offset`. There is
+exactly one planner and executor.
 
 Pipeline, module by module:
 
 - `lib/runtime/clause_parser.ml` -- leaf-clause parsing (a predicate pattern, a
   comparison, or a `between`), factored out of `lib/runtime/query_parser.ml` so
-  both the core parser and the expressive parser accept identical
-  literal/clause syntax with no duplication.
+  the internal core parser and the `find`/`where` parser accept
+  identical literal/clause syntax with no duplication.
 - `lib/runtime/surface_ast.ml` -- the parsed form of the expressive syntax,
   before validation: leaf clauses carry a source line number and column
   (for precise error locations), alongside `Optional`/`Alternatives`/
@@ -465,9 +472,9 @@ Pipeline, module by module:
   `Not_exists` groups are each one node (keyed by every variable used
   anywhere inside), and are additionally checked for their own internal
   connectivity recursively (each `either`/`or` branch independently).
-  Used by both `Query_validation.validate_query` (so raw core-language
-  text is protected too) and `Dsl_lower.lower` (for the structured
-  `disconnected_query` error). Self-joins and multi-hop chains sharing a
+  Used by `Dsl_lower.lower` (for the structured `disconnected_query`
+  error) and by `Query_validation.validate_query`, a check on a core
+  `Query_ast.query` that is no longer on the HTTP or REPL path. Self-joins and multi-hop chains sharing a
   variable (`parent(A, B), parent(B, C)`) are always connected and never
   rejected.
 - `lib/runtime/dsl_lower.ml` -- validates a `Surface_ast.surface_query` against
@@ -520,23 +527,40 @@ Pipeline, module by module:
   treating two `null`s in the same position as equal), then
   offset/limit.
 - `lib/controller.ml`'s `run_query` is the single dispatch point for
-  both languages and all three actions (`execute`/`validate`/`explain`),
-  used identically by `Api.ml` (`POST /query`) and `Cli_repl.ml` (the
-  REPL's query commands) -- neither surface re-implements any part of
-  this pipeline, and both build the query environment via the same
-  `Query_environment.load_or_build`. `run_query`'s result type
+  all four actions (`execute`/`validate`/`explain`/`diagnose`), used
+  identically by `Api.ml` (`POST /query`), `Cli_repl.ml` (the REPL's
+  query commands) and `Repl_support` (query files) -- no surface
+  re-implements any part of this pipeline, and all build the query
+  environment via the same `Query_environment.load_or_build`. It accepts
+  only the `find`/`where` language: `language` defaults to `"dsl"`,
+  `"core"` is a `Failure` with code `unsupported_language`, any other
+  value `unknown_language`, and an unknown action `unknown_action`.
+  `Api.ml` additionally rejects request-level `offset`/`limit` JSON
+  fields (`unsupported_parameter`) before calling `run_query`; paging
+  is only `limit`/`offset` in the query text. `run_query`'s result type
   distinguishes *query-invalid* (`Invalid` -- a `{"valid": false,
   "errors": [...], "language", "languageVersion",
-  "environmentFingerprint"}` envelope, for both languages and all three
-  actions) from a genuine *request/runtime* `Failure { code; message }`
-  (malformed request, timeout, internal error, or a bad
-  `language`/`action` parameter) -- `Api.ml` renders the latter as
-  `{"error": {"code": ..., "message": ...}}`, never a bare string.
-  `Success` responses for `action: "execute"` (both languages) also
-  carry `language`/`languageVersion`/`environmentFingerprint` (via
-  `Controller.with_environment_fields`), matching the fields already
-  present on `validate`/`explain`'s envelope -- so a client can learn
-  the dataset's schema fingerprint from any query response, not just
+  "environmentFingerprint"}` envelope) from a genuine *request/runtime*
+  `Failure { code; message }` (malformed request, timeout, internal
+  error, or a bad `language`/`action` parameter) -- `Api.ml` renders
+  the latter as `{"error": {"code": ..., "message": ...}}`, never a bare
+  string.
+- `Controller.execute_dsl` runs `execute`: it lowers the query, runs
+  the lowered core query through `Model.execute_query` (under the query
+  timeout), and applies `Core_query.apply` *without* offset/limit, so
+  the full projected result is materialised and `total` is exact. It
+  then takes the page (`offset`, and the smaller of the query's `limit`
+  and the server's `max_results`), and sets `count`, `hasMore` (more
+  rows after this page) and `truncated` (`max_results`, not the query's
+  `limit`, cut the result; adds a `results_truncated` warning). An empty
+  first page also gets the `diagnose` fields
+  (`Db.Diagnostics.empty_result_fields`). The streaming executor
+  (`Model.execute_query_streaming`) is not used by the HTTP or REPL
+  path. `Success` responses carry
+  `language`/`languageVersion`/`environmentFingerprint` (via
+  `Controller.with_environment_fields`), matching the fields on
+  `validate`/`explain`'s envelope -- so a client can learn the
+  dataset's schema fingerprint from any query response, not just
   `/predicates` or the validate/explain actions.
 
 ## 7. Schema inference and predicate declarations
