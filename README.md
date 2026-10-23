@@ -32,12 +32,16 @@ No schema-heavy knowledge graph or complex rule system is required. Your applica
 
 ## Query facts
 
-Queries use the same predicate syntax as the underlying facts.
+Queries use the same predicate syntax as the underlying facts, in a
+`find`/`where` form: `find` names the variables to return, and each line
+after `where` is a pattern or comparison.
 
 A simple query:
 
 ```text
-created(Artist, Work)
+find Artist, Work
+where
+  created(Artist, Work)
 ```
 
 returns artists and the works they created.
@@ -108,7 +112,7 @@ Query the database:
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query":"created(Artist, Work)"}'
+  -d '{"query":"find Artist, Work\nwhere\n  created(Artist, Work)"}'
 ```
 
 A multi-predicate query can perform joins:
@@ -116,7 +120,7 @@ A multi-predicate query can perform joins:
 ```bash
 curl -X POST http://localhost:8080/query \
   -H "Content-Type: application/json" \
-  -d '{"query":"created(Artist, Work), shown_in(Work, Exhibition)"}'
+  -d '{"query":"find Artist, Work, Exhibition\nwhere\n  created(Artist, Work)\n  shown_in(Work, Exhibition)"}'
 ```
 
 The API can also expose the predicates available in the compiled database, allowing applications and LLMs to discover the vocabulary they can query.
@@ -131,16 +135,14 @@ BeingDB also includes an interactive REPL:
 beingdb repl --pack ./pack_store
 ```
 
-For example:
+Type a query and finish it with a blank line:
 
 ```text
-beingdb> created(Artist, Work)
-```
-
-or:
-
-```text
-beingdb> created(Artist, Work), shown_in(Work, Exhibition)
+beingdb> find Artist, Work, Exhibition
+...> where
+...>   created(Artist, Work)
+...>   shown_in(Work, Exhibition)
+...>
 ```
 
 The REPL uses the predicates in the database to provide a query environment tailored to the available facts.

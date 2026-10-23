@@ -10,30 +10,22 @@
 
 open Cmdliner
 
-type mode = Core | Dsl | Auto
-
-let mode_name = function Core -> "core" | Dsl -> "dsl" | Auto -> "auto"
-
 let print_help () =
   print_string
     (String.concat "\n"
        [
          "Commands:";
-         "  <query>              run a query in the current language mode";
-         "                       (in :dsl/:auto-detected-dsl mode, keep entering lines,";
-         "                        a blank line finishes the query)";
+         "  <query>              run a find/where query: keep entering lines,";
+         "                       a blank line finishes the query";
          "  :predicates          list predicates and arities";
          "  :describe <name>     show a predicate's argument types, fact count, examples and any declaration";
-         "  :environment         show predicate count, fingerprint, language version, and mode";
-         "  :explain <query>     show the query plan without executing it (single-line only)";
+         "  :environment         show predicate count, fingerprint and language version";
+         "  :explain             enter a query (blank line to finish) and show its plan without executing";
          "  :validate            enter a query (blank line to finish) and validate it without executing";
-         "  :diagnose            enter a DSL query (blank line to finish): diagnostics and proven repairs, no execution";
-         "  :core                switch to the core predicate-pattern query language";
-         "  :dsl                 switch to the expressive (find/where/...) query language";
-         "  :auto                auto-detect the language per query (\"find ...\" => dsl, else core)";
+         "  :diagnose            enter a query (blank line to finish): diagnostics and proven repairs, no execution";
          "  :load <file>         load facts (.pl/.pro/.facts) or run queries (any other extension)";
          "  :loadfacts <file>    force-load a file as facts, written into the pack store";
-         "  :loadqueries <file>  force-run every line of a file as a query";
+         "  :loadqueries <file>  force-run a file of queries, separated by blank lines";
          "  :limit <n>           set the default max rows shown per query";
          "  :help                show this message";
          "  :quit / :exit        leave the REPL";
@@ -68,17 +60,11 @@ let describe_predicate store name =
           (fun args -> Printf.printf "    %s(%s)\n" name (String.concat ", " (List.map Value.canonical_string args)))
           p.Query_environment.examples)
 
-let show_environment store mode =
+let show_environment store =
   let env = Lwt_main.run (Db.Environment.load_or_build store) in
   Printf.printf "predicates: %d\n" (List.length env.Query_environment.predicates);
   Printf.printf "environment_fingerprint: %s\n" env.Query_environment.fingerprint;
-  Printf.printf "language_version: %s\n" env.Query_environment.language_version;
-  Printf.printf "mode: %s\n" (mode_name !mode)
-
-let explain_query text =
-  match Query_parser.parse_query_result text with
-  | Error e -> Printf.printf "Parse error: %s\n" e
-  | Ok query -> print_endline (Query_engine.explain query)
+  Printf.printf "language_version: %s\n" env.Query_environment.language_version
 
 let set_limit limit text =
   match int_of_string_opt (String.trim text) with
@@ -108,48 +94,29 @@ let print_outcome = function
   | Controller.Success json | Controller.Invalid json -> print_endline (Yojson.Safe.pretty_to_string json)
   | Controller.Failure { code; message } -> Printf.printf "Error [%s]: %s\n" code message
 
-let run_query_language ~language ~action store limit query_text =
-  print_outcome (Lwt_main.run (Controller.run_query ~max_results:limit ~language ~action store query_text ~offset:None ~limit:None))
-
-(** Does the query text look like the expressive language's surface
-    syntax (starts with the [find] keyword)? Used by [:auto] mode. *)
-let looks_like_dsl text =
-  let trimmed = String.trim text in
-  String.length trimmed >= 4
-  && String.lowercase_ascii (String.sub trimmed 0 4) = "find"
-  && (String.length trimmed = 4 || trimmed.[4] = ' ' || trimmed.[4] = '\t')
+let run_action ~action store limit query_text =
+  if String.trim query_text <> "" then
+    print_outcome (Lwt_main.run (Controller.run_query ~max_results:limit ~action store query_text))
 
 let strip_prefix prefix line = String.sub line (String.length prefix) (String.length line - String.length prefix)
 
-let dispatch ~read_block store limit mode line =
+let dispatch ~read_block store limit line =
+  (* A query is [first] (possibly empty) plus lines up to a blank line. *)
+  let read_query first =
+    let rest = read_block "...> " in
+    String.concat "\n" (List.filter (fun l -> String.trim l <> "") (first :: rest))
+  in
   match line with
   | "" -> ()
   | ":quit" | ":exit" -> ()
   | ":help" -> print_help ()
   | ":predicates" -> show_predicates store
-  | ":environment" -> show_environment store mode
-  | ":core" ->
-      mode := Core;
-      print_endline "mode: core"
-  | ":dsl" ->
-      mode := Dsl;
-      print_endline "mode: dsl"
-  | ":auto" ->
-      mode := Auto;
-      print_endline "mode: auto"
-  | ":validate" ->
-      let lines = read_block "...> " in
-      let text = String.concat "\n" lines in
-      if String.trim text = "" then ()
-      else
-        let language = match !mode with Core -> "core" | Dsl -> "dsl" | Auto -> if looks_like_dsl text then "dsl" else "core" in
-        run_query_language ~language ~action:"validate" store !limit text
-  | ":diagnose" ->
-      let lines = read_block "...> " in
-      let text = String.concat "\n" lines in
-      if String.trim text <> "" then run_query_language ~language:"dsl" ~action:"diagnose" store !limit text
+  | ":environment" -> show_environment store
+  | ":validate" -> run_action ~action:"validate" store !limit (read_query "")
+  | ":diagnose" -> run_action ~action:"diagnose" store !limit (read_query "")
+  | ":explain" -> run_action ~action:"explain" store !limit (read_query "")
+  | _ when String.starts_with ~prefix:":explain " line -> run_action ~action:"explain" store !limit (read_query (strip_prefix ":explain " line))
   | _ when String.starts_with ~prefix:":describe " line -> describe_predicate store (String.trim (strip_prefix ":describe " line))
-  | _ when String.starts_with ~prefix:":explain " line -> explain_query (strip_prefix ":explain " line)
   | _ when String.starts_with ~prefix:":limit " line -> set_limit limit (strip_prefix ":limit " line)
   | _ when String.starts_with ~prefix:":loadfacts " line -> load_facts store (strip_prefix ":loadfacts " line)
   | _ when String.starts_with ~prefix:":loadqueries " line -> load_queries store !limit (strip_prefix ":loadqueries " line)
@@ -159,22 +126,11 @@ let dispatch ~read_block store limit mode line =
       | Facts -> load_facts store file
       | Queries -> load_queries store !limit file)
   | _ when String.starts_with ~prefix:":" line -> Printf.printf "Unknown command: %s (try :help)\n" line
-  | query -> (
-      match !mode with
-      | Core -> run_query_language ~language:"core" ~action:"execute" store !limit query
-      | Dsl ->
-          let rest = read_block "...> " in
-          run_query_language ~language:"dsl" ~action:"execute" store !limit (String.concat "\n" (query :: rest))
-      | Auto ->
-          if looks_like_dsl query then
-            let rest = read_block "...> " in
-            run_query_language ~language:"dsl" ~action:"execute" store !limit (String.concat "\n" (query :: rest))
-          else run_query_language ~language:"core" ~action:"execute" store !limit query)
+  | first -> run_action ~action:"execute" store !limit (read_query first)
 
 let run_repl pack_path default_limit history_file =
   let store = Lwt_main.run (Pack_backend.init ~fresh:false pack_path) in
   let limit = ref default_limit in
-  let mode = ref Auto in
   ignore (LNoise.history_set ~max_length:500);
   ignore (LNoise.history_load ~filename:history_file);
   LNoise.set_multiline true;
@@ -190,9 +146,9 @@ let run_repl pack_path default_limit history_file =
     go []
   in
   let env = Lwt_main.run (Db.Environment.load_or_build store) in
-  Printf.printf "BeingDB REPL. %d predicates, fingerprint %s, %s, mode %s. Type :help for commands, :quit to exit.\n"
-    (List.length env.Query_environment.predicates) env.Query_environment.fingerprint env.Query_environment.language_version
-    (mode_name !mode);
+  Printf.printf
+    "BeingDB REPL. %d predicates, fingerprint %s, %s. Enter a find/where query (blank line to run), :help for commands, :quit to exit.\n"
+    (List.length env.Query_environment.predicates) env.Query_environment.fingerprint env.Query_environment.language_version;
   let continue = ref true in
   while !continue do
     match LNoise.linenoise "beingdb> " with
@@ -202,7 +158,7 @@ let run_repl pack_path default_limit history_file =
         if line <> "" then ignore (LNoise.history_add line);
         if line = ":quit" || line = ":exit" then continue := false
         else (
-          dispatch ~read_block store limit mode line;
+          dispatch ~read_block store limit line;
           flush stdout)
   done;
   ignore (LNoise.history_save ~filename:history_file);
@@ -228,10 +184,12 @@ let cmd =
   let man =
     [
       `S Manpage.s_description;
-      `P "Opens the given Pack store and reads queries from the terminal, one per line, printing typed JSON results.";
       `P
-        "Meta-commands (all start with ':'): :help, :predicates, :explain <query>, :load <file>, :loadfacts \
-         <file>, :loadqueries <file>, :limit <n>, :quit.";
+        "Opens the given Pack store and reads find/where queries from the terminal (a blank line runs the query), \
+         printing typed JSON results.";
+      `P
+        "Meta-commands (all start with ':'): :help, :predicates, :describe <name>, :environment, :explain, :validate, \
+         :diagnose, :load <file>, :loadfacts <file>, :loadqueries <file>, :limit <n>, :quit.";
       `P "Example:";
       `Pre "  beingdb repl --pack ./pack_store";
       `Pre "  beingdb-repl --pack ./pack_store";

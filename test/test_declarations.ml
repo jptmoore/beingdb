@@ -368,7 +368,7 @@ let test_compile_from_git () =
        let* person = Pack_backend.get_manifest a "person" in
        let* knows = Pack_backend.get_manifest a "knows" in
        let* manifest = Pack_backend.get_manifest a "created_by" in
-       let* rows = Controller.run_query ~max_results:100 ~language:"dsl" a "find W\nwhere\n  created_by(W, alice)" ~offset:None ~limit:None in
+       let* rows = Controller.run_query ~max_results:100 ~language:"dsl" a "find W\nwhere\n  created_by(W, alice)" in
        Lwt.return (meta_a, meta_b, person, knows, manifest, rows))
   in
   List.iter cleanup [ git_dir; pack_a; pack_b ];

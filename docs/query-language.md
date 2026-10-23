@@ -1,20 +1,22 @@
 # BeingDB Query Language
 
-BeingDB has two query languages that share one planner and executor:
+BeingDB is queried with a line-oriented `find`/`where` language. A
+query names the variables to return, then lists predicate patterns and
+comparisons, one per line:
 
-- The **core query language**: a typed, Prolog-style pattern language
-  (predicate patterns, joins, comparisons). This is the low-level model
-  everything else compiles down to. Documented first, below.
-- The **expressive query language**: a line-oriented `find`/`where`
-  syntax for programmatic, interactive, and LLM/RAG use, adding
-  projection, `optional`, `either`/`or`, `not`, `order by`, `limit`,
-  `offset`, `distinct`, and dataset-aware validation on top of the same
-  core patterns and comparisons. See
-  [Expressive Query Language](#expressive-query-language) below.
+```
+find Artist, Work
+where
+  created(Artist, Work)
+  shown_in(Work, Exhibition)
+```
 
-Both languages lower into the same structured AST and run through the
-same planner and executor -- there is no separate execution path for
-either.
+The same language is used by `POST /query`, the REPL and query files.
+On top of patterns, joins and typed comparisons it has `optional`,
+`either`/`or`, `not`, `order by`, `limit`, `offset` and `distinct`, and
+every query is validated against the compiled data before it runs
+(unknown predicates, arity, literal types), with structured error
+messages.
 
 ## Facts syntax
 
@@ -163,6 +165,83 @@ identically.
 Not yet supported: null literals, list literals, uncertain dates, date
 intervals.
 
+## Query syntax
+
+```
+find [distinct] Var, Var, ...
+where
+  <clause>
+  <clause>
+  optional
+    <clause>*
+  either
+    <clause>*
+  or
+    <clause>*
+  not
+    <clause>*
+order by Var [ascending|descending], ...
+limit N
+offset N
+```
+
+- `find` lists the variables to return, in order. `find distinct`
+  removes duplicate rows from the result.
+- `where` starts the clause list. Each line holds one clause: a
+  [predicate pattern](#query-patterns), a
+  [comparison](#comparisons), or a `between ... and ...` range.
+- `optional` is a left join: clauses inside it may fail to match without
+  discarding the row. Variables they would bind come back unbound
+  (`null` in JSON).
+- `either` / `or` is disjunction: at least one branch must match; each
+  branch's bindings contribute rows (a union, not a join, across
+  branches).
+- `not` is negation-as-failure: the row is kept only if the nested
+  clauses produce *no* matches. Every variable used inside `not` must
+  also be bound by a positive clause elsewhere in the query; a variable
+  that only appears inside a negation is rejected as `unsafe_negation`.
+- `order by`, `limit`, and `offset` apply to the final, projected result
+  (after `optional`/`either`/`not` have been resolved), not to any one
+  clause. `ascending` (the default) and `descending` may be shortened
+  to `asc`/`desc`. `limit` must be at least 1; `offset` at least 0. See
+  [Pagination](#pagination).
+
+Layout rules:
+
+- One clause per line. A predicate pattern cannot be split across
+  lines.
+- Blank lines and lines starting with `%` or `#` are ignored (but in the
+  REPL and in query files a blank line ends the query).
+- Indentation is for readability only. An `optional`, `either`, `or` or
+  `not` block runs until the next `optional`/`either`/`or`/`not` line or
+  the `order by`/`limit`/`offset` tail, so put plain clauses before the
+  first block. Blocks cannot be nested.
+- Whitespace inside a line is insignificant except inside quoted
+  strings, so a comma in a string literal is never mistaken for an
+  argument separator:
+
+  ```
+  find Work
+  where
+    title(Work, "Smith, Jones and Brown")
+  ```
+
+- Year literals need the `@` prefix (`@1972`). A bare `1972` is an
+  integer, not a year.
+
+Over HTTP the query is a JSON string, so line breaks are written `\n`:
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "find Artist, Work\nwhere\n  created(Artist, Work)\n  shown_in(Work, Exhibition)"}'
+```
+
+Malformed input (a missing `where`, unmatched parentheses, an
+incomplete comparison, a bad `limit` value, ...) is rejected with a
+`syntax_error` that names the line, rather than being silently
+misinterpreted.
+
 ## Query terms
 
 | Type | Syntax | Example | Description |
@@ -173,88 +252,56 @@ intervals.
 
 ## Query patterns
 
-### Whitespace and formatting
-
-Whitespace (spaces, tabs, newlines) between tokens is insignificant.
-Commas are what combine clauses and predicate arguments. A query may
-therefore be written on one line, one clause per line, or with a
-predicate's arguments spread across several lines -- all of the
-following are equivalent:
-
-```prolog
-created(Artist, Work), shown_in(Work, Exhibition)
-```
-
-```prolog
-created(Artist, Work),
-shown_in(Work, Exhibition)
-```
-
-```prolog
-created(
-  Artist,
-  Work
-),
-shown_in(
-  Work,
-  Exhibition
-)
-```
-
-This makes single-line queries convenient for REST clients, which never
-need to escape or inject newlines:
-
-```bash
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)"}'
-```
-
-The core parser (used by the REST API, the REPL, and the CLI -- there
-is no separate parsing path for any of them) only treats whitespace as
-significant inside quoted strings, so a comma inside a string literal
-is never mistaken for a clause separator:
-
-```prolog
-title(Work, "Smith, Jones and Brown")
-```
-
-Malformed input (unmatched parentheses, duplicate separators, or an
-incomplete comparison) is rejected with a descriptive parse error
-rather than being silently misinterpreted.
+A pattern line names a predicate and gives one term per argument. A
+fact matches when every literal argument is equal to the fact's value
+at that position; variables bind to the fact's values.
 
 ### Single pattern
 
-```bash
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(Artist, Work)"}'
+```
+find Artist, Work
+where
+  created(Artist, Work)
 ```
 
 ### Multiple patterns (joins)
 
-Comma-separated patterns join on shared variables:
+Patterns on separate `where` lines join on shared variables:
 
-```bash
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(Artist, Work), shown_in(Work, Exhibition)"}'
+```
+find Artist, Work, Exhibition
+where
+  created(Artist, Work)
+  shown_in(Work, Exhibition)
 ```
 
 Joins can chain across more than two patterns, following a variable
 through several relationships:
 
-```prolog
-created(Artist, Work),
-shown_in(Work, Exhibition),
-held_at(Exhibition, Venue)
+```
+find Artist, Venue
+where
+  created(Artist, Work)
+  shown_in(Work, Exhibition)
+  held_at(Exhibition, Venue)
 ```
 
 This follows the factual chain `Artist -> Work -> Exhibition -> Venue`
 without requiring those relationships to be reconstructed from
-unstructured text.
+unstructured text. Variables used only to join (`Work`, `Exhibition`
+here) need not appear in `find`.
 
 ### Typed literals in patterns
 
-```prolog
-created(Work, @1979)
+```
+find Work
+where
+  created_in_year(Work, @1979)
+```
+
+Other examples of pattern lines with typed literals:
+
+```
 captured_at(Capture, @2026-08-06T12:15:00Z)
 homepage(Organisation, <https://example.org/>)
 label(Person, "Alice Smith")
@@ -262,17 +309,23 @@ label(Person, "Alice Smith")
 
 ### Wildcards and constants
 
-```prolog
-created(Artist, _)
-created(tina_keane, Work)
+```
+find Artist
+where
+  created(Artist, _)
+```
+
+```
+find Work
+where
+  created(tina_keane, Work)
 ```
 
 ## Comparisons
 
-In addition to predicate patterns, a query may contain typed comparison
-clauses. The parser builds a structured AST for these
-(`Query_ast.Compare` / `Query_ast.Between`); they are never interpreted
-from text at execution time.
+A `where` line may also be a typed comparison. The parser builds a
+structured AST for these (`Query_ast.Compare` / `Query_ast.Between`);
+they are never interpreted from text at execution time.
 
 ```
 =   !=   <   <=   >   >=   between ... and ...
@@ -280,27 +333,33 @@ from text at execution time.
 
 Examples:
 
-```prolog
-birth_year(Person, Year),
-Year >= 1900,
-Year < 1950
+```
+find Person, Year
+where
+  birth_year(Person, Year)
+  Year >= 1900
+  Year < 1950
 ```
 
-```prolog
-confidence(Assertion, Score),
-Score >= 0.8
+```
+find Assertion, Score
+where
+  confidence(Assertion, Score)
+  Score >= 0.8
 ```
 
-```prolog
-captured_at(Capture, Date),
-Date between @2019-01-01 and @2019-12-31
+```
+find Capture
+where
+  captured_at(Capture, Date)
+  Date between @2019-01-01 and @2019-12-31
 ```
 
 `between LOWER and UPPER` is inclusive at both ends.
 
 ### Equality is type-aware
 
-```prolog
+```
 1979        integer
 @1979       year
 "1979"      string
@@ -333,20 +392,24 @@ two values of the same non-ordered type: `string = string`, `URI = URI`,
 **Numeric promotion**: an `integer` compared against a `decimal` is
 promoted to a decimal at scale 0 before comparing, so `5 < 5.5` and
 `5.0 = 5` both hold. An `integer` compared against a `year` is likewise
-promoted (so `birth_year(Person, Year), Year >= 1900` works with a bare
-integer bound); this promotion is intentionally narrow and does **not**
-extend to `date` or `year_month` -- a year is never silently treated as
-a date.
+promoted (so `Year >= 1900` works on a `birth_year` year value); this
+promotion is intentionally narrow and does **not** extend to `date` or
+`year_month` -- a year is never silently treated as a date.
 
 Temporal comparisons across genuinely different temporal types are
 rejected:
 
-```prolog
-@1979 < @1979-04-01   % rejected: year vs date
+```
+@1979 < @1979-04-01      rejected: year vs date
 ```
 
-Invalid comparisons return a descriptive error instead of silently
-filtering results, for example:
+Whenever a variable's type can be inferred from the patterns that bind
+it, a comparison that can never succeed is rejected **before** the query
+runs, with a structured `comparison_type_mismatch` error (see
+[Validation](#validation)). A comparison that cannot be checked
+statically (for example between two variables) is checked as rows are
+evaluated, and an invalid one returns a descriptive error instead of
+silently filtering results, for example:
 
 ```
 Cannot compare a date with an integer.
@@ -357,275 +420,12 @@ Right value: 1979
 Did you mean @1979 (year only) or @1979-04-01 (full date)?
 ```
 
-The expressive query language additionally catches many of these
-**statically**, at validation time, whenever a variable's type can be
-inferred from the predicate patterns that bind it (see
-[Validation](#validation) below) -- so a query comparing a `date`-typed
-variable against an integer literal is rejected with a structured
-`comparison_type_mismatch` error before it ever runs, not just when a
-matching row happens to be evaluated.
-
-## Query planning
-
-BeingDB does not fall back to "scan everything, then filter" whenever a
-positional index can answer a comparison directly. For:
-
-```prolog
-captured_at(Capture, Date),
-Date >= @2019-01-01,
-Date < @2020-01-01
-```
-
-the planner:
-
-1. associates both comparisons with the `Date` variable;
-2. identifies that `Date` is argument 1 of `captured_at/2`;
-3. selects the instant/date range index for that argument position;
-4. scans only that position's index (not the whole predicate, and not
-   every other predicate);
-5. binds `Capture` and `Date` from the matching facts, then
-   double-checks every comparison exactly against the decoded fact.
-
-Joins are also resolved via the positional index: once a shared variable
-is bound by an earlier pattern, the next pattern that uses it performs
-an equality-index lookup with that concrete value, rather than a nested
-nested scan of every fact.
-
-When no pattern argument is a literal or a comparison-constrained
-variable, execution falls back to a full predicate scan (still
-per-predicate, not across the whole store). See
-[internals.md](internals.md#43-range-lookup-and-its-documented-limitation)
-for the current limitation of range scans (correct, but not yet a true
-sorted binary search).
-
-## Pagination
-
-Add `offset` and `limit` for paginated results:
-
-```bash
-curl -X POST http://localhost:8080/query \
-  -d '{"query": "created(Artist, Work)", "offset": 0, "limit": 10}'
-```
-
-Response includes pagination metadata:
-```json
-{
-  "variables": ["Artist", "Work"],
-  "results": [...],
-  "count": 10,
-  "total": 156,
-  "offset": 0,
-  "limit": 10
-}
-```
-
-**For joins with pagination:**
-- First pass: stream through all results to count total.
-- Second pass: stream to offset and return page.
-- Memory-efficient for large result sets.
-
-## Query protections
-
-Built-in safety limits prevent runaway or malicious queries, all
-configurable per-server without recompiling (see
-[Safety limits](api.md#safety-limits) for the config file and defaults):
-
-- **Timeout:** 5 seconds maximum execution time by default.
-- **Intermediate results:** 10,000 row limit during joins by default.
-- **Result limit:** 1000 by default, via `--max-results` or the config
-  file's `max_results`.
-- **Query length:** 20,000 bytes by default; longer raw query strings
-  are rejected (`query_too_long`, HTTP 413) before parsing.
-- **Concurrency:** 20 simultaneously in-flight queries by default;
-  further requests get `server_busy` (HTTP 429) until one finishes.
-- **Connectivity:** a query's predicate patterns must form a single
-  connected component -- every pattern must be reachable from every
-  other one through a shared variable, a shared constant, or a
-  comparison that references both. This applies to *both* languages.
-
-  Repeated predicates are always fine, including self-joins and
-  multi-hop chains:
-
-  ```prolog
-  parent(Person, Parent), parent(Parent, Grandparent)
-  ```
-
-  What's rejected is a genuinely **disconnected** query -- one that
-  would compute an unconstrained Cartesian product because two pattern
-  groups share nothing:
-
-  ```prolog
-  person(Person), organisation(Organisation)   % rejected: no join between them
-  ```
-
-  ```prolog
-  person(Person), works_for(Person, Organisation), organisation(Organisation)   % fine: joined
-  ```
-
-  An `optional`/`either`-`or`/`not` group counts as connected if it
-  shares a variable with the rest of the query; each `either`/`or`
-  branch is additionally checked for its own internal connectivity. A
-  disconnected query is rejected with a `disconnected_query` error (see
-  [Validation](#validation)).
-
-## What the core query language does NOT support
-
-The patterns/joins/comparisons above are the whole core language. It has
-no projection, ordering, negation, disjunction, or deduplication of its
-own -- those are provided by the expressive query language (below),
-which lowers into extra clause shapes (`optional`, `either`/`or`, `not`)
-that the *same* core AST, planner, and executor already understand.
-
-- **Aggregation:** no `COUNT`, `SUM`, `GROUP BY`, in either language.
-- **Arithmetic:** no `Y = X + 1`, in either language.
-- **Recursion:** no transitive closure or path queries, in either
-  language.
-- **Functions:** no computed values or transformations.
-- **Uncertain dates or date intervals.**
-- **A user-authored type schema** -- value types are always inferred,
-  never declared. (Optional [predicate declarations](#predicate-declarations-optional)
-  document roles and meaning but do not affect typing.)
-
-## JSON result format
-
-Results are returned as canonical typed JSON: each binding maps a
-variable name to `{"type": ..., "value": ...}`. Exact decimal values are
-always JSON strings, to avoid precision loss:
-
-```json
-{
-  "variables": ["Year", "Count", "Confidence", "CapturedAt"],
-  "results": [
-    {
-      "Year": { "type": "year", "value": "1979" },
-      "Count": { "type": "integer", "value": "12" },
-      "Confidence": { "type": "decimal", "value": "0.92" },
-      "CapturedAt": { "type": "instant", "value": "2026-08-06T12:15:00Z" }
-    }
-  ],
-  "count": 1,
-  "total": 1
-}
-```
-
-## Full example
-
-```prolog
-person(alice_smith).
-label(alice_smith, "Alice Smith"@en).
-birth_year(alice_smith, @1972).
-confidence(assertion_1, 0.92).
-
-capture(capture_1).
-captured_at(
-  capture_1,
-  @2022-08-17T12:30:00Z
-).
-target_uri(
-  capture_1,
-  <https://example.org/about>
-).
-```
-
-Query -- captures within 2022, using the instant range index on
-`captured_at`'s second argument:
-
-```prolog
-captured_at(Capture, Date),
-Date >= @2022-01-01T00:00:00Z,
-Date < @2023-01-01T00:00:00Z
-```
-
-```bash
-curl -X POST http://localhost:8080/query \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "captured_at(Capture, Date), Date >= @2022-01-01T00:00:00Z, Date < @2023-01-01T00:00:00Z"}'
-```
-
-```json
-{
-  "variables": ["Capture", "Date"],
-  "results": [
-    {
-      "Capture": { "type": "atom", "value": "capture_1" },
-      "Date": { "type": "instant", "value": "2022-08-17T12:30:00Z" }
-    }
-  ],
-  "count": 1,
-  "total": 1
-}
-```
-
-## Best practices
-
-1. **Order doesn't matter** -- BeingDB optimizes automatically.
-2. **Use constants and comparisons** -- they drive positional indexes
-   instead of a full scan.
-3. **Always use `limit` for joins** -- prevents timeouts on large
-   datasets.
-4. **Keep predicates simple** -- one relationship type per predicate.
-5. **Consistent arity** -- all facts for a predicate must have the same
-   number of arguments.
-
-## Expressive Query Language
-
-The expressive query language is a line-oriented `find`/`where` syntax
-intended for programmatic use, interactive querying, and LLM-driven RAG
-workflows. It reuses exactly the same predicate patterns, literals, and
-comparisons documented above, and lowers into the same core AST that the
-one planner and executor already run -- it adds projection, optional
-matches, alternatives, negation, ordering, deduplication, and pagination,
-plus dataset-aware validation (unknown predicates, arity, literal type
-checks) with helpful error messages.
-
-### Syntax
-
-```
-find [distinct] Var, Var, ...
-where
-  <clause>
-  <clause>
-  optional
-    <clause>*
-  either
-    <clause>*
-  or
-    <clause>*
-  not
-    <clause>*
-order by Var [ascending|descending], ...
-limit N
-offset N
-```
-
-- `find` lists the variables to project, in order; `distinct` deduplicates
-  the projected rows.
-- `where` introduces the clause list: predicate patterns, comparisons, and
-  `between ... and ...`, exactly as in the core language.
-- `optional` is a left join: clauses inside it may fail to match without
-  discarding the row -- unmatched variables come back unbound (`null` in
-  JSON).
-- `either` / `or` is disjunction: at least one branch must match; each
-  branch's bindings contribute a row (a union, not a join, across
-  branches).
-- `not` is negation-as-failure: the enclosing row is kept only if the
-  nested clauses produce *no* matches. Every variable used inside `not`
-  must also be bound by a positive clause elsewhere in the query (a
-  variable that is *only* ever mentioned inside a negation is rejected as
-  an `unsafe_negation` validation error, since its value would otherwise
-  be unconstrained).
-- `order by`, `limit`, and `offset` apply to the final, projected result
-  set (after `optional`/`either`/`not` have been resolved), not to any one
-  clause.
-- Blank lines and lines starting with `%` or `#` are ignored.
-- Year literals need the `@` prefix (`@1972`), exactly as in the core
-  language -- a bare `1972` is an integer, not a year, and comparing it
-  against a `year`-typed argument is a validation error.
+## Optional, either/or and not
 
 ### Unbound optional variables: one stable JSON shape
 
-Every projected variable appears as a key in every result row, whether
-or not an `optional` branch actually matched -- an unmatched variable is
+Every variable in `find` appears as a key in every result row, whether
+or not an `optional` block actually matched -- an unmatched variable is
 `null`, it is never simply omitted from the row:
 
 ```json
@@ -633,13 +433,13 @@ or not an `optional` branch actually matched -- an unmatched variable is
 ```
 
 This is the same shape everywhere a result row is produced: `execute`
-responses for both languages, and the REPL's printed JSON. `distinct`
-treats two `null`s in the same position as equal (so rows differing
-only by an unmatched optional variable are still deduplicated
-together). `order by` on a variable that's `null` in some rows uses a
-fixed policy -- **nulls last**, for both `ascending` and `descending` --
-so ordering is deterministic regardless of how many rows have an
-unmatched optional value.
+responses and the REPL's printed JSON. `distinct` treats two `null`s in
+the same position as equal (so rows differing only by an unmatched
+optional variable are still deduplicated together). `order by` on a
+variable that's `null` in some rows uses a fixed policy -- **nulls
+last**, for both `ascending` and `descending` -- so ordering is
+deterministic regardless of how many rows have an unmatched optional
+value.
 
 ### Example
 
@@ -689,16 +489,178 @@ limit 10
 offset 0
 ```
 
-### Validation
+## Query planning
 
-Every expressive query is validated against a **query environment**
-built from the compiled store's inferred per-predicate schema (arity,
-per-argument-position observed types, fact counts, and a few bounded
-examples) -- no user-authored schema is required, and optional
-predicate declarations play no part in validation. Validation
-reports *every* problem found, not just the first, as a list of
-structured errors, each with a stable `code` and a human-readable
-`message`, plus `line`/`column` where applicable:
+BeingDB does not fall back to "scan everything, then filter" whenever a
+positional index can answer a comparison directly. For:
+
+```
+find Capture, Date
+where
+  captured_at(Capture, Date)
+  Date >= @2019-01-01
+  Date < @2020-01-01
+```
+
+the planner:
+
+1. associates both comparisons with the `Date` variable;
+2. identifies that `Date` is argument 1 of `captured_at/2`;
+3. selects the instant/date range index for that argument position;
+4. scans only that position's index (not the whole predicate, and not
+   every other predicate);
+5. binds `Capture` and `Date` from the matching facts, then
+   double-checks every comparison exactly against the decoded fact.
+
+Joins are also resolved via the positional index: once a shared variable
+is bound by an earlier pattern, the next pattern that uses it performs
+an equality-index lookup with that concrete value, rather than a nested
+scan of every fact.
+
+When no pattern argument is a literal or a comparison-constrained
+variable, execution falls back to a full predicate scan (still
+per-predicate, not across the whole store). See
+[internals.md](internals.md#33-range-lookup-and-its-documented-limitation)
+for the current limitation of range scans (correct, but not yet a true
+sorted binary search).
+
+The order of `where` lines does not matter: the planner picks the most
+constrained pattern first. Use the `explain` action (see
+[HTTP](#http-post-query)) to see the plan without running the query.
+
+## Pagination
+
+Paging is part of the query text: put `limit N` and `offset N` at the
+end of the query.
+
+```
+find Artist, Work
+where
+  created(Artist, Work)
+order by Work
+limit 10
+offset 20
+```
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "find Artist, Work\nwhere\n  created(Artist, Work)\norder by Work\nlimit 10\noffset 20"}'
+```
+
+Request-level `"offset"` and `"limit"` JSON fields are not accepted
+(`unsupported_parameter`, HTTP 400).
+
+Every `execute` response carries:
+
+- `count` -- rows in this response;
+- `total` -- rows the whole query matches (after `distinct`),
+  independent of `limit`, `offset` and the server's `max_results` cap;
+- `hasMore` -- `true` when more matching rows exist after this page;
+- `truncated` -- `true` when the server's `max_results` cap, rather than
+  the query's own `limit`, cut the result. A `results_truncated`
+  warning is added then, so a client never mistakes a capped result for
+  the complete answer.
+
+```json
+{
+  "variables": ["Artist", "Work"],
+  "results": [...],
+  "count": 10,
+  "total": 156,
+  "hasMore": true,
+  "truncated": false,
+  "warnings": [],
+  ...
+}
+```
+
+Without a `limit`, a query returns up to `max_results` rows (1000 by
+default). Add `order by` when paging so pages are stable. BeingDB
+computes the whole projected result to report `total` and then returns
+the requested page, so paging through a large result does not make each
+page cheaper to compute; add constraints to narrow the query instead.
+
+## Query protections
+
+Built-in safety limits prevent runaway or malicious queries, all
+configurable per-server without recompiling (see
+[Safety limits](api.md#safety-limits) for the config file and defaults):
+
+- **Timeout:** 5 seconds maximum execution time by default.
+- **Intermediate results:** 10,000 row limit during joins by default.
+- **Result limit:** 1000 by default, via `--max-results` or the config
+  file's `max_results`.
+- **Query length:** 20,000 bytes by default; longer raw query strings
+  are rejected (`query_too_long`, HTTP 413) before parsing.
+- **Concurrency:** 20 simultaneously in-flight queries by default;
+  further requests get `server_busy` (HTTP 429) until one finishes.
+- **Connectivity:** a query's predicate patterns must form a single
+  connected component -- every pattern must be reachable from every
+  other one through a shared variable, a shared constant, or a
+  comparison that references both.
+
+  Repeated predicates are always fine, including self-joins and
+  multi-hop chains:
+
+  ```
+  find Person, Grandparent
+  where
+    parent(Person, Parent)
+    parent(Parent, Grandparent)
+  ```
+
+  What's rejected is a genuinely **disconnected** query -- one that
+  would compute an unconstrained Cartesian product because two pattern
+  groups share nothing:
+
+  ```
+  find Person, Organisation
+  where
+    person(Person)
+    organisation(Organisation)
+  ```
+
+  Joining them through a shared variable is fine:
+
+  ```
+  find Person, Organisation
+  where
+    person(Person)
+    works_for(Person, Organisation)
+    organisation(Organisation)
+  ```
+
+  An `optional`/`either`-`or`/`not` block counts as connected if it
+  shares a variable with the rest of the query; each `either`/`or`
+  branch is additionally checked for its own internal connectivity. A
+  disconnected query is rejected with a `disconnected_query` error (see
+  [Validation](#validation)).
+
+## What the query language does NOT support
+
+- **Aggregation:** no `COUNT`, `SUM`, `GROUP BY`. (`total` in the
+  response counts matching rows, but there is no in-query aggregation.)
+- **Arithmetic:** no `Y = X + 1`.
+- **Recursion:** no transitive closure or path queries.
+- **Functions:** no computed values or transformations.
+- **Nested blocks:** `optional`, `either`/`or` and `not` blocks cannot
+  contain further blocks.
+- **Uncertain dates or date intervals.**
+- **A user-authored type schema** -- value types are always inferred,
+  never declared. (Optional [predicate declarations](#predicate-declarations-optional)
+  document roles and meaning but do not affect typing.)
+
+## Validation
+
+Every query is validated against a **query environment** built from the
+compiled store's inferred per-predicate schema (arity, per-argument
+observed types, fact counts, and a few bounded examples) -- no
+user-authored schema is required, and optional predicate declarations
+play no part in validation. Validation reports *every* problem found,
+not just the first, as a list of structured errors, each with a stable
+`code` and a human-readable `message`, plus `line`/`column` where
+applicable:
 
 | Error code | Meaning |
 |---|---|
@@ -717,40 +679,31 @@ heterogeneous column) but whose literal matches one of them is not an
 error -- it produces a `heterogeneous_position` **warning** instead,
 since the query is well-formed but only targets part of that column.
 
-### HTTP: `POST /query` with `language` and `action`
+The `diagnose` action goes further and checks the query against the
+data itself (constants that occur nowhere, joins that can never match,
+comparisons no value satisfies, ...); see
+[API: Diagnose](api.md#diagnose-dsl).
 
-The same endpoint used for the core language accepts two additional
-optional fields:
+## JSON result format
 
-- `"language"`: `"core"` (default) or `"dsl"`.
-- `"action"`: `"execute"` (default), `"validate"` (check without
-  running), `"explain"` (show the structured plan without running), or
-  `"diagnose"` (DSL only: validation plus data-aware diagnostics and
-  proven repairs, without running; see
-  [API: Diagnose](api.md#diagnose-dsl)).
-
-```bash
-curl -X POST http://localhost:8080/query \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "language": "dsl",
-    "query": "find Artist, Work\nwhere\n  artist(Artist)\n  created(Artist, Work)\nlimit 10"
-  }'
-```
-
-A successful `execute` response looks like the core language's, plus any
-advisory `warnings`, plus `language`/`languageVersion`/
-`environmentFingerprint` (see below) -- so a client can cache schema
-knowledge purely from ordinary query responses, without a separate
-`/predicates` round trip:
+Results are returned as canonical typed JSON: each binding maps a
+variable name to `{"type": ..., "value": ...}`, or `null` for a variable
+left unbound by an unmatched `optional` block. Exact decimal values are
+always JSON strings, to avoid precision loss:
 
 ```json
 {
-  "variables": ["Artist", "Work"],
+  "variables": ["Year", "Count", "Confidence", "CapturedAt"],
   "results": [
-    { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
+    {
+      "Year": { "type": "year", "value": "1979" },
+      "Count": { "type": "integer", "value": "12" },
+      "Confidence": { "type": "decimal", "value": "0.92" },
+      "CapturedAt": { "type": "instant", "value": "2026-08-06T12:15:00Z" }
+    }
   ],
   "count": 1,
+  "total": 1,
   "hasMore": false,
   "truncated": false,
   "warnings": [],
@@ -760,27 +713,61 @@ knowledge purely from ordinary query responses, without a separate
 }
 ```
 
-`hasMore` is `true` when at least one more row matches beyond those
-returned, whether the query's own `limit` or the server's `max_results`
-cap stopped it. `truncated` is `true` only when the server cap did --
-the query asked for more rows than the server returns -- and a
-`results_truncated` warning is added then, so a client never mistakes a
-capped result for the complete answer. Page on with `offset`, or narrow
-the query. Neither field needs a count of every matching row.
+## HTTP: `POST /query`
+
+The request body is a JSON object:
+
+- `"query"` (required): the `find`/`where` query text.
+- `"action"` (optional): `"execute"` (default), `"validate"` (check
+  without running), `"explain"` (show the structured plan without
+  running), or `"diagnose"` (validation plus data-aware diagnostics and
+  proven repairs, without running; see
+  [API: Diagnose](api.md#diagnose-dsl)).
+- `"language"` (optional): may be omitted; the only accepted value is
+  `"dsl"`.
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "find Artist, Work\nwhere\n  artist(Artist)\n  created(Artist, Work)\nlimit 10"}'
+```
+
+A successful `execute` response carries the rows, the paging fields
+described under [Pagination](#pagination), any advisory `warnings`, and
+`language`/`languageVersion`/`environmentFingerprint` -- so a client can
+cache schema knowledge purely from ordinary query responses, without a
+separate `/predicates` round trip:
+
+```json
+{
+  "variables": ["Artist", "Work"],
+  "results": [
+    { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
+  ],
+  "count": 1,
+  "total": 1,
+  "hasMore": false,
+  "truncated": false,
+  "warnings": [],
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:..."
+}
+```
 
 When the first page of an `execute` is empty, the response also carries
 the [`diagnose`](api.md#diagnose-dsl) action's `diagnostics`,
-`provablyEmpty` and any proven `repair`, explaining the empty result
-(for example a misspelled constant, or `Y > @2090` when no year there is
-that late) without a second request. Non-empty results carry none of
-these fields.
+`provablyEmpty` and any proven `repair` (between `warnings` and
+`language`), explaining the empty result (for example a misspelled
+constant, or `Y > @2090` when no year there is that late) without a
+second request. Non-empty results carry none of these fields.
 
 **Two distinct error families** (see also [API Reference](api.md#error-response-shapes)):
 
 - **Query-invalid** (the request was well-formed, but the query itself
   is invalid) -- for `validate`/`explain`, or `execute` on an invalid
-  query, either language returns HTTP 400 with `"valid": false` and the
-  structured error list directly as the response body:
+  query, HTTP 400 with `"valid": false` and the structured error list
+  directly as the response body:
 
   ```json
   {
@@ -796,7 +783,8 @@ these fields.
   ```
 
 - **Request/runtime failure** (malformed JSON, timeout, an internal
-  error, or a bad `language`/`action` value) -- always
+  error, a bad `language`/`action` value, or request-level
+  `offset`/`limit` fields) -- always
   `{"error": {"code": ..., "message": ...}}`, an object, never a bare
   string:
 
@@ -808,9 +796,9 @@ these fields.
 operation objects: `predicate_scan`, `exact_index_lookup`,
 `range_index_lookup`, `join`, `optional_join`, `union`, `not_exists`,
 `filter`, `project`, `distinct`, `sort`, `offset`, `limit`) and a
-human-readable `planText`, alongside `normalizedCoreQuery` (the lowered
-query's patterns and comparisons as strings), without executing the
-query:
+human-readable `planText`, alongside `normalizedCoreQuery` (the
+patterns and comparisons the query is lowered to internally, as
+strings), without executing the query:
 
 ```json
 {
@@ -837,7 +825,7 @@ query:
 The plan is deterministic, typed, and independent of Irmin/Pack
 filesystem details -- no storage paths appear in it.
 
-### Predicate introspection: `GET /predicates?detailed=true`
+## Predicate introspection: `GET /predicates?detailed=true`
 
 Returns each predicate's argument type signature, fact count, a few
 bounded examples and any [declared](#predicate-declarations-optional)
@@ -877,29 +865,26 @@ declarations existed.
 `names` filters to an exact comma-separated set of names. The
 fingerprint (SHA-256 of a canonical, sort-order-independent encoding of
 every predicate's name, arity, observed argument types and any declared
-roles, semantic types and description, plus the expressive-language
+roles, semantic types and description, plus the query-language
 version) changes whenever any of those change --
 useful for cache invalidation in LLM prompts built from this
 introspection data. It is exposed consistently, under the same
 `environmentFingerprint` key, in `/predicates`, REPL startup, and every
-`POST /query` response -- `execute`, `validate`, and `explain` alike,
-both languages.
+`POST /query` response -- `execute`, `validate`, `explain` and
+`diagnose` alike.
 
-### REPL
+## REPL
 
-The REPL (`beingdb repl` / `beingdb-repl`) has three modes, switched with
-`:core`, `:dsl`, and `:auto` (the default): `:auto` detects the
-expressive language when a query starts with `find`, and otherwise uses
-the core language. In `:dsl` mode (or when auto-detected as `dsl`), the
-REPL keeps reading lines until a blank line finishes the query, since the
-expressive syntax spans multiple lines.
+The REPL (`beingdb repl` / `beingdb-repl`) reads `find`/`where` queries:
+type the lines of a query and finish with a blank line to run it. A line
+starting with `:` is a command (`:help` lists them).
 
 ```
+BeingDB REPL. 6 predicates, fingerprint sha256:3a1f...c9, beingdb-dsl/1. Enter a find/where query (blank line to run), :help for commands, :quit to exit.
 beingdb> :environment
 predicates: 6
 environment_fingerprint: sha256:3a1f2b7c9e4d5a6f8091b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b
 language_version: beingdb-dsl/1
-mode: auto
 beingdb> :describe created_by
 created_by/2  (3 facts)
   Relates a work to the person who created it.
@@ -908,29 +893,128 @@ created_by/2  (3 facts)
   examples:
     created_by(she, tina_keane)
 beingdb> find Work
-where
-  created(_, Work)
-limit 3
-
+...> where
+...>   created(_, Work)
+...> limit 3
+...>
 {
   "variables": [ "Work" ],
   "results": [ { "Work": { "type": "atom", "value": "she" } } ],
   "count": 1,
+  "total": 1,
   "hasMore": false,
   "truncated": false,
-  "warnings": []
+  "warnings": [],
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:3a1f...c9"
 }
 ```
 
-`:validate` reads a query the same way (blank line to finish) and reports
-validation results without executing it. `:diagnose` does the same for a
-DSL query and adds BeingDB's data-aware diagnostics and any proven repair
-(the `diagnose` action).
+`:explain`, `:validate` and `:diagnose` each read a query the same way
+(blank line to finish) and show its plan, its validation result, or the
+`diagnose` action's diagnostics and proven repairs, without executing
+it. `:explain find ...` also works, with the rest of the query entered
+on the following lines.
+
+`:load <file>` (or `:loadqueries <file>`) runs a file of queries.
+Queries are separated by blank lines, and lines starting with `%` or
+`#` are comments:
+
+```
+% Works by tina_keane
+find Work
+where
+  created(tina_keane, Work)
+
+# Where were they shown?
+find Work, Exhibition
+where
+  created(tina_keane, Work)
+  shown_in(Work, Exhibition)
+```
+
+For `.pl`, `.pro` and `.facts` files, `:load` loads facts instead. See
+[Getting Started](getting-started.md#interactive-repl) for the full
+command list.
+
+## Full example
+
+```prolog
+person(alice_smith).
+label(alice_smith, "Alice Smith"@en).
+birth_year(alice_smith, @1972).
+confidence(assertion_1, 0.92).
+
+capture(capture_1).
+captured_at(
+  capture_1,
+  @2022-08-17T12:30:00Z
+).
+target_uri(
+  capture_1,
+  <https://example.org/about>
+).
+```
+
+Query -- captures within 2022, using the instant range index on
+`captured_at`'s second argument:
+
+```
+find Capture, Date
+where
+  captured_at(Capture, Date)
+  Date >= @2022-01-01T00:00:00Z
+  Date < @2023-01-01T00:00:00Z
+```
+
+```bash
+curl -X POST http://localhost:8080/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "find Capture, Date\nwhere\n  captured_at(Capture, Date)\n  Date >= @2022-01-01T00:00:00Z\n  Date < @2023-01-01T00:00:00Z"}'
+```
+
+```json
+{
+  "variables": ["Capture", "Date"],
+  "results": [
+    {
+      "Capture": { "type": "atom", "value": "capture_1" },
+      "Date": { "type": "instant", "value": "2022-08-17T12:30:00Z" }
+    }
+  ],
+  "count": 1,
+  "total": 1,
+  "hasMore": false,
+  "truncated": false,
+  "warnings": [],
+  "language": "dsl",
+  "languageVersion": "beingdb-dsl/1",
+  "environmentFingerprint": "sha256:..."
+}
+```
+
+## Best practices
+
+1. **Order doesn't matter** -- BeingDB plans the `where` lines itself.
+2. **Use constants and comparisons** -- they drive positional indexes
+   instead of a full scan.
+3. **Use `limit` (and `order by` when paging)** -- keeps responses small
+   and pages stable.
+4. **Validate or diagnose generated queries** -- the `validate` and
+   `diagnose` actions catch mistakes without running the query.
+5. **Keep predicates simple** -- one relationship type per predicate.
+6. **Consistent arity** -- all facts for a predicate must have the same
+   number of arguments.
 
 ## Further reading
 
 - [Internals](internals.md) -- typed value model, storage layout, fact
   IDs, index encoding, comparison semantics, and current limitations.
+  Internally, BeingDB lowers each `find`/`where` query to a core
+  pattern form (the patterns and comparisons shown in `explain`'s
+  `normalizedCoreQuery`) that the planner and executor run. That core
+  form is not a public query language: `"language": "core"` is rejected
+  with `unsupported_language`.
 - [API Reference](api.md)
 - [Installation Guide](installation.md)
-

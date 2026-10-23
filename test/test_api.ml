@@ -215,7 +215,7 @@ let test_post_query_simple () =
   let (pack, test_dir) = create_test_pack "post_simple" in
   let app = create_app pack 1000 in
   
-  let body = {|{"query":"created(Artist, Work)"}|} in
+  let body = {|{"query":"find Artist, Work\nwhere\n  created(Artist, Work)"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
   
@@ -248,7 +248,7 @@ let test_post_query_join () =
   let (pack, test_dir) = create_test_pack "post_join" in
   let app = create_app pack 1000 in
   
-  let body = {|{"query":"created(Artist, Work), shown_in(Work, Event)"}|} in
+  let body = {|{"query":"find Artist, Work, Event\nwhere\n  created(Artist, Work)\n  shown_in(Work, Event)"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
   
@@ -278,9 +278,8 @@ let test_post_query_join () =
     Lwt.return ()
   )
 
-(** Test: POST /query -- a multiline, comma-separated query produces the
-    same results as its single-line equivalent (whitespace, including
-    newlines, is insignificant). *)
+(** Test: POST /query -- indentation, blank lines, comment lines and
+    spacing inside patterns do not change a query's results. *)
 let test_post_query_multiline_matches_single_line () =
   let (pack, test_dir) = create_test_pack "post_multiline" in
   let app = create_app pack 1000 in
@@ -297,13 +296,11 @@ let test_post_query_multiline_matches_single_line () =
   in
   let count json = Yojson.Safe.Util.member "count" json |> Yojson.Safe.Util.to_int in
 
-  let single_line = run "created(Artist, Work), shown_in(Work, Event)" in
-  let multi_line = run "created(Artist, Work),\nshown_in(Work, Event)" in
-  let broken_across_lines = run "created(\n Artist,\n Work\n),\nshown_in(\n Work,\n Event\n)" in
+  let plain = run "find Artist, Work, Event\nwhere\n  created(Artist, Work)\n  shown_in(Work, Event)" in
+  let spaced = run "find Artist, Work, Event\nwhere\n\n      created( Artist ,Work )\n% a comment\n  shown_in(Work,   Event)\n\n" in
 
-  Alcotest.(check int) "multi-line matches single-line" (count single_line) (count multi_line);
-  Alcotest.(check int) "broken-across-lines matches single-line" (count single_line) (count broken_across_lines);
-  Alcotest.(check bool) "has results" true (count single_line > 0);
+  Alcotest.(check int) "layout does not change results" (count plain) (count spaced);
+  Alcotest.(check bool) "has results" true (count plain > 0);
 
   (* Cleanup *)
   let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
@@ -316,7 +313,7 @@ let test_post_query_string_with_comma () =
   let (pack, test_dir) = create_test_pack "post_string_comma" in
   let app = create_app pack 1000 in
 
-  let body = {|{"query":"title(Work, \"Smith, Jones and Brown\")"}|} in
+  let body = {|{"query":"find Work\nwhere\n  title(Work, \"Smith, Jones and Brown\")"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
 
@@ -333,17 +330,17 @@ let test_post_query_string_with_comma () =
     Lwt.return ()
   )
 
-(** Test: POST /query -- a duplicate comma separator fails predictably. *)
+(** Test: POST /query -- a stray separator fails predictably. *)
 let test_post_query_duplicate_separator () =
   let (pack, test_dir) = create_test_pack "post_duplicate_comma" in
   let app = create_app pack 1000 in
 
-  let body = {|{"query":"created(Artist, Work),\n,\nshown_in(Work, Exhibition)"}|} in
+  let body = {|{"query":"find Artist\nwhere\n  created(Artist, Work),\n  ,\n  shown_in(Work, Exhibition)"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
   let status = Dream.status response in
 
-  Alcotest.(check int) "status 400 for duplicate separator" 400 (Dream.status_to_int status);
+  Alcotest.(check int) "status 400 for stray separator" 400 (Dream.status_to_int status);
 
   (* Cleanup *)
   let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
@@ -355,7 +352,7 @@ let test_post_query_unmatched_paren () =
   let (pack, test_dir) = create_test_pack "post_unmatched_paren" in
   let app = create_app pack 1000 in
 
-  let body = {|{"query":"created(Artist, Work"}|} in
+  let body = {|{"query":"find Artist\nwhere\n  created(Artist, Work"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
   let status = Dream.status response in
@@ -367,31 +364,50 @@ let test_post_query_unmatched_paren () =
   let _ = Unix.system cmd in
   ()
 
-(** Test: POST /query with offset and limit *)
+(* Run one POST /query body; returns (status, json). *)
+let post app body =
+  let response = Dream.test app (Dream.request ~target:"/query" ~method_:`POST body) in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let* resp_body = Dream.body response in
+     Lwt.return (Dream.status_to_int (Dream.status response), Yojson.Safe.from_string resp_body))
+
+(** Test: POST /query pages with limit/offset in the query text and
+    reports total; request-level offset/limit are rejected. *)
 let test_post_query_pagination () =
   let (pack, test_dir) = create_test_pack "post_pagination" in
   let app = create_app pack 1000 in
-  
-  let body = {|{"query":"created(Artist, Work)", "offset":0, "limit":1}|} in
-  let request = Dream.request ~target:"/query" ~method_:`POST body in
-  let response = Dream.test app request in
-  
-  Lwt_main.run (
-    let open Lwt.Syntax in
-    let* resp_body = Dream.body response in
-    let json = Yojson.Safe.from_string resp_body in
-    
-    let results = Yojson.Safe.Util.member "results" json 
-                  |> Yojson.Safe.Util.to_list in
-    
-    (* With limit=1, should get at most 1 result *)
-    Alcotest.(check bool) "respects limit" true (List.length results <= 1);
-    
-    (* Cleanup *)
-    let cmd = Printf.sprintf "rm -rf %s" (Filename.quote test_dir) in
-    let _ = Unix.system cmd in
-    Lwt.return ()
-  )
+  Fun.protect
+    ~finally:(fun () -> ignore (Unix.system (Printf.sprintf "rm -rf %s" (Filename.quote test_dir))))
+    (fun () ->
+      let open Yojson.Safe.Util in
+      let status, json = post app {|{"query":"find Artist, Work\nwhere\n  created(Artist, Work)\nlimit 1"}|} in
+      Alcotest.(check int) "status 200" 200 status;
+      Alcotest.(check int) "one row" 1 (json |> member "count" |> to_int);
+      Alcotest.(check int) "total" 2 (json |> member "total" |> to_int);
+      Alcotest.(check bool) "hasMore" true (json |> member "hasMore" |> to_bool);
+      let status, json = post app {|{"query":"find Artist, Work\nwhere\n  created(Artist, Work)", "offset":0, "limit":1}|} in
+      Alcotest.(check int) "status 400 for request-level paging" 400 status;
+      Alcotest.(check string) "code" "unsupported_parameter" (json |> member "error" |> member "code" |> to_string))
+
+(** Test: POST /query rejects the retired core language, and runs
+    find/where queries without a language field. *)
+let test_post_query_language () =
+  let (pack, test_dir) = create_test_pack "post_language" in
+  let app = create_app pack 1000 in
+  Fun.protect
+    ~finally:(fun () -> ignore (Unix.system (Printf.sprintf "rm -rf %s" (Filename.quote test_dir))))
+    (fun () ->
+      let open Yojson.Safe.Util in
+      let status, json = post app {|{"query":"created(Artist, Work)","language":"core"}|} in
+      Alcotest.(check int) "status 400 for core" 400 status;
+      Alcotest.(check string) "core code" "unsupported_language" (json |> member "error" |> member "code" |> to_string);
+      let status, json = post app {|{"query":"created(Artist, Work)"}|} in
+      Alcotest.(check int) "status 400 for core text" 400 status;
+      Alcotest.(check string) "core text is a syntax error" "syntax_error" (json |> member "errors" |> index 0 |> member "code" |> to_string);
+      let status, json = post app {|{"query":"find Artist\nwhere\n  artist(Artist)"}|} in
+      Alcotest.(check int) "status 200 without language" 200 status;
+      Alcotest.(check string) "language echoed" "dsl" (json |> member "language" |> to_string))
 
 (** Test: POST /query with invalid JSON *)
 let test_post_query_invalid_json () =
@@ -449,7 +465,7 @@ let test_post_query_negative_offset () =
   let (pack, test_dir) = create_test_pack "post_negative_offset" in
   let app = create_app pack 1000 in
   
-  let body = {|{"query":"created(A, W)", "offset":-5, "limit":10}|} in
+  let body = {|{"query":"find A\nwhere\n  created(A, W)\noffset -5"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
   let status = Dream.status response in
@@ -466,7 +482,7 @@ let test_post_query_cartesian_product () =
   let (pack, test_dir) = create_test_pack "post_cartesian" in
   let app = create_app pack 1000 in
   
-  let body = {|{"query":"artist(A1), artist(A2)"}|} in
+  let body = {|{"query":"find A1, A2\nwhere\n  artist(A1)\n  artist(A2)"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
   let status = Dream.status response in
@@ -500,7 +516,7 @@ let test_post_query_too_long () =
       let _ = Unix.system cmd in
       ())
     (fun () ->
-      let body = {|{"query":"created(Artist, Work), shown_in(Work, Exhibition)"}|} in
+      let body = {|{"query":"find Artist\nwhere\n  created(Artist, Work)\n  shown_in(Work, Exhibition)"}|} in
       let request = Dream.request ~target:"/query" ~method_:`POST body in
       let response = Dream.test app request in
       let status = Dream.status response in
@@ -523,7 +539,7 @@ let test_post_query_concurrency_limit () =
       let _ = Unix.system cmd in
       ())
     (fun () ->
-      let body = {|{"query":"created(Artist, Work)"}|} in
+      let body = {|{"query":"find Artist\nwhere\n  created(Artist, Work)"}|} in
       let request = Dream.request ~target:"/query" ~method_:`POST body in
       let response = Dream.test app request in
       let status = Dream.status response in
@@ -588,7 +604,7 @@ let test_query_missing_predicate () =
 let test_post_query_dsl_execute () =
   let pack, test_dir = create_test_pack "post_dsl_execute" in
   let app = create_app pack 1000 in
-  let body = {|{"query":"find Artist\nwhere\n  artist(Artist)\n","language":"dsl"}|} in
+  let body = {|{"query":"find Artist\nwhere\n  artist(Artist)\n"}|} in
   let request = Dream.request ~target:"/query" ~method_:`POST body in
   let response = Dream.test app request in
   Lwt_main.run
@@ -657,8 +673,9 @@ let () =
     "Complex Queries", [
       Alcotest.test_case "POST /query simple" `Quick test_post_query_simple;
       Alcotest.test_case "POST /query join" `Quick test_post_query_join;
-      Alcotest.test_case "POST /query pagination" `Quick test_post_query_pagination;
-      Alcotest.test_case "POST /query multi-line matches single-line" `Quick test_post_query_multiline_matches_single_line;
+      Alcotest.test_case "POST /query pagination and total" `Quick test_post_query_pagination;
+      Alcotest.test_case "POST /query language" `Quick test_post_query_language;
+      Alcotest.test_case "POST /query layout-insensitive" `Quick test_post_query_multiline_matches_single_line;
       Alcotest.test_case "POST /query string containing a comma" `Quick test_post_query_string_with_comma;
     ];
     "Expressive Query Language", [
@@ -669,7 +686,7 @@ let () =
       Alcotest.test_case "invalid JSON" `Quick test_post_query_invalid_json;
       Alcotest.test_case "missing query field" `Quick test_post_query_missing_field;
       Alcotest.test_case "invalid query syntax" `Quick test_post_query_invalid_syntax;
-      Alcotest.test_case "duplicate comma separator" `Quick test_post_query_duplicate_separator;
+      Alcotest.test_case "stray separator" `Quick test_post_query_duplicate_separator;
       Alcotest.test_case "unmatched parenthesis" `Quick test_post_query_unmatched_paren;
       Alcotest.test_case "negative offset" `Quick test_post_query_negative_offset;
       Alcotest.test_case "cartesian product" `Quick test_post_query_cartesian_product;

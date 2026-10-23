@@ -81,9 +81,12 @@ let handle_query max_results pack_store predicate _req =
     below never yields, so there is no race between requests. *)
 let in_flight_queries = ref 0
 
-(** Execute a query with joins. Accepts optional ["language"] ("core"
-    (default) or "dsl") and ["action"] ("execute" (default), "validate",
-    "explain", or "diagnose" for "dsl") fields, dispatched via {!Controller.run_query}. Rejects
+(** Run a find/where query. Accepts optional ["language"] (only "dsl";
+    "core" is rejected as [unsupported_language]) and ["action"]
+    ("execute" (default), "validate", "explain" or "diagnose") fields,
+    dispatched via {!Controller.run_query}. Request-level ["offset"] and
+    ["limit"] fields are rejected as [unsupported_parameter]: paging is
+    [limit N]/[offset N] in the query text. Rejects
     with [429] once [config.max_concurrent_queries] requests are already
     in flight, guarding against resource exhaustion from a flood of
     concurrent (possibly expensive) queries. Re-applies [config] to
@@ -110,12 +113,13 @@ let handle_query_language (config : Server_config.t) pack_store req =
             match json with
             | `Assoc fields -> (
                 match List.assoc_opt "query" fields with
+                | Some (`String _) when List.mem_assoc "offset" fields || List.mem_assoc "limit" fields ->
+                    error_response ~code:"unsupported_parameter"
+                      "Request-level 'offset' and 'limit' are not supported; put 'limit N' and 'offset N' at the end of the query text."
                 | Some (`String query_str) ->
-                    let offset = match List.assoc_opt "offset" fields with Some (`Int n) -> Some n | _ -> None in
-                    let limit = match List.assoc_opt "limit" fields with Some (`Int n) -> Some n | _ -> None in
                     let language = match List.assoc_opt "language" fields with Some (`String s) -> Some s | _ -> None in
                     let action = match List.assoc_opt "action" fields with Some (`String s) -> Some s | _ -> None in
-                    Controller.run_query ~max_results:config.Server_config.max_results ?language ?action pack_store query_str ~offset ~limit
+                    Controller.run_query ~max_results:config.Server_config.max_results ?language ?action pack_store query_str
                     >>= (function
                     | Controller.Success json -> json_response json
                     | Controller.Invalid json -> Dream.json ~status:`Bad_Request (Yojson.Safe.to_string json)
