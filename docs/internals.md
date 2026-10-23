@@ -452,7 +452,8 @@ Pipeline, module by module:
 - `lib/runtime/predicate_suggest.ml` -- deterministic "did you mean" suggestions
   for an unknown predicate name (normalized-name equality, Levenshtein
   edit distance, underscore-token overlap, arity compatibility) and, with
-  a stricter filter (no numeric or very short shared tokens), for a
+  a stricter filter (shared words must be non-numeric, at least 3
+  characters, and at least half of both values' words), for a
   constant that occurs nowhere in its predicate (`suggest_value`, used by
   the `diagnose` action) -- no embeddings or external calls.
 - `lib/runtime/query_connectivity.ml` -- checks that a query's positive

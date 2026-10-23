@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.1.5"
+  "version": "0.1.6"
 }
 ```
 
@@ -431,11 +431,12 @@ prove emptiness. Diagnostics never change `valid`.
 When an atom or string literal occurs nowhere in its predicate, its
 `unknown_constant`/`constant_not_at_position` diagnostic also carries
 `evidence.suggestions`: up to five values of the same type that do occur
-at that argument, ranked as likely corrections (edit distance and shared
-words, ignoring case, spaces, hyphens and underscores) and written as
+at that argument, ranked as likely corrections (edit distance, or shared
+words making up at least half of both values' words, ignoring case,
+spaces, hyphens and underscores) and written as
 DSL literals, and the message ends with `Did you mean <best>?`. For
 example, `created_by(Work, david_critchly)` gives
-`"suggestions": ["david_critchley", "david_hall"]`. Suggestions are
+`"suggestions": ["david_critchley"]`. Suggestions are
 hints, not repairs: BeingDB cannot prove which value was meant, so the
 client chooses.
 
