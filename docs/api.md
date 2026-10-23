@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.3.0"
+  "version": "0.4.0"
 }
 ```
 
@@ -492,10 +492,14 @@ Unrelated to whether the query text is valid. Always:
 
 `code` is one of: `malformed_request`, `invalid_request` (the simpler
 endpoints that don't yet carry a specific code), `timeout`,
-`internal_error`, `execution_error`, `result_too_large`,
+`internal_error`, `execution_error`, `result_too_large`, `scan_limit_exceeded`,
 `unsupported_language`, `unknown_language`, `unknown_action`,
 `unsupported_parameter`, `query_too_long` (HTTP 413), `server_busy`
 (HTTP 429). See [Safety limits](#safety-limits) for the last three.
+
+`scan_limit_exceeded` means the query reads more facts than
+`max_scanned_facts`, for example a `contains` or `!=` filter over a very
+large predicate; add constants or narrower comparisons.
 
 `result_too_large` means the query matches more rows than
 `max_intermediate_results`. BeingDB returns this error rather than a
@@ -581,6 +585,7 @@ malicious queries, overridable via an optional `--config <file.json>`
 | `max_intermediate_results` | 10000 | Cap on the rows a query may match; a query matching more fails with `result_too_large` rather than returning a partial result |
 | `max_query_length` | 20000 | Cap, in bytes, on a raw query string, rejected before parsing (`query_too_long`, HTTP 413) |
 | `max_concurrent_queries` | 20 | Cap on simultaneously in-flight `POST /query`, `GET /predicates` and `GET /query/:predicate` requests; further requests get `server_busy` (HTTP 429) until one finishes |
+| `max_scanned_facts` | 1000000 | Facts one query may read (every candidate fact its patterns fetch, summed across joins). A query that reads more fails with `scan_limit_exceeded`, however few rows it matches; this bounds filters such as `!=` and `contains` that cannot use an index |
 | `max_diagnostic_facts` | 50000 | Facts one data-aware diagnostic check may read. The join and misspelling-suggestion checks (and the observed-range evidence) read every fact of a predicate; above this size they are skipped and reported as an info-level `check_skipped` diagnostic |
 
 ```bash

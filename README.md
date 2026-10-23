@@ -60,7 +60,16 @@ This can answer questions such as:
 
 > Which works created after 1970 were subsequently shown in an exhibition?
 
-Queries can count, too. This lists the artists with the most works:
+Queries can search text, too. This finds exhibitions with "video" in their title:
+
+```text
+find Exhibition, Title
+where
+  exhibition_title(Exhibition, Title)
+  Title contains "video"
+```
+
+And they can count. This lists the artists with the most works:
 
 ```text
 find Artist, count(Work)

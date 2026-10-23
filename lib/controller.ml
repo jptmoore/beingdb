@@ -251,8 +251,7 @@ let execute_dsl ~max_results store query_str =
       let run_body () =
         Model.execute_query store cq.Core_query.query >>= function
         | Error message ->
-            let code = if Query_validation.is_result_too_large message then "result_too_large" else "execution_error" in
-            Lwt.return (Failure { code; message })
+            Lwt.return (Failure { code = Query_validation.engine_error_code message; message })
         | Ok model_result ->
             let engine_result : Query_engine.result = { variables = model_result.Model.variables; bindings = model_result.Model.bindings } in
             let vars, all_rows = Core_query.apply { cq with Core_query.offset = None; limit = None } engine_result in

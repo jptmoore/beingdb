@@ -583,6 +583,22 @@ Pipeline, module by module:
   that read a whole predicate (`disjoint_join`, misspelling
   `suggestions`, `observedRange`) skip predicates larger than
   `max_diagnostic_facts`, reporting an info-level `check_skipped`.
+  The engine also sums the candidate facts every pattern step fetches
+  (`List.length` of each lookup or scan, across joins) and stops with
+  `Query_validation.scan_limit_message` past `max_scanned_facts`
+  (`scan_limit_exceeded`), which bounds filters that no index serves.
+  `Query_validation.engine_error_code` maps engine errors to codes for
+  the controller and other runtimes.
+- `contains` is `Query_ast.Contains`, a post-filter comparison
+  (`Var contains "text"`, parsed by `Clause_parser`) evaluated by
+  `Value.contains_text`: a literal substring test over strings,
+  language-tagged strings and atoms, ASCII-case-insensitive, underscores
+  equal to spaces. The planner never uses an index for it. `Dsl_lower`
+  rejects misuse with `invalid_contains` (left side not a variable, right
+  side not quoted text of 1 to `Query_validation.max_contains_length`
+  bytes, or a variable that only holds non-text types). Diagnostics
+  treat it like any comparison, so an unmatched `contains` is reported
+  as `unsatisfiable_comparison`.
   `Api.with_query_slot` applies `max_concurrent_queries` to `POST /query`
   and both `GET` reads; `Api.router` is the route table shared by
   `Api.serve` and the tests.

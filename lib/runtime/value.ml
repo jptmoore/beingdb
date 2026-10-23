@@ -83,6 +83,21 @@ let valid_uri s =
 
 let make_uri s = if valid_uri s then Ok (Uri s) else Error (Printf.sprintf "Malformed URI: %s" s)
 
+(* Text used by [contains]: lowercase ASCII, underscores as spaces, so
+   "video stairs" matches the atom [the_video_stairs]. *)
+let contains_key s = String.map (fun c -> if c = '_' then ' ' else Char.lowercase_ascii c) s
+
+let text_of = function String s | Atom s -> Some s | Lang_string { value; _ } -> Some value | _ -> None
+
+let contains_text v pattern =
+  match text_of v with
+  | None -> false
+  | Some text ->
+      let hay = contains_key text and needle = contains_key pattern in
+      let n = String.length hay and m = String.length needle in
+      let rec at i = i + m <= n && (String.sub hay i m = needle || at (i + 1)) in
+      m > 0 && at 0
+
 let equal a b =
   match (a, b) with
   | Atom a, Atom b -> String.equal a b

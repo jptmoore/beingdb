@@ -10,6 +10,7 @@ type t = {
   max_query_length : int;  (** Cap, in bytes, on a raw query string before parsing *)
   max_concurrent_queries : int;  (** Cap on simultaneously in-flight query and predicate requests *)
   max_diagnostic_facts : int;  (** Facts one data-aware diagnostic check may scan before it is skipped *)
+  max_scanned_facts : int;  (** Facts one query may read before it fails with [scan_limit_exceeded] *)
 }
 
 let default =
@@ -20,6 +21,7 @@ let default =
     max_query_length = 20_000;
     max_concurrent_queries = 20;
     max_diagnostic_facts = 50_000;
+    max_scanned_facts = 1_000_000;
   }
 
 let ( let* ) = Result.bind
@@ -50,13 +52,25 @@ let of_json json =
       let* max_query_length = int_field json "max_query_length" ~default:default.max_query_length in
       let* max_concurrent_queries = int_field json "max_concurrent_queries" ~default:default.max_concurrent_queries in
       let* max_diagnostic_facts = int_field json "max_diagnostic_facts" ~default:default.max_diagnostic_facts in
+      let* max_scanned_facts = int_field json "max_scanned_facts" ~default:default.max_scanned_facts in
       if max_results <= 0 then Error "'max_results' must be > 0"
       else if query_timeout <= 0.0 then Error "'query_timeout' must be > 0"
       else if max_intermediate_results <= 0 then Error "'max_intermediate_results' must be > 0"
       else if max_query_length <= 0 then Error "'max_query_length' must be > 0"
       else if max_concurrent_queries <= 0 then Error "'max_concurrent_queries' must be > 0"
       else if max_diagnostic_facts <= 0 then Error "'max_diagnostic_facts' must be > 0"
-      else Ok { max_results; query_timeout; max_intermediate_results; max_query_length; max_concurrent_queries; max_diagnostic_facts })
+      else if max_scanned_facts <= 0 then Error "'max_scanned_facts' must be > 0"
+      else
+        Ok
+          {
+            max_results;
+            query_timeout;
+            max_intermediate_results;
+            max_query_length;
+            max_concurrent_queries;
+            max_diagnostic_facts;
+            max_scanned_facts;
+          })
   | _ -> Error "Config file must contain a single JSON object"
 
 let load_file path =
@@ -73,4 +87,5 @@ let apply (config : t) =
   Query_validation.Config.query_timeout := config.query_timeout;
   Query_validation.Config.max_intermediate_results := config.max_intermediate_results;
   Query_validation.Config.max_query_length := config.max_query_length;
-  Query_validation.Config.max_diagnostic_facts := config.max_diagnostic_facts
+  Query_validation.Config.max_diagnostic_facts := config.max_diagnostic_facts;
+  Query_validation.Config.max_scanned_facts := config.max_scanned_facts

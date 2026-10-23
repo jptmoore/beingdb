@@ -245,6 +245,32 @@ let test_count_syntax_and_errors () =
   let ops = List.map (fun op -> Yojson.Safe.Util.(op |> member "operation" |> to_string)) (Explain_plan.build cq) in
   Alcotest.(check bool) "explain shows count, not project" true (List.mem "count" ops && not (List.mem "project" ops))
 
+(* --- Var contains "text" --- *)
+
+let test_contains_matching () =
+  let m v p = Value.contains_text v p in
+  Alcotest.(check bool) "case-insensitive string" true (m (Value.String "The Video Stairs") "VIDEO");
+  Alcotest.(check bool) "underscore matches space" true (m (Value.Atom "the_video_stairs") "video stairs");
+  Alcotest.(check bool) "space matches underscore" true (m (Value.String "the video stairs") "video_stairs");
+  Alcotest.(check bool) "language-tagged string" true (m (Value.Lang_string { value = "Hey Bud"; language = "en" }) "bud");
+  Alcotest.(check bool) "literal, not a pattern" false (m (Value.String "abc") "a.c");
+  Alcotest.(check bool) "non-text never matches" false (m (Value.Year 1979) "19");
+  Alcotest.(check bool) "empty pattern never matches" false (m (Value.String "abc") "")
+
+let test_contains_queries () =
+  Alcotest.(check (list string)) "atoms" [ "P=alice"; "P=carol" ] (render (dsl "find P\nwhere\n  person(P)\n  P contains \"A\"\norder by P\n"));
+  Alcotest.(check (list string)) "strings" [ "X=y" ] (render (dsl "find X\nwhere\n  value(X, V)\n  V contains \"KNOW\"\n"));
+  Alcotest.(check (list string)) "with count" [ "count(W)=2" ] (render (dsl "find count(W)\nwhere\n  created_by(W, A)\n  A contains \"ali\"\n"));
+  List.iter
+    (fun (label, text) -> Alcotest.(check (list string)) label [ "invalid_contains" ] (dsl_errors text))
+    [
+      ("year column", "find P\nwhere\n  born(P, Y)\n  Y contains \"19\"\n");
+      ("empty text", "find P\nwhere\n  person(P)\n  P contains \"\"\n");
+      ("unquoted text", "find P\nwhere\n  person(P)\n  P contains alice\n");
+      ("literal on the left", "find P\nwhere\n  person(P)\n  \"alice\" contains P\n");
+      ("too long", "find P\nwhere\n  person(P)\n  P contains \"" ^ String.make 201 'a' ^ "\"\n");
+    ]
+
 let () =
   Alcotest.run "BeingDB Runtime (in-memory store)"
     [
@@ -264,6 +290,11 @@ let () =
           Alcotest.test_case "overall" `Quick test_count_overall;
           Alcotest.test_case "order-by keys in order" `Quick test_order_by_keys_in_order;
           Alcotest.test_case "syntax and errors" `Quick test_count_syntax_and_errors;
+        ] );
+      ( "contains",
+        [
+          Alcotest.test_case "matching rules" `Quick test_contains_matching;
+          Alcotest.test_case "queries and validation" `Quick test_contains_queries;
         ] );
       ("Introspection", [ Alcotest.test_case "predicates and environment" `Quick test_introspection ]);
     ]

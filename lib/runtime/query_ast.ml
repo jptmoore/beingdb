@@ -11,7 +11,7 @@ type term =
   | Wildcard
   | Literal of Value.t
 
-type comparison_operator = Eq | Ne | Lt | Le | Gt | Ge
+type comparison_operator = Eq | Ne | Lt | Le | Gt | Ge | Contains  (** [Var contains "text"]: case-insensitive substring *)
 
 let string_of_operator = function
   | Eq -> "="
@@ -20,6 +20,7 @@ let string_of_operator = function
   | Le -> "<="
   | Gt -> ">"
   | Ge -> ">="
+  | Contains -> "contains"
 
 (** Flip an operator for the case [literal OP variable] so it can be
     treated uniformly as [variable OP' literal]. *)
@@ -30,6 +31,7 @@ let flip_operator = function
   | Le -> Ge
   | Gt -> Lt
   | Ge -> Le
+  | Contains -> Contains
 
 type clause =
   | Pattern of { predicate : string; arguments : term list }

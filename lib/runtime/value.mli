@@ -26,6 +26,12 @@ val make_year_month : year:int -> month:int -> (t, string) result
 val make_date : year:int -> month:int -> day:int -> (t, string) result
 val make_uri : string -> (t, string) result
 
+(** [contains_text v pattern]: whether the text of a string, language-tagged
+    string or atom contains [pattern], ignoring ASCII case and treating
+    underscores as spaces. Other value types, and an empty pattern, never
+    match. A literal substring test: no wildcards or regular expressions. *)
+val contains_text : t -> string -> bool
+
 (** Type-aware equality. Values of different types are never equal, even
     if their textual forms coincide (e.g. [Integer 1979] <> [Year 1979]). *)
 val equal : t -> t -> bool

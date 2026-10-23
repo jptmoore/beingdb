@@ -56,6 +56,7 @@ let serve pack_path port max_results_override config_path =
   Logs.info (fun m -> m "Max query length: %d bytes" config.Server_config.max_query_length);
   Logs.info (fun m -> m "Max concurrent queries: %d" config.Server_config.max_concurrent_queries);
   Logs.info (fun m -> m "Max diagnostic facts: %d" config.Server_config.max_diagnostic_facts);
+  Logs.info (fun m -> m "Max scanned facts: %d" config.Server_config.max_scanned_facts);
   Api.serve ~stop config pack port;
   Logs.info (fun m -> m "Server stopped")
 
@@ -74,7 +75,7 @@ let max_results =
 let config_path =
   let doc =
     "Path to a JSON config file setting safety limits (max_results, query_timeout, max_intermediate_results, \
-     max_query_length, max_concurrent_queries, max_diagnostic_facts); missing fields fall back to sensible defaults"
+     max_query_length, max_concurrent_queries, max_diagnostic_facts, max_scanned_facts); missing fields fall back to sensible defaults"
   in
   Arg.(value & opt (some string) None & info [ "config" ] ~docv:"FILE" ~doc)
 
