@@ -9,3 +9,12 @@
     the query environment. If [arity] is given, predicates with a
     matching arity are ranked ahead of otherwise-equally-close ones. *)
 val suggest : ?arity:int -> known:(string * int) list -> string -> string list
+
+(** [suggest_value ~known value]: likely corrections for a constant
+    value (an atom or a string's contents) among the [known] values at
+    an argument position, most likely first, at most 5, never [value]
+    itself. Case, spaces, hyphens and underscores are normalized away;
+    a candidate must be within a small edit distance or share a
+    non-numeric token of at least 3 characters ([tate] ~ [tate_modern],
+    but not [artist_1] ~ [work_1]). *)
+val suggest_value : known:string list -> string -> string list

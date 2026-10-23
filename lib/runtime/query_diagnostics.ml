@@ -23,6 +23,11 @@
     alone is affected, so it is reported as ["warning"]). Diagnostics
     never change [valid]; that remains {!Dsl_lower}'s decision.
 
+    When an atom or string literal occurs nowhere in its predicate, its
+    diagnostic carries [evidence.suggestions]: values of the same type
+    at that position ranked as likely corrections, in DSL literal syntax
+    ({!Predicate_suggest.suggest_value}). They are hints, not repairs.
+
     A [repair] is attached only when BeingDB can prove it:
 
     - [swap_arguments]: a positive pattern whose literals do not occur at
@@ -181,7 +186,7 @@ module Make (Store : Runtime_store.S) = struct
     store : Store.t;
     env : Query_environment.t;
     occurs_cache : (string * int * string, bool) Hashtbl.t;
-    values_cache : (string * int, (string, unit) Hashtbl.t) Hashtbl.t;
+    values_cache : (string * int, (string, Value.t) Hashtbl.t) Hashtbl.t;
   }
 
   let occurs ctx predicate i v =
@@ -217,7 +222,7 @@ module Make (Store : Runtime_store.S) = struct
     | None ->
         let* facts = Store.query_all ctx.store predicate in
         let t = Hashtbl.create (List.length facts) in
-        List.iter (fun (f : Fact.t) -> match List.nth_opt f.arguments i with Some v -> Hashtbl.replace t (value_key v) () | None -> ()) facts;
+        List.iter (fun (f : Fact.t) -> match List.nth_opt f.arguments i with Some v -> Hashtbl.replace t (value_key v) v | None -> ()) facts;
         Hashtbl.replace ctx.values_cache (predicate, i) t;
         Lwt.return t
 
@@ -225,6 +230,27 @@ module Make (Store : Runtime_store.S) = struct
     match Query_environment.find ctx.env s.predicate with
     | Some p when p.arity = List.length s.arguments -> Some p
     | _ -> None
+
+  (* Values of the literal's own type (atom or string) at this position,
+     ranked as likely corrections for it, in DSL literal syntax. *)
+  let value_suggestions ctx predicate i (v : Value.t) =
+    let text_of : Value.t -> string option =
+      match v with
+      | Atom _ -> ( function Atom s -> Some s | _ -> None)
+      | String _ -> ( function String s -> Some s | _ -> None)
+      | _ -> fun _ -> None
+    in
+    match text_of v with
+    | None -> Lwt.return []
+    | Some text ->
+        let* values = position_values ctx predicate i in
+        let known = Hashtbl.fold (fun _ x acc -> match text_of x with Some s -> s :: acc | None -> acc) values [] in
+        let rebuild s : Value.t = match v with String _ -> String s | _ -> Atom s in
+        Lwt.return (List.map (fun s -> dsl_literal (rebuild s)) (Predicate_suggest.suggest_value ~known text))
+
+  let suggestion_fields = function
+    | [] -> ([], "")
+    | best :: _ as l -> ([ ("suggestions", `List (List.map (fun s -> `String s) l)) ], Printf.sprintf " Did you mean %s?" best)
 
   let role (p : Query_environment.predicate_signature) i = Option.bind (List.nth_opt p.arguments i) (fun a -> a.role)
   let role_evidence p i = match role p i with Some r -> [ ("declaredRole", `String r) ] | None -> []
@@ -267,14 +293,16 @@ module Make (Store : Runtime_store.S) = struct
             (fun n (i, (v : Value.t)) ->
               let* same = positions_where ctx p.name p.arity v in
               let* elsewhere = match v with Atom _ -> Lwt.map Option.some (atom_sites ctx v) | _ -> Lwt.return None in
+              let* suggestions = if same = [] then value_suggestions ctx p.name i v else Lwt.return [] in
+              let suggestion_evidence, did_you_mean = suggestion_fields suggestions in
               let repair = if n = 0 then swap_repair else None in
               let lit = dsl_literal v in
               match elsewhere with
               | Some [] ->
                   Lwt.return
                     (make ~severity ~line:s.line ~predicate:p.name ~argument_position:i ~value:v ~scope:s.scope
-                       ~evidence:(role_evidence p i) ?repair "unknown_constant"
-                       (Printf.sprintf "'%s' does not occur in any fact, so %s(...) cannot match it." lit p.name))
+                       ~evidence:(role_evidence p i @ suggestion_evidence) ?repair "unknown_constant"
+                       (Printf.sprintf "'%s' does not occur in any fact, so %s(...) cannot match it.%s" lit p.name did_you_mean))
               | _ ->
                   let sites_json =
                     match elsewhere with
@@ -299,9 +327,9 @@ module Make (Store : Runtime_store.S) = struct
                   in
                   Lwt.return
                     (make ~severity ~line:s.line ~predicate:p.name ~argument_position:i ~value:v ~scope:s.scope
-                       ~evidence:(role_evidence p i @ [ ("occursAtPositions", lit_list same) ] @ sites_json)
+                       ~evidence:(role_evidence p i @ [ ("occursAtPositions", lit_list same) ] @ sites_json @ suggestion_evidence)
                        ?repair "constant_not_at_position"
-                       (Printf.sprintf "No %s fact has '%s' as argument %d. %s" p.name lit i where)))
+                       (Printf.sprintf "No %s fact has '%s' as argument %d. %s%s" p.name lit i where did_you_mean)))
             ungrounded
 
   let singleton_diagnostics ctx (surface : Surface_ast.surface_query) all_sites =
@@ -391,7 +419,7 @@ module Make (Store : Runtime_store.S) = struct
               else
                 let* a = position_values ctx s1.predicate i1 in
                 let* b = position_values ctx s2.predicate i2 in
-                let shared = Hashtbl.fold (fun k () n -> if Hashtbl.mem b k then n + 1 else n) a 0 in
+                let shared = Hashtbl.fold (fun k _ n -> if Hashtbl.mem b k then n + 1 else n) a 0 in
                 Lwt.return (if shared = 0 then Some ((s1, i1), (s2, i2)) else None))
             None pairs
         in

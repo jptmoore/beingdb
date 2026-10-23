@@ -751,12 +751,22 @@ knowledge purely from ordinary query responses, without a separate
     { "Artist": { "type": "atom", "value": "tina_keane" }, "Work": { "type": "atom", "value": "she" } }
   ],
   "count": 1,
+  "hasMore": false,
+  "truncated": false,
   "warnings": [],
   "language": "dsl",
   "languageVersion": "beingdb-dsl/1",
   "environmentFingerprint": "sha256:..."
 }
 ```
+
+`hasMore` is `true` when at least one more row matches beyond those
+returned, whether the query's own `limit` or the server's `max_results`
+cap stopped it. `truncated` is `true` only when the server cap did --
+the query asked for more rows than the server returns -- and a
+`results_truncated` warning is added then, so a client never mistakes a
+capped result for the complete answer. Page on with `offset`, or narrow
+the query. Neither field needs a count of every matching row.
 
 **Two distinct error families** (see also [API Reference](api.md#error-response-shapes)):
 
@@ -899,6 +909,8 @@ limit 3
   "variables": [ "Work" ],
   "results": [ { "Work": { "type": "atom", "value": "she" } } ],
   "count": 1,
+  "hasMore": false,
+  "truncated": false,
   "warnings": []
 }
 ```

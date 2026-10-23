@@ -518,6 +518,46 @@ let test_run_query_unknown_language () =
      cleanup test_dir;
      Lwt.return ())
 
+(* DSL execute reports whether more rows exist ([hasMore]) and whether the
+   server's max_results cap, rather than the query's own limit, cut them
+   ([truncated], plus a results_truncated warning). *)
+let test_run_query_dsl_truncation () =
+  let store, test_dir = create_test_pack "run_dsl_truncation" in
+  Lwt_main.run
+    (let open Lwt.Syntax in
+     let open Yojson.Safe.Util in
+     let check name ~max_results query ~count ~has_more ~truncated =
+       let* outcome = Controller.run_query ~max_results ~language:"dsl" store query ~offset:None ~limit:None in
+       (match outcome with
+       | Controller.Success json ->
+           Alcotest.(check int) (name ^ ": count") count (json |> member "count" |> to_int);
+           Alcotest.(check int) (name ^ ": rows") count (json |> member "results" |> to_list |> List.length);
+           Alcotest.(check bool) (name ^ ": hasMore") has_more (json |> member "hasMore" |> to_bool);
+           Alcotest.(check bool) (name ^ ": truncated") truncated (json |> member "truncated" |> to_bool);
+           let warning_codes = json |> member "warnings" |> to_list |> List.map (fun w -> w |> member "code" |> to_string) in
+           Alcotest.(check bool) (name ^ ": warning") truncated (List.mem "results_truncated" warning_codes)
+       | Controller.Invalid j -> Alcotest.fail ("expected Success, got Invalid: " ^ Yojson.Safe.to_string j)
+       | Controller.Failure { message; _ } -> Alcotest.fail ("expected Success, got Failure: " ^ message));
+       Lwt.return ()
+     in
+     let artists = "find Artist\nwhere\n  artist(Artist)\n" in
+     let* () = check "complete" ~max_results:100 artists ~count:2 ~has_more:false ~truncated:false in
+     let* () = check "exactly at cap" ~max_results:2 artists ~count:2 ~has_more:false ~truncated:false in
+     let* () = check "cap" ~max_results:1 artists ~count:1 ~has_more:true ~truncated:true in
+     let* () = check "own limit" ~max_results:100 (artists ^ "limit 1\n") ~count:1 ~has_more:true ~truncated:false in
+     let* () = check "own limit above cap" ~max_results:1 (artists ^ "limit 5\n") ~count:1 ~has_more:true ~truncated:true in
+     let* () = check "last page" ~max_results:100 (artists ^ "limit 1\noffset 1\n") ~count:1 ~has_more:false ~truncated:false in
+     let* () =
+       check "join cap" ~max_results:1 "find Artist, Work\nwhere\n  created(Artist, Work)\n  artist(Artist)\n" ~count:1 ~has_more:true
+         ~truncated:true
+     in
+     let* () =
+       check "join complete" ~max_results:100 "find Artist, Work\nwhere\n  created(Artist, Work)\n  artist(Artist)\n" ~count:2
+         ~has_more:false ~truncated:false
+     in
+     cleanup test_dir;
+     Lwt.return ())
+
 (* The "diagnose" action over the native Irmin Pack store: a reversed
    constant is diagnosed with a proven swap, and the repaired query runs. *)
 let test_run_query_dsl_diagnose () =
@@ -582,6 +622,7 @@ let () =
       Alcotest.test_case "core explain" `Quick test_run_query_core_explain;
       Alcotest.test_case "dsl execute" `Quick test_run_query_dsl_execute;
       Alcotest.test_case "dsl execute top-level alternatives" `Quick test_run_query_dsl_execute_top_level_alternatives;
+      Alcotest.test_case "dsl execute hasMore/truncated" `Quick test_run_query_dsl_truncation;
       Alcotest.test_case "dsl validate unknown predicate" `Quick test_run_query_dsl_validate_unknown_predicate;
       Alcotest.test_case "dsl explain" `Quick test_run_query_dsl_explain;
       Alcotest.test_case "unknown language" `Quick test_run_query_unknown_language;

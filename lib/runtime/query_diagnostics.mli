@@ -21,6 +21,12 @@
     a provably empty clause inside optional/alternative/negated scope is a
     ["warning"]. Diagnostics never change validity.
 
+    When an atom or string literal occurs nowhere in its predicate,
+    ["unknown_constant"] and ["constant_not_at_position"] carry
+    [evidence.suggestions]: the values of the same type at that position
+    ranked as likely corrections ({!Predicate_suggest.suggest_value}), in
+    DSL literal syntax. Suggestions are hints, never repairs.
+
     Repairs are attached only when proven:
 
     - [Swap_arguments]: a positive pattern with an ungrounded literal for
