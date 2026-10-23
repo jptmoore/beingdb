@@ -40,7 +40,9 @@ let evaluate_clause bindings (clause : Query_ast.clause) =
           | Query_ast.Lt -> ( match Value.order_compare l r with Ok c -> Ok (c < 0) | Error e -> Error e)
           | Query_ast.Le -> ( match Value.order_compare l r with Ok c -> Ok (c <= 0) | Error e -> Error e)
           | Query_ast.Gt -> ( match Value.order_compare l r with Ok c -> Ok (c > 0) | Error e -> Error e)
-          | Query_ast.Ge -> ( match Value.order_compare l r with Ok c -> Ok (c >= 0) | Error e -> Error e)))
+          | Query_ast.Ge -> ( match Value.order_compare l r with Ok c -> Ok (c >= 0) | Error e -> Error e)
+          | Query_ast.Contains -> (
+              match r with Value.String pattern -> Ok (Value.contains_text l pattern) | _ -> Error "'contains' needs a quoted string")))
   | Query_ast.Between { value; lower; upper } -> (
       match (resolve_term bindings value, resolve_term bindings lower, resolve_term bindings upper) with
       | Error e, _, _ | _, Error e, _ | _, _, Error e -> Error e
@@ -119,6 +121,7 @@ module Make (Store : Runtime_store.S) = struct
   let execute store query =
     let p = Query_planner.plan query in
     let result_count = ref 0 in
+    let scanned = ref 0 in
     let aborted = ref false in
     let error = ref None in
     let collected = ref [] in
@@ -144,6 +147,12 @@ module Make (Store : Runtime_store.S) = struct
                 aborted := true;
                 Lwt.return_unit
             | Ok candidates ->
+                scanned := !scanned + List.length candidates;
+                if !scanned > !Query_validation.Config.max_scanned_facts then (
+                  error := Some (Query_validation.scan_limit_message ());
+                  aborted := true;
+                  Lwt.return_unit)
+                else
                 Lwt_list.iter_s
                   (fun fact ->
                     if !aborted then Lwt.return_unit
@@ -194,6 +203,7 @@ module Make (Store : Runtime_store.S) = struct
     let collected = ref [] in
     let skipped = ref 0 in
     let processed = ref 0 in
+    let scanned = ref 0 in
     let aborted = ref false in
     let error = ref None in
     let should_stop () =
@@ -221,6 +231,12 @@ module Make (Store : Runtime_store.S) = struct
                 aborted := true;
                 Lwt.return_unit
             | Ok candidates ->
+                scanned := !scanned + List.length candidates;
+                if !scanned > !Query_validation.Config.max_scanned_facts then (
+                  error := Some (Query_validation.scan_limit_message ());
+                  aborted := true;
+                  Lwt.return_unit)
+                else
                 Lwt_list.iter_s
                   (fun fact ->
                     if should_stop () then Lwt.return_unit

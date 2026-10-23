@@ -240,6 +240,18 @@ let test_diagnostic_budget () =
       Alcotest.(check bool) "comparison still proven" true U.(r |> member "provablyEmpty" |> to_bool);
       Alcotest.(check bool) "no range evidence" true U.(d |> member "evidence" |> member "observedRange" = `Null))
 
+let test_unsatisfiable_contains () =
+  let r = report "find Work\nwhere\n  titled(Work, T)\n  T contains \"zzqx\"\n" in
+  let d = find_code r "unsatisfiable_comparison" in
+  Alcotest.(check bool) "provably empty" true U.(r |> member "provablyEmpty" |> to_bool);
+  Alcotest.(check bool) "message names the comparison" true
+    (let m = U.(d |> member "message" |> to_string) in
+     let s = "T contains \"zzqx\"" in
+     let rec has i = i + String.length s <= String.length m && (String.sub m i (String.length s) = s || has (i + 1)) in
+     has 0);
+  let r = report "find Work\nwhere\n  titled(Work, T)\n  T contains \"BUD\"\n" in
+  Alcotest.(check bool) "satisfiable" false (List.mem "unsatisfiable_comparison" (codes r))
+
 let test_disjoint_join () =
   let q = "find Work\nwhere\n  created_by(Work, A)\n  employed_by(Work, E)\n" in
   let r = report q in
@@ -289,6 +301,7 @@ let () =
           Alcotest.test_case "constant suggestions" `Quick test_constant_suggestions;
           Alcotest.test_case "unsatisfiable comparison" `Quick test_unsatisfiable_comparison;
           Alcotest.test_case "diagnostics budget" `Quick test_diagnostic_budget;
+          Alcotest.test_case "unsatisfiable contains" `Quick test_unsatisfiable_contains;
           Alcotest.test_case "disjoint join" `Quick test_disjoint_join;
           Alcotest.test_case "contradictory negation" `Quick test_contradictory_negation;
           Alcotest.test_case "validation unchanged" `Quick test_validation_unchanged;

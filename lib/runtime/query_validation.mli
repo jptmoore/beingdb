@@ -21,7 +21,14 @@ module Config : sig
   (** Facts a single data-aware diagnostic check may scan; checks over
       larger predicates are skipped and reported as [check_skipped]. *)
   val max_diagnostic_facts : int ref
+
+  (** Facts one query may read (candidates fetched by its pattern steps,
+      summed over joins) before it fails with [scan_limit_exceeded]. *)
+  val max_scanned_facts : int ref
 end
+
+(** Longest text a [contains] comparison may search for (200 bytes). *)
+val max_contains_length : int
 
 (** Prefix of {!result_too_large_message}. *)
 val result_too_large_prefix : string
@@ -33,6 +40,14 @@ val result_too_large_message : unit -> string
 
 (** Whether an engine error message is {!result_too_large_message}. *)
 val is_result_too_large : string -> bool
+
+(** The query engine's error when a query reads more than
+    [max_scanned_facts] facts. *)
+val scan_limit_message : unit -> string
+
+(** The response code for a query-engine error message:
+    ["result_too_large"], ["scan_limit_exceeded"] or ["execution_error"]. *)
+val engine_error_code : string -> string
 
 (** Validation errors that can occur during query validation *)
 type validation_error =

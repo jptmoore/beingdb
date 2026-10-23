@@ -11,7 +11,8 @@
       "max_intermediate_results": 10000,
       "max_query_length": 20000,
       "max_concurrent_queries": 20,
-      "max_diagnostic_facts": 50000
+      "max_diagnostic_facts": 50000,
+      "max_scanned_facts": 1000000
     }
     v}
     Any field may be omitted; omitted fields fall back to {!default}. *)
@@ -23,6 +24,7 @@ type t = {
   max_query_length : int;  (** Cap, in bytes, on a raw query string before parsing *)
   max_concurrent_queries : int;  (** Cap on simultaneously in-flight query and predicate requests *)
   max_diagnostic_facts : int;  (** Facts one data-aware diagnostic check may scan before it is skipped *)
+  max_scanned_facts : int;  (** Facts one query may read before it fails with [scan_limit_exceeded] *)
 }
 
 (** Built-in defaults, matching BeingDB's previous hardcoded limits. *)

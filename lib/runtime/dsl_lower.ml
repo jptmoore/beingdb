@@ -158,6 +158,24 @@ let check_comparison var_types (left : Query_ast.term) (right : Query_ast.term) 
     errors :=
       Validation_error.Comparison_type_mismatch { left_type; right_type; message; suggestion; line = Some line; column = Some column } :: !errors
 
+(* [Var contains "text"]: a variable over text, and a bounded, non-empty
+   literal string (no wildcards or regular expressions exist to check). *)
+let check_contains var_types (left : Query_ast.term) (right : Query_ast.term) line errors =
+  let error message = errors := Validation_error.Invalid_contains { message; line = Some line } :: !errors in
+  match (left, right) with
+  | Query_ast.Variable v, Query_ast.Literal (Value.String text) ->
+      let n = String.length text in
+      if n = 0 then error "'contains' needs some text to search for, e.g. Title contains \"video\""
+      else if n > Query_validation.max_contains_length then
+        error (Printf.sprintf "'contains' text is %d characters; the limit is %d" n Query_validation.max_contains_length)
+      else
+        let types = types_of_term var_types left in
+        if types <> [] && not (List.exists (fun t -> List.mem t [ "string"; "lang_string"; "atom" ]) types) then
+          error
+            (Printf.sprintf "%s holds %s values; 'contains' only matches text (strings and atoms)" v (String.concat ", " types))
+  | Query_ast.Variable _, _ -> error "'contains' needs quoted text on the right, e.g. Title contains \"video\""
+  | _ -> error "'contains' needs a variable on the left, e.g. Title contains \"video\""
+
 let rec check_comparisons var_types clauses errors =
   List.iter
     (fun (c : Surface_ast.surface_clause) ->
@@ -166,7 +184,8 @@ let rec check_comparisons var_types clauses errors =
       | Compare { left; operator; right; line; column } -> (
           match operator with
           | Query_ast.Lt | Query_ast.Le | Query_ast.Gt | Query_ast.Ge -> check_comparison var_types left right line column errors
-          | Query_ast.Eq | Query_ast.Ne -> ())
+          | Query_ast.Eq | Query_ast.Ne -> ()
+          | Query_ast.Contains -> check_contains var_types left right line errors)
       | Between { value; lower; upper; line; column } ->
           check_comparison var_types value lower line column errors;
           check_comparison var_types value upper line column errors

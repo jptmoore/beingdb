@@ -2,7 +2,7 @@
 
 type term = Variable of string | Wildcard | Literal of Value.t
 
-type comparison_operator = Eq | Ne | Lt | Le | Gt | Ge
+type comparison_operator = Eq | Ne | Lt | Le | Gt | Ge | Contains  (** [Var contains "text"]: case-insensitive substring *)
 
 val string_of_operator : comparison_operator -> string
 

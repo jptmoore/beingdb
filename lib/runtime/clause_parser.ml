@@ -53,6 +53,10 @@ let parse_clause_tokens tokens =
       match (term_of_token left_tok, term_of_token lower_tok, term_of_token upper_tok) with
       | Ok value, Ok lower, Ok upper -> Ok (Query_ast.Between { value; lower; upper })
       | Error e, _, _ | _, Error e, _ | _, _, Error e -> Error e)
+  | [ left_tok; Lexer.Ident "contains"; right_tok ] -> (
+      match (term_of_token left_tok, term_of_token right_tok) with
+      | Ok left, Ok right -> Ok (Query_ast.Compare { left; operator = Query_ast.Contains; right })
+      | Error e, _ | _, Error e -> Error e)
   | [ left_tok; Lexer.Op op; right_tok ] -> (
       match operator_of_string op with
       | None -> Error (Printf.sprintf "Unknown operator: %s" op)

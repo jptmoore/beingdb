@@ -329,7 +329,7 @@ structured AST for these (`Query_ast.Compare` / `Query_ast.Between`);
 they are never interpreted from text at execution time.
 
 ```
-=   !=   <   <=   >   >=   between ... and ...
+=   !=   <   <=   >   >=   between ... and ...   contains
 ```
 
 Examples:
@@ -357,6 +357,34 @@ where
 ```
 
 `between LOWER and UPPER` is inclusive at both ends.
+
+### Text search: `contains`
+
+`Var contains "text"` keeps rows whose value of `Var` contains the text:
+
+```
+find Exhibition, Title
+where
+  exhibition_title(Exhibition, Title)
+  Title contains "video"
+```
+
+- It matches strings, language-tagged strings and atoms, ignoring ASCII
+  case, with underscores and spaces treated alike: `"video stairs"`
+  matches both the string `"The Video Stairs"` and the atom
+  `the_video_stairs`. Other value types never match.
+- It is a plain substring test: there are no wildcards, regular
+  expressions or escapes, so `"a.c"` only matches the characters `a.c`.
+- The left side must be a variable and the right side quoted text of 1
+  to 200 characters; anything else is rejected with `invalid_contains`,
+  as is `contains` on a variable that only ever holds non-text values
+  (such as years).
+- No index can serve it: like `!=`, it filters the rows the other clauses
+  produce, so it is cheapest alongside clauses with constants. A query
+  that would read too many facts fails with `scan_limit_exceeded` (see
+  [Query protections](#query-protections)).
+- If no stored value contains the text, the `unsatisfiable_comparison`
+  diagnostic says so.
 
 ### Equality is type-aware
 
@@ -593,6 +621,10 @@ configurable per-server without recompiling (see
 - **Matching rows:** a query may match at most 10,000 rows by default
   (`max_intermediate_results`); one that matches more fails with
   `result_too_large` instead of returning a partial result.
+- **Facts read:** a query may read at most 1,000,000 facts by default
+  (`max_scanned_facts`, counting every candidate fact its patterns
+  fetch, across joins); one that reads more fails with
+  `scan_limit_exceeded`, however few rows it matches.
 - **Diagnostics budget:** data-aware checks that read a whole predicate
   skip predicates with more than 50,000 facts (`max_diagnostic_facts`)
   and say so with an info-level `check_skipped` diagnostic.
@@ -718,6 +750,8 @@ gives the number of rows the query matches.
 - **Arithmetic:** no `Y = X + 1`.
 - **Recursion:** no transitive closure or path queries.
 - **Functions:** no computed values or transformations.
+- **Pattern matching:** `contains` is a literal substring test; there are
+  no wildcards or regular expressions.
 - **Nested blocks:** `optional`, `either`/`or` and `not` blocks cannot
   contain further blocks.
 - **Uncertain dates or date intervals.**
@@ -747,6 +781,7 @@ applicable:
 | `unbound_projection` | A `find` variable never appears in `where`. |
 | `unbound_order_variable` | An `order by` variable never appears in `where`. |
 | `unsafe_negation` | A `not` block uses a variable not bound by any positive clause elsewhere in the query. |
+| `invalid_contains` | A misuse of [`contains`](#text-search-contains): no variable on the left, no quoted text on the right, text that is empty or longer than 200 characters, or a variable that only holds non-text values. |
 | `invalid_count` | A misuse of [`count(Var)`](#counting): counting a variable that is also a plain `find` column, or `order by` on something that is not a `find` column in a query with a count. |
 
 A query whose argument position has *more than one* observed type (a

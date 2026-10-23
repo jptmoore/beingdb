@@ -26,7 +26,14 @@ module Config = struct
       suggestion checks read every fact of a predicate); larger
       predicates are skipped and reported as [check_skipped]. *)
   let max_diagnostic_facts = ref 50_000
+
+  (** Facts one query may read (candidates fetched by its pattern steps,
+      summed over joins) before it is stopped. *)
+  let max_scanned_facts = ref 1_000_000
 end
+
+(** Longest text a [contains] comparison may search for. *)
+let max_contains_length = 200
 
 let result_too_large_prefix = "Result too large:"
 
@@ -40,6 +47,21 @@ let result_too_large_message () =
     result_too_large_prefix !Config.max_intermediate_results
 
 let is_result_too_large message = String.starts_with ~prefix:result_too_large_prefix message
+
+let scan_limit_prefix = "Query too expensive:"
+
+(** The query engine's error when a query reads more than
+    [max_scanned_facts] facts, whatever it matches. *)
+let scan_limit_message () =
+  Printf.sprintf
+    "%s it reads more than %d facts (max_scanned_facts). Add constants or narrower comparisons so fewer facts need reading."
+    scan_limit_prefix !Config.max_scanned_facts
+
+(** The response code for a query-engine error message. *)
+let engine_error_code message =
+  if is_result_too_large message then "result_too_large"
+  else if String.starts_with ~prefix:scan_limit_prefix message then "scan_limit_exceeded"
+  else "execution_error"
 
 (** Validation errors *)
 type validation_error =
