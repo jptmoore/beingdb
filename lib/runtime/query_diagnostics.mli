@@ -34,7 +34,10 @@
     ["unknown_constant"] and ["constant_not_at_position"] carry
     [evidence.suggestions]: the values of the same type at that position
     ranked as likely corrections ({!Predicate_suggest.suggest_value}), in
-    DSL literal syntax. Suggestions are hints, never repairs.
+    DSL literal syntax. If instead values there contain the literal's text,
+    the diagnostic carries [evidence.containsMatches] and
+    [evidence.containsClause] (e.g. [Medium contains "camera"]), suggesting a
+    [contains] search. Suggestions and contains hints are never repairs.
 
     Repairs are attached only when proven:
 

@@ -265,19 +265,40 @@ module Make (Store : Runtime_store.S) = struct
       | _ -> fun _ -> None
     in
     match text_of v with
-    | None -> Lwt.return []
+    | None -> Lwt.return ([], [])
     | Some text ->
         let* values = position_values ~check:"suggestions" ctx predicate i in
         match values with
-        | None -> Lwt.return []
+        | None -> Lwt.return ([], [])
         | Some values ->
             let known = Hashtbl.fold (fun _ x acc -> match text_of x with Some s -> s :: acc | None -> acc) values [] in
             let rebuild s : Value.t = match v with String _ -> String s | _ -> Atom s in
-            Lwt.return (List.map (fun s -> dsl_literal (rebuild s)) (Predicate_suggest.suggest_value ~known text))
+            let suggestions = List.map (fun s -> dsl_literal (rebuild s)) (Predicate_suggest.suggest_value ~known text) in
+            (* Values of any text type there that contain the literal's text. *)
+            let containing =
+              if text = "" || String.length text > Query_validation.max_contains_length then []
+              else
+                Hashtbl.fold (fun _ x acc -> if Value.contains_text x text then dsl_literal x :: acc else acc) values []
+                |> List.sort_uniq String.compare
+            in
+            Lwt.return (suggestions, containing)
 
   let suggestion_fields = function
     | [] -> ([], "")
     | best :: _ as l -> ([ ("suggestions", `List (List.map (fun s -> `String s) l)) ], Printf.sprintf " Did you mean %s?" best)
+
+  (* The literal's text appears inside values at that argument: suggest
+     searching for it with [contains] (a hint; it widens the match). *)
+  let contains_fields ~variable (v : Value.t) = function
+    | [] -> ([], "")
+    | matches ->
+        let text = match v with Atom s | String s -> s | _ -> "" in
+        let clause = Printf.sprintf "%s contains %s" variable (quote text) in
+        let shown = List.filteri (fun k _ -> k < 3) matches in
+        ( [ ("containsMatches", `List (List.map (fun m -> `String m) (List.filteri (fun k _ -> k < 5) matches))); ("containsClause", `String clause) ],
+          Printf.sprintf " Values there contain %s (%s%s): put a variable there and add %s." (quote text) (String.concat ", " shown)
+            (if List.length matches > 3 then ", ..." else "")
+            clause )
 
   let role (p : Query_environment.predicate_signature) i = Option.bind (List.nth_opt p.arguments i) (fun a -> a.role)
   let role_evidence p i = match role p i with Some r -> [ ("declaredRole", `String r) ] | None -> []
@@ -320,8 +341,12 @@ module Make (Store : Runtime_store.S) = struct
             (fun n (i, (v : Value.t)) ->
               let* same = positions_where ctx p.name p.arity v in
               let* elsewhere = match v with Atom _ -> Lwt.map Option.some (atom_sites ctx v) | _ -> Lwt.return None in
-              let* suggestions = if same = [] then value_suggestions ctx p.name i v else Lwt.return [] in
+              let* suggestions, containing = if same = [] then value_suggestions ctx p.name i v else Lwt.return ([], []) in
               let suggestion_evidence, did_you_mean = suggestion_fields suggestions in
+              let contains_evidence, contains_hint =
+                contains_fields ~variable:(Option.value (role p i) ~default:"Value") v containing
+              in
+              let suggestion_evidence = suggestion_evidence @ contains_evidence and did_you_mean = did_you_mean ^ contains_hint in
               let repair = if n = 0 then swap_repair else None in
               let lit = dsl_literal v in
               match elsewhere with

@@ -384,7 +384,10 @@ where
   that would read too many facts fails with `scan_limit_exceeded` (see
   [Query protections](#query-protections)).
 - If no stored value contains the text, the `unsatisfiable_comparison`
-  diagnostic says so.
+  diagnostic says so. Conversely, when a query uses a word as an exact
+  value (`uses_medium(Work, camera)`) but that word only occurs *inside*
+  values there, the diagnostic suggests `Medium contains "camera"`
+  (`evidence.containsClause`).
 
 ### Equality is type-aware
 
