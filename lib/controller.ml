@@ -280,7 +280,9 @@ let execute_dsl ~max_results store query_str =
             (* An empty first page is explained by the same data-aware
                diagnostics as the "diagnose" action. *)
             let first_page = offset = 0 in
-            (if rows = [] && (not has_more) && first_page then Db.Diagnostics.empty_result_fields store env query_str
+            (* Nothing matched: no rows, or a count query whose counts are all 0. *)
+            let nothing_matched = (rows = [] && not has_more) || (Core_query.is_count_query cq && model_result.Model.bindings = []) in
+            (if nothing_matched && first_page then Db.Diagnostics.empty_result_fields store env query_str
              else Lwt.return [])
             >>= fun diagnosis ->
             Lwt.return

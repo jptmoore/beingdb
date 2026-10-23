@@ -60,6 +60,16 @@ This can answer questions such as:
 
 > Which works created after 1970 were subsequently shown in an exhibition?
 
+Queries can count, too. This lists the artists with the most works:
+
+```text
+find Artist, count(Work)
+where
+  created_by(Work, Artist)
+order by count(Work) descending
+limit 5
+```
+
 BeingDB performs the factual lookup and joins while the consuming application decides how to interpret or present the results.
 
 ## Designed for LLMs

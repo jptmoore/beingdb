@@ -202,12 +202,41 @@ let lower (env : Query_environment.t) (surface : Surface_ast.surface_query) : re
   let top_level_positive_vars = positive_variables surface.where_ in
   validate_negation_safety top_level_positive_vars surface.where_ errors;
   let query_vars = all_variables surface.where_ |> List.sort_uniq String.compare in
+  let columns = surface.projection.variables in
+  let plain_columns = List.filter (fun c -> Core_query.counted_variable c = None) columns in
+  let counted = List.filter_map Core_query.counted_variable columns in
   List.iter
-    (fun v -> if not (List.mem v query_vars) then errors := Validation_error.Unbound_projection { variable = v } :: !errors)
-    surface.projection.variables;
+    (fun c ->
+      let v = Option.value (Core_query.counted_variable c) ~default:c in
+      if not (List.mem v query_vars) then errors := Validation_error.Unbound_projection { variable = v } :: !errors)
+    columns;
+  List.iter
+    (fun v ->
+      if List.mem v plain_columns then
+        errors :=
+          Validation_error.Invalid_count
+            {
+              message =
+                Printf.sprintf
+                  "count(%s) counts a variable that is also a 'find' column, so every count would be 1; remove %s from 'find' or count another variable"
+                  v v;
+            }
+          :: !errors)
+    (List.sort_uniq String.compare counted);
   List.iter
     (fun (item : Core_query.order_item) ->
-      if not (List.mem item.variable query_vars) then errors := Validation_error.Unbound_order_variable { variable = item.variable } :: !errors)
+      if counted <> [] then (
+        if not (List.mem item.variable columns) then
+          errors :=
+            Validation_error.Invalid_count
+              {
+                message =
+                  Printf.sprintf "In a query with count(...), 'order by' can only use 'find' columns (%s); %s is not one"
+                    (String.concat ", " columns) item.variable;
+              }
+            :: !errors)
+      else if not (List.mem item.variable query_vars) then
+        errors := Validation_error.Unbound_order_variable { variable = item.variable } :: !errors)
     surface.order_by;
   let clauses = List.map strip_line surface.where_ in
   let variables = Query_ast.extract_variables clauses in

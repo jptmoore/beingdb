@@ -173,6 +173,66 @@ let test_dsl () =
   Alcotest.(check (list string)) "optional left join" [ "alice,work1"; "alice,work2"; "bob,work3"; "carol,-" ]
     (List.sort String.compare (row_strings rows))
 
+(* --- count(Var) --- *)
+
+let render (vars, rows) =
+  List.map (fun row -> String.concat "," (List.map2 (fun v c -> v ^ "=" ^ match c with Some x -> Value.canonical_string x | None -> "-") vars row)) rows
+
+let dsl_errors text =
+  let env = run (Environment.build store) in
+  match Dsl_parser.parse text with
+  | Error e -> [ "parse: " ^ e ]
+  | Ok surface -> List.map Validation_error.code (Dsl_lower.lower env surface).errors
+
+let test_count_per_group () =
+  Alcotest.(check (list string)) "per artist, most first"
+    [ "A=alice,count(W)=2"; "A=bob,count(W)=1" ]
+    (render (dsl "find A, count(W)\nwhere\n  created_by(W, A)\norder by count(W) descending\n"));
+  let _, rows = dsl "find A, count(W)\nwhere\n  created_by(W, A)\n" in
+  Alcotest.(check string) "integer typed" "integer"
+    (match List.nth (List.hd rows) 1 with Some v -> Value.type_name v | None -> "none");
+  Alcotest.(check (list string)) "paging over groups" [ "A=bob,count(W)=1" ]
+    (render (dsl "find A, count(W)\nwhere\n  created_by(W, A)\norder by A ascending\nlimit 1\noffset 1\n"))
+
+let test_count_distinct_and_nulls () =
+  (* The self-join yields 4 rows for alice (2 x 2); her works are still 2. *)
+  Alcotest.(check (list string)) "distinct through a join"
+    [ "A=alice,count(W)=2"; "A=bob,count(W)=1" ]
+    (render (dsl "find A, count(W)\nwhere\n  created_by(W, A)\n  created_by(W2, A)\norder by A\n"));
+  Alcotest.(check (list string)) "optional: unmatched counts 0"
+    [ "P=alice,count(W)=2"; "P=bob,count(W)=1"; "P=carol,count(W)=0" ]
+    (render (dsl "find P, count(W)\nwhere\n  person(P)\n  optional\n    created_by(W, P)\norder by P\n"))
+
+let test_count_overall () =
+  Alcotest.(check (list string)) "overall" [ "count(W)=3" ] (render (dsl "find count(W)\nwhere\n  created_by(W, A)\n"));
+  Alcotest.(check (list string)) "two counts" [ "count(W)=3,count(A)=2" ] (render (dsl "find count(W), count(A)\nwhere\n  created_by(W, A)\n"));
+  Alcotest.(check (list string)) "no matches is one row of 0" [ "count(W)=0" ]
+    (render (dsl "find count(W)\nwhere\n  created_by(W, nobody)\n"));
+  Alcotest.(check (list string)) "grouped with no matches has no rows" []
+    (render (dsl "find A, count(W)\nwhere\n  created_by(W, A)\n  A = nobody\n"))
+
+let test_count_syntax_and_errors () =
+  Alcotest.(check (list string)) "case and spacing" [ "A=alice,count(W)=2" ]
+    (render (dsl "find A, COUNT ( W )\nwhere\n  created_by(W, A)\norder by count( W ) desc\nlimit 1\n"));
+  Alcotest.(check (list string)) "counting a find column" [ "invalid_count" ] (dsl_errors "find A, count(A)\nwhere\n  created_by(W, A)\n");
+  Alcotest.(check (list string)) "order by a non-column" [ "invalid_count" ]
+    (dsl_errors "find A, count(W)\nwhere\n  created_by(W, A)\norder by W\n");
+  Alcotest.(check (list string)) "unbound counted variable" [ "unbound_projection" ] (dsl_errors "find count(X)\nwhere\n  created_by(W, A)\n");
+  List.iter
+    (fun text ->
+      match dsl_errors text with
+      | [ e ] when String.starts_with ~prefix:"parse: " e -> ()
+      | other -> Alcotest.failf "expected a parse error for %S, got %s" text (String.concat "; " other))
+    [ "find count(w)\nwhere\n  created_by(W, A)\n"; "find count(W, A)\nwhere\n  created_by(W, A)\n"; "find count()\nwhere\n  created_by(W, A)\n" ];
+  let env = run (Environment.build store) in
+  let cq =
+    match Dsl_parser.parse "find A, count(W)\nwhere\n  created_by(W, A)\n" with
+    | Ok surface -> Option.get (Dsl_lower.lower env surface).core_query
+    | Error e -> failwith e
+  in
+  let ops = List.map (fun op -> Yojson.Safe.Util.(op |> member "operation" |> to_string)) (Explain_plan.build cq) in
+  Alcotest.(check bool) "explain shows count, not project" true (List.mem "count" ops && not (List.mem "project" ops))
+
 let () =
   Alcotest.run "BeingDB Runtime (in-memory store)"
     [
@@ -184,6 +244,13 @@ let () =
           Alcotest.test_case "bindings" `Quick test_bindings;
           Alcotest.test_case "pagination" `Quick test_pagination;
           Alcotest.test_case "dsl" `Quick test_dsl;
+        ] );
+      ( "count(Var)",
+        [
+          Alcotest.test_case "per group" `Quick test_count_per_group;
+          Alcotest.test_case "distinct and nulls" `Quick test_count_distinct_and_nulls;
+          Alcotest.test_case "overall" `Quick test_count_overall;
+          Alcotest.test_case "syntax and errors" `Quick test_count_syntax_and_errors;
         ] );
       ("Introspection", [ Alcotest.test_case "predicates and environment" `Quick test_introspection ]);
     ]

@@ -131,6 +131,11 @@ let test_singleton_variable () =
   let r = report "find Work\nwhere\n  created_by(Work, A)\n  person(A)\n" in
   Alcotest.(check (list string)) "joined" [] (codes r)
 
+(* A variable used only inside count(...) in find is not a singleton. *)
+let test_count_is_not_singleton () =
+  let r = report "find count(Work)\nwhere\n  created_by(Work, artist_1)\n" in
+  Alcotest.(check (list string)) "no singleton for counted variable" [] (codes r)
+
 let test_role_name_mismatch () =
   let r = report "find Artist, Work\nwhere\n  created_by(Artist, Work)\n" in
   let ds = List.filter (fun d -> U.(d |> member "code" |> to_string) = "role_name_mismatch") (diagnostics r) in
@@ -280,6 +285,7 @@ let () =
           Alcotest.test_case "no unproven repairs" `Quick test_no_unproven_repairs;
           Alcotest.test_case "singleton variable" `Quick test_singleton_variable;
           Alcotest.test_case "role name mismatch" `Quick test_role_name_mismatch;
+          Alcotest.test_case "count is not a singleton" `Quick test_count_is_not_singleton;
           Alcotest.test_case "constant suggestions" `Quick test_constant_suggestions;
           Alcotest.test_case "unsatisfiable comparison" `Quick test_unsatisfiable_comparison;
           Alcotest.test_case "diagnostics budget" `Quick test_diagnostic_budget;

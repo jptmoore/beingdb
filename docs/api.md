@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.2.1"
+  "version": "0.3.0"
 }
 ```
 
@@ -295,12 +295,12 @@ precision loss.
 **Response Fields** (in this order):
 - `variables` - Array of variable names in `find` order
 - `results` - Array of result rows, each an object keyed by variable name
-- `count` - Number of rows in this response
+- `count` - Number of rows in this response (for a [`count(Var)`](query-language.md#counting) query, rows are groups and each count is a `count(Var)` column of type `integer`)
 - `total` - Number of rows the whole query matches (after `distinct`), independent of the query's `limit`/`offset` and the server's `max_results`
 - `hasMore` - `true` if more matching rows exist after this page, whether the query's own `limit` or the server's `max_results` stopped it
 - `truncated` - `true` if the server's `max_results` cap, not the query's own `limit`, cut the result; a `results_truncated` entry is then added to `warnings`. Page on with `limit`/`offset` in the query text, or narrow the query.
 - `warnings` - Advisory warnings (for example `heterogeneous_position`, `results_truncated`)
-- `diagnostics`, `provablyEmpty`, `repair` (only when the first page is empty) - the same data-aware explanation the [`diagnose`](#diagnose-dsl) action gives, so a client learns why there are no rows without a second call. `provablyEmpty: false` with no error diagnostics means BeingDB found no reason in the query itself: the facts are simply not recorded.
+- `diagnostics`, `provablyEmpty`, `repair` (only when nothing matched: the first page is empty, or a [count](query-language.md#counting) is 0 because no rows matched) - the same data-aware explanation the [`diagnose`](#diagnose-dsl) action gives, so a client learns why there are no rows without a second call. `provablyEmpty: false` with no error diagnostics means BeingDB found no reason in the query itself: the facts are simply not recorded.
 - `language` - Always `"dsl"`
 - `languageVersion` - The query language version (same value as `/predicates?detailed=true`)
 - `environmentFingerprint` - The dataset schema fingerprint (same value as `/predicates?detailed=true`); lets a client cache schema knowledge from ordinary query responses alone, without a separate `/predicates` call. Present on every `POST /query` response body, not just `validate`/`explain`.

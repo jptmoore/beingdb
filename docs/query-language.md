@@ -168,7 +168,7 @@ intervals.
 ## Query syntax
 
 ```
-find [distinct] Var, Var, ...
+find [distinct] Var | count(Var), ...
 where
   <clause>
   <clause>
@@ -180,13 +180,14 @@ where
     <clause>*
   not
     <clause>*
-order by Var [ascending|descending], ...
+order by Var | count(Var) [ascending|descending], ...
 limit N
 offset N
 ```
 
 - `find` lists the variables to return, in order. `find distinct`
-  removes duplicate rows from the result.
+  removes duplicate rows from the result. A `find` item may also be
+  `count(Var)`; see [Counting](#counting).
 - `where` starts the clause list. Each line holds one clause: a
   [predicate pattern](#query-patterns), a
   [comparison](#comparisons), or a `between ... and ...` range.
@@ -644,10 +645,76 @@ configurable per-server without recompiling (see
   disconnected query is rejected with a `disconnected_query` error (see
   [Validation](#validation)).
 
+## Counting
+
+`count(Var)` in `find` counts the **distinct** values of `Var`. The other
+`find` variables are the groups: one row per distinct combination of
+them, each with its count. With no other variables there is a single
+row.
+
+```
+find Artist, count(Work)
+where
+  created_by(Work, Artist)
+order by count(Work) descending
+limit 5
+```
+
+```json
+{
+  "variables": ["Artist", "count(Work)"],
+  "results": [
+    { "Artist": { "type": "atom", "value": "madelon_hooykaas" }, "count(Work)": { "type": "integer", "value": "24" } },
+    { "Artist": { "type": "atom", "value": "george_barber" }, "count(Work)": { "type": "integer", "value": "18" } }
+  ],
+  "count": 2,
+  "total": 20,
+  ...
+}
+```
+
+- The count column is named `count(Var)`, both as a result key and in
+  `order by`. `COUNT` and extra spaces (`count( Work )`) are accepted and
+  normalised to `count(Work)`.
+- Counts are of distinct values, so a join that repeats a value does not
+  inflate them: a work with two creators is still one work, and
+  `find count(Work) where created_by(Work, A)` counts each work once.
+- Values left unbound by an unmatched `optional` are not counted, so a
+  group with no matches counts `0`:
+
+  ```
+  find Person, count(Work)
+  where
+    person(Person)
+    optional
+      created_by(Work, Person)
+  ```
+
+- `find count(Work) where ...` always returns exactly one row, `0` when
+  nothing matched. A count of 0 because nothing matched comes with the
+  same `diagnostics`/`provablyEmpty` explanation as an empty result, so
+  a misspelled constant is reported rather than answered as "0".
+- `order by`, `limit` and `offset` apply to the counted rows, and
+  `total` is the number of rows (groups). In a query with `count(...)`,
+  `order by` may only use `find` columns.
+- Several counts may appear in one `find`, e.g.
+  `find count(Work), count(Artist)`.
+- Counting a variable that is also a plain `find` column (every count
+  would be 1), or ordering by a non-column, is rejected with
+  `invalid_count`.
+- Counting runs over the same matched rows as any query, under the same
+  [protections](#query-protections): a query matching more than
+  `max_intermediate_results` rows fails with `result_too_large` rather
+  than returning a partial count.
+
+For a plain "how many rows", the `total` field of any result also
+gives the number of rows the query matches.
+
 ## What the query language does NOT support
 
-- **Aggregation:** no `COUNT`, `SUM`, `GROUP BY`. (`total` in the
-  response counts matching rows, but there is no in-query aggregation.)
+- **Aggregation beyond counting:** no `sum`, `avg`, `min`, `max`, or
+  explicit `group by` (grouping comes from the plain `find` variables of
+  a [count](#counting)).
 - **Arithmetic:** no `Y = X + 1`.
 - **Recursion:** no transitive closure or path queries.
 - **Functions:** no computed values or transformations.
@@ -680,6 +747,7 @@ applicable:
 | `unbound_projection` | A `find` variable never appears in `where`. |
 | `unbound_order_variable` | An `order by` variable never appears in `where`. |
 | `unsafe_negation` | A `not` block uses a variable not bound by any positive clause elsewhere in the query. |
+| `invalid_count` | A misuse of [`count(Var)`](#counting): counting a variable that is also a plain `find` column, or `order by` on something that is not a `find` column in a query with a count. |
 
 A query whose argument position has *more than one* observed type (a
 heterogeneous column) but whose literal matches one of them is not an
