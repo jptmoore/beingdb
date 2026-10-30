@@ -180,6 +180,7 @@ More detailed documentation is available in the `docs` directory:
 
 - [Installation](docs/installation.md)
 - [Getting Started](docs/getting-started.md)
+- [Tutorial: Querying the REWIND Interviews](docs/tutorial.md)
 - [Query Language](docs/query-language.md)
 - [API Reference](docs/api.md)
 - [Internals](docs/internals.md)
