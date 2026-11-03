@@ -57,3 +57,4 @@ module Cli_import = Cli_import
 module Cli_compile = Cli_compile
 module Cli_serve = Cli_serve
 module Cli_repl = Cli_repl
+module Cli_export = Cli_export
