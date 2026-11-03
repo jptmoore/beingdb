@@ -16,6 +16,7 @@ let () =
       `P "compile - Compile Git to Pack";
       `P "serve - Serve queries from Pack";
       `P "repl - Interactive query REPL against a Pack store";
+      `P "export - Export a Pack store for querying in a web browser";
     ] in
     let info = Cmd.info "beingdb" ~version:Beingdb.Version.version ~doc ~man in
     Cmd.group info
@@ -26,6 +27,7 @@ let () =
         Beingdb.Cli_compile.cmd;
         Beingdb.Cli_serve.cmd;
         Beingdb.Cli_repl.cmd;
+        Beingdb.Cli_export.cmd;
       ]
   in
   

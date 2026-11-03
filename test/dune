@@ -63,3 +63,8 @@
  (name test_runtime_parity)
  (libraries beingdb alcotest lwt lwt.unix yojson unix)
  (modes native))
+
+(test
+ (name test_export)
+ (libraries beingdb alcotest lwt lwt.unix yojson unix)
+ (modes native))

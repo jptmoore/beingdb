@@ -36,8 +36,8 @@ RUN apk add --no-cache \
     openssl \
     zstd-libs
 
-# Copy built binary from builder
-COPY --from=builder /home/opam/.opam/default/bin/beingdb-serve /usr/local/bin/
+# Copy built binaries from builder (`beingdb` provides clone/compile/export/repl)
+COPY --from=builder /home/opam/.opam/default/bin/beingdb-serve /home/opam/.opam/default/bin/beingdb /usr/local/bin/
 
 # Create data directory for snapshots
 RUN mkdir -p /data/snapshots && \

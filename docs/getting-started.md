@@ -312,6 +312,21 @@ beingdb-serve --pack ./pack_store &
 curl http://localhost:8080/predicates
 ```
 
+## Publish in the Browser
+
+Instead of (or as well as) running a server, export the compiled store and
+publish it as a static website that queries it in the browser:
+
+```bash
+beingdb export --pack ./pack_store -o facts.browser.json
+```
+
+Then bundle the file with [beingdb-wasm](https://github.com/jptmoore/beingdb-wasm#publish-your-own-facts)
+(`npm run bundle -- --data facts.browser.json`) and upload the result to any
+static host. To publish from GitHub Actions on every push, copy the
+[REWIND interviews workflow](https://github.com/jptmoore/beingdb-rewind-interviews/blob/main/.github/workflows/pages.yml).
+After the facts change, recompile, export and publish again.
+
 ## Interactive REPL
 
 `beingdb repl` (equivalently, the standalone `beingdb-repl`) opens a

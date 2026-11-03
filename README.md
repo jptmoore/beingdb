@@ -17,7 +17,7 @@ BeingDB compiles those facts into an optimized, read-only store that can be quer
 
 ## Why BeingDB?
 
-The BeingDB query runtime compiles to WebAssembly, so a compiled fact store can be queried entirely client-side: no server, no account, and queries never leave the page. The same parser, validator, planner and evaluator used by the native server run unchanged in the browser. **[Try it now](https://jptmoore.github.io/beingdb-wasm/tutorial/)** with an interactive tutorial that queries the [REWIND](https://rewind.ac.uk/) artists' interviews dataset, or see [beingdb-wasm](https://github.com/jptmoore/beingdb-wasm) for the source and JavaScript API.
+The BeingDB query runtime compiles to WebAssembly, so a compiled fact store can be published as a static website and queried entirely client-side: no server, no account, and queries never leave the page. The same parser, validator, planner and evaluator used by the native server run unchanged in the browser. **[Try it now](https://jptmoore.github.io/beingdb-rewind-interviews/)** on the [REWIND](https://rewind.ac.uk/) artists' interviews, learn the query language in the [interactive tutorial](https://jptmoore.github.io/beingdb-wasm/tutorial/), or see [Run in the browser](#run-in-the-browser) to publish your own facts.
 
 RAG systems are good at retrieving relevant text, but some questions are better answered from explicit structured facts.
 
@@ -169,6 +169,28 @@ beingdb> find Artist, Work, Exhibition
 
 The REPL uses the predicates in the database to provide a query environment tailored to the available facts.
 
+## Run in the browser
+
+A compiled store can also be published as a static website, queried in the browser by the same engine compiled to WebAssembly ([beingdb-wasm](https://github.com/jptmoore/beingdb-wasm)). Visitors install nothing, and any static host will do, such as GitHub Pages.
+
+Export the compiled store as a single file:
+
+```bash
+beingdb export --pack ./pack_store -o facts.browser.json
+```
+
+Then bundle it into a site with beingdb-wasm (needs only Node):
+
+```bash
+git clone https://github.com/jptmoore/beingdb-wasm.git
+cd beingdb-wasm
+npm run bundle -- --data ../facts.browser.json --title "My facts" --out ../my-site
+```
+
+and publish the `my-site/` folder. See [beingdb-wasm](https://github.com/jptmoore/beingdb-wasm#publish-your-own-facts) for configuring the page and the JavaScript API.
+
+If your facts are in a GitHub repository, a GitHub Actions workflow can do all of this on every push, with nothing installed locally. The [REWIND interviews](https://github.com/jptmoore/beingdb-rewind-interviews) repository does exactly that: its [workflow](https://github.com/jptmoore/beingdb-rewind-interviews/blob/main/.github/workflows/pages.yml) compiles and exports the facts and publishes **[the live site](https://jptmoore.github.io/beingdb-rewind-interviews/)**. Copy it to publish your own.
+
 ## Example
 
 A sample repository is available at:
@@ -177,7 +199,7 @@ A sample repository is available at:
 
 It provides a small dataset that can be cloned, compiled and queried with BeingDB.
 
-For a larger dataset running entirely in the browser, see the [BeingDB WASM tutorial](https://jptmoore.github.io/beingdb-wasm/tutorial/), built on the REWIND interviews.
+For a larger dataset running entirely in the browser, see the [REWIND interviews](https://jptmoore.github.io/beingdb-rewind-interviews/) site and the [BeingDB tutorial](https://jptmoore.github.io/beingdb-wasm/tutorial/) built on it.
 
 ## Documentation
 

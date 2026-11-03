@@ -32,3 +32,8 @@
  (name repl)
  (public_name beingdb-repl)
  (libraries beingdb cmdliner))
+
+(executable
+ (name export)
+ (public_name beingdb-export)
+ (libraries beingdb cmdliner))
