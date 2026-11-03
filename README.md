@@ -13,9 +13,11 @@ held_at(rewind_exhibition_1995, ica_london).
 year_created(shadow_of_a_journey, @1979).
 ```
 
-BeingDB compiles those facts into an optimized, read-only store that can be queried through an HTTP API or interactive REPL.
+BeingDB compiles those facts into an optimized, read-only store that can be queried through an HTTP API, an interactive REPL, or directly in a web browser.
 
 ## Why BeingDB?
+
+The BeingDB query runtime compiles to WebAssembly, so a compiled fact store can be queried entirely client-side: no server, no account, and queries never leave the page. The same parser, validator, planner and evaluator used by the native server run unchanged in the browser. **[Try it now](https://jptmoore.github.io/beingdb-wasm/tutorial/)** with an interactive tutorial that queries the [REWIND](https://rewind.ac.uk/) artists' interviews dataset, or see [beingdb-wasm](https://github.com/jptmoore/beingdb-wasm) for the source and JavaScript API.
 
 RAG systems are good at retrieving relevant text, but some questions are better answered from explicit structured facts.
 
@@ -23,6 +25,7 @@ BeingDB provides a factual layer that can sit alongside document retrieval:
 
 - **Git-versioned knowledge** — facts are plain text and can be reviewed, changed and versioned like source code.
 - **Fast read-only runtime** — compile a Git repository into an optimized store for serving.
+- **Server or browser** — serve facts over HTTP, or run the same query engine client-side via WebAssembly.
 - **Simple query language** — pattern matching, joins, variables and typed comparisons.
 - **LLM-friendly** — language models can discover available predicates and construct queries against structured facts.
 - **Reliable factual retrieval** — BeingDB returns explicit facts rather than asking a language model to infer them from retrieved text.
@@ -173,6 +176,8 @@ A sample repository is available at:
 [github.com/jptmoore/beingdb-sample-facts](https://github.com/jptmoore/beingdb-sample-facts)
 
 It provides a small dataset that can be cloned, compiled and queried with BeingDB.
+
+For a larger dataset running entirely in the browser, see the [BeingDB WASM tutorial](https://jptmoore.github.io/beingdb-wasm/tutorial/), built on the REWIND interviews.
 
 ## Documentation
 
