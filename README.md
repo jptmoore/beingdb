@@ -189,7 +189,7 @@ npm run bundle -- --data ../facts.browser.json --title "My facts" --out ../my-si
 
 and publish the `my-site/` folder. See [beingdb-wasm](https://github.com/jptmoore/beingdb-wasm#publish-your-own-facts) for configuring the page and the JavaScript API.
 
-If your facts are in a GitHub repository, a GitHub Actions workflow can do all of this on every push, with nothing installed locally. The [REWIND interviews](https://github.com/jptmoore/beingdb-rewind-interviews) repository does exactly that: its [workflow](https://github.com/jptmoore/beingdb-rewind-interviews/blob/main/.github/workflows/pages.yml) compiles and exports the facts and publishes **[the live site](https://jptmoore.github.io/beingdb-rewind-interviews/)**. Copy it to publish your own.
+If your facts are in a GitHub repository, bundle into its `docs/` folder and let GitHub Pages serve it. The [REWIND interviews](https://github.com/jptmoore/beingdb-rewind-interviews) repository does exactly that, with **[the live site](https://jptmoore.github.io/beingdb-rewind-interviews/)**.
 
 ## Example
 

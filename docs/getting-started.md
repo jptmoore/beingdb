@@ -323,8 +323,10 @@ beingdb export --pack ./pack_store -o facts.browser.json
 
 Then bundle the file with [beingdb-wasm](https://github.com/jptmoore/beingdb-wasm#publish-your-own-facts)
 (`npm run bundle -- --data facts.browser.json`) and upload the result to any
-static host. To publish from GitHub Actions on every push, copy the
-[REWIND interviews workflow](https://github.com/jptmoore/beingdb-rewind-interviews/blob/main/.github/workflows/pages.yml).
+static host. On GitHub, bundle into the repository's `docs/` folder and serve
+it with GitHub Pages, as the
+[REWIND interviews](https://github.com/jptmoore/beingdb-rewind-interviews)
+repository does.
 After the facts change, recompile, export and publish again.
 
 ## Interactive REPL
