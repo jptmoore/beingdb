@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # BeingDB server
   beingdb:
@@ -14,13 +12,13 @@ services:
       # Note: Not :ro because Irmin needs to write lock files and metadata
       - ./pack_store:/data/pack_store
     environment:
-      # Path to pack snapshot
+      # Pack store to serve
       SNAPSHOT_PATH: /data/pack_store
       PORT: 8080
       MAX_RESULTS: 5000
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/predicates >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -40,9 +38,3 @@ services:
     restart: unless-stopped
     profiles:
       - production  # Only start with: docker compose --profile production up
-
-# Named volumes (optional, currently using bind mounts)
-# Uncomment to use Docker-managed storage instead of ./data/snapshots
-# volumes:
-#   snapshots:
-#     driver: local

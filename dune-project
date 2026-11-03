@@ -15,7 +15,7 @@
  (synopsis "Being DB — facts with history")
  (description "A lightweight knowledge store that tracks your facts in Git and serves fast queries from an optimised backend. Edit your data like code, compile snapshots, and query them at high speed.")
  (depends
-  (ocaml (>= 4.14.0))
+  (ocaml (>= 5.4.0))
   dune
   (irmin (>= 3.7.0))
   (irmin-git (>= 3.7.0))

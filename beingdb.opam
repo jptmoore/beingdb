@@ -10,7 +10,7 @@ license: "MIT"
 homepage: "https://github.com/jptmoore/beingdb"
 bug-reports: "https://github.com/jptmoore/beingdb/issues"
 depends: [
-  "ocaml" {>= "4.14.0"}
+  "ocaml" {>= "5.4.0"}
   "dune" {>= "3.7"}
   "irmin" {>= "3.7.0"}
   "irmin-git" {>= "3.7.0"}

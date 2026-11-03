@@ -47,17 +47,21 @@ dune build --release
 dune install
 ```
 
-## Available Binaries
+## Commands
 
-After installation, the following binaries will be available:
-- `beingdb` - Combined CLI with `clone`/`pull`/`import`/`compile`/`serve`/`repl`/`export` subcommands
-- `beingdb-clone` - Clone a Git repository of facts
-- `beingdb-pull` - Pull updates from remote Git
-- `beingdb-import` - Import local predicate files (dev/testing)
-- `beingdb-compile` - Compile Git store to optimized Pack format
-- `beingdb-serve` - Start HTTP query server
-- `beingdb-repl` - Interactive query REPL against a Pack store
-- `beingdb-export` - Export a Pack store for querying in a web browser ([beingdb-wasm](https://github.com/jptmoore/beingdb-wasm))
+Installation provides the `beingdb` command:
+
+- `beingdb clone` - Clone a Git repository of facts
+- `beingdb pull` - Pull updates from remote Git
+- `beingdb import` - Import local predicate files (dev/testing)
+- `beingdb compile` - Compile the Git store into a pack store
+- `beingdb serve` - Start the HTTP query server
+- `beingdb repl` - Interactive query REPL against a pack store
+- `beingdb export` - Export a pack store for querying in a web browser ([beingdb-wasm](https://github.com/jptmoore/beingdb-wasm))
+
+Each command is also installed as a standalone binary (`beingdb-clone`,
+`beingdb-compile`, `beingdb-serve`, ...), which the Docker image uses.
+`beingdb COMMAND --help` describes each command's options.
 
 ## Troubleshooting
 

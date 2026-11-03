@@ -39,22 +39,22 @@ RUN apk add --no-cache \
 # Copy built binaries from builder (`beingdb` provides clone/compile/export/repl)
 COPY --from=builder /home/opam/.opam/default/bin/beingdb-serve /home/opam/.opam/default/bin/beingdb /usr/local/bin/
 
-# Create data directory for snapshots
-RUN mkdir -p /data/snapshots && \
-    chmod 755 /data/snapshots
+# Create the pack store mount point
+RUN mkdir -p /data/pack_store && \
+    chmod 755 /data/pack_store
 
 # Create non-root user for running the service
 RUN addgroup -g 1000 beingdb && \
     adduser -D -u 1000 -G beingdb beingdb
 
-# Volume for snapshot storage
-VOLUME ["/data/snapshots"]
+# Mount the compiled pack store here
+VOLUME ["/data/pack_store"]
 
 # Expose default port
 EXPOSE 8080
 
-# Environment variables with defaults
-ENV SNAPSHOT_PATH=/data/snapshots/current \
+# Environment variables with defaults (SNAPSHOT_PATH is the pack store to serve)
+ENV SNAPSHOT_PATH=/data/pack_store \
     PORT=8080 \
     MAX_RESULTS=5000
 
@@ -65,8 +65,8 @@ USER beingdb
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/predicates || exit 1
 
-# Run beingdb-serve
-CMD beingdb-serve \
+# Run the server
+CMD beingdb serve \
     --pack ${SNAPSHOT_PATH} \
     --port ${PORT} \
     --max-results ${MAX_RESULTS}

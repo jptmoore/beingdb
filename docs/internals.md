@@ -9,7 +9,7 @@ BeingDB has three stages:
 
 ```text
 1. AUTHORING   human-readable facts  ->  Git
-2. BUILD       beingdb-compile  ->  validated/indexed immutable pack
+2. BUILD       beingdb compile  ->  validated/indexed immutable pack
 3. RUNTIME     compiled pack  ->  pack/index runtime  ->  query parser/planner/evaluator  ->  results
 ```
 

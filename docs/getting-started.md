@@ -57,10 +57,10 @@ Use an existing facts repository or create your own:
 
 ```bash
 # Clone the sample facts repository
-beingdb-clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
+beingdb clone https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
 
 # Or clone your own facts repository
-beingdb-clone https://github.com/your-org/your-facts.git --git ./git_store
+beingdb clone https://github.com/your-org/your-facts.git --git ./git_store
 ```
 
 This creates a `git_store/` directory with your facts in Git format.
@@ -68,14 +68,14 @@ This creates a `git_store/` directory with your facts in Git format.
 ### 2. Pull Later Updates
 
 `git_store` is a bare Irmin-managed store with no configured remote, so
-plain `git pull` won't work inside it. Use `beingdb-pull` instead,
+plain `git pull` won't work inside it. Use `beingdb pull` instead,
 giving the same remote URL each time (Irmin doesn't remember it):
 
 ```bash
-beingdb-pull https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
+beingdb pull https://github.com/jptmoore/beingdb-sample-facts.git --git ./git_store
 
 # Pull a specific branch
-beingdb-pull https://github.com/your-org/your-facts.git --git ./git_store --branch develop
+beingdb pull https://github.com/your-org/your-facts.git --git ./git_store --branch develop
 ```
 
 This fetches and merges the remote branch into `git_store`; recompile
@@ -86,7 +86,7 @@ afterwards (step 3 below) to pick up the changes in the pack store.
 Transform Git facts into an optimized pack store:
 
 ```bash
-beingdb-compile --git ./git_store --pack ./pack_store
+beingdb compile --git ./git_store --pack ./pack_store
 ```
 
 Output:
@@ -114,10 +114,10 @@ Run the query server pointing at your pack store:
 
 ```bash
 # Default settings (port 8080, max results 1000)
-beingdb-serve --pack ./pack_store
+beingdb serve --pack ./pack_store
 
 # Custom settings
-beingdb-serve --pack ./pack_store --port 8080 --max-results 5000
+beingdb serve --pack ./pack_store --port 8080 --max-results 5000
 ```
 
 **Server options:**
@@ -279,9 +279,9 @@ git push -u origin main
 ### 4. Use in BeingDB
 
 ```bash
-beingdb-clone https://github.com/your-org/my-facts.git --git ./git_store
-beingdb-compile --git ./git_store --pack ./pack_store
-beingdb-serve --pack ./pack_store
+beingdb clone https://github.com/your-org/my-facts.git --git ./git_store
+beingdb compile --git ./git_store --pack ./pack_store
+beingdb serve --pack ./pack_store
 ```
 
 Query:
@@ -297,16 +297,16 @@ When facts change in your Git repository:
 
 ```bash
 # 1. Pull latest changes
-beingdb-pull https://github.com/your-org/your-facts.git --git ./git_store
+beingdb pull https://github.com/your-org/your-facts.git --git ./git_store
 
 # 2. Recompile pack store
-beingdb-compile --git ./git_store --pack ./pack_store_new
+beingdb compile --git ./git_store --pack ./pack_store_new
 
 # 3. Stop server, swap pack, restart
-pkill beingdb-serve
+pkill -f "beingdb serve"
 mv pack_store pack_store_old
 mv pack_store_new pack_store
-beingdb-serve --pack ./pack_store &
+beingdb serve --pack ./pack_store &
 
 # 4. Verify
 curl http://localhost:8080/predicates
@@ -331,14 +331,13 @@ After the facts change, recompile, export and publish again.
 
 ## Interactive REPL
 
-`beingdb repl` (equivalently, the standalone `beingdb-repl`) opens a
-compiled Pack store and reads `find`/`where` queries from the terminal,
+`beingdb repl` opens a
+compiled pack store and reads `find`/`where` queries from the terminal,
 printing typed JSON results -- useful for exploring a store or trying
 out queries without an HTTP server:
 
 ```bash
 beingdb repl --pack ./pack_store
-# or: beingdb-repl --pack ./pack_store
 ```
 
 Type the lines of a query and finish with a blank line to run it:

@@ -61,7 +61,7 @@ where
 
 This can answer questions such as:
 
-> Which works created after 1970 were subsequently shown in an exhibition?
+> Which artists made works in 1970 or later, and when?
 
 Queries can search text, too. This finds exhibitions with "video" in their title:
 
@@ -102,18 +102,18 @@ For MCP-based integrations, see the [BeingDB MCP server](https://github.com/jptm
 
 ## Quick start
 
-Clone some example facts:
+Install BeingDB (see [Installation](docs/installation.md)), then clone some example facts:
 
 ```bash
-beingdb-clone \
+beingdb clone \
   https://github.com/jptmoore/beingdb-sample-facts.git \
   --git ./git_store
 ```
 
-Compile the Git repository:
+Compile the Git repository into a pack store:
 
 ```bash
-beingdb-compile \
+beingdb compile \
   --git ./git_store \
   --pack ./pack_store
 ```
@@ -121,7 +121,7 @@ beingdb-compile \
 Start the HTTP server:
 
 ```bash
-beingdb-serve \
+beingdb serve \
   --pack ./pack_store
 ```
 

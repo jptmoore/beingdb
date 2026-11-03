@@ -585,7 +585,7 @@ order rows from an arbitrary subset:
 
 ## Safety limits
 
-`beingdb-serve` enforces sensible defaults to guard against expensive or
+`beingdb serve` enforces sensible defaults to guard against expensive or
 malicious queries, overridable via an optional `--config <file.json>`
 (missing fields fall back to the defaults below):
 
@@ -600,7 +600,7 @@ malicious queries, overridable via an optional `--config <file.json>`
 | `max_diagnostic_facts` | 50000 | Facts one data-aware diagnostic check may read. The join and misspelling-suggestion checks (and the observed-range evidence) read every fact of a predicate; above this size they are skipped and reported as an info-level `check_skipped` diagnostic |
 
 ```bash
-beingdb-serve --pack ./pack_store --config ./beingdb.config.json
+beingdb serve --pack ./pack_store --config ./beingdb.config.json
 ```
 
 The `--max-results` CLI flag, if given, overrides the config file's

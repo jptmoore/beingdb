@@ -988,7 +988,7 @@ introspection data. It is exposed consistently, under the same
 
 ## REPL
 
-The REPL (`beingdb repl` / `beingdb-repl`) reads `find`/`where` queries:
+The REPL (`beingdb repl`) reads `find`/`where` queries:
 type the lines of a query and finish with a blank line to run it. A line
 starting with `:` is a command (`:help` lists them).
 
