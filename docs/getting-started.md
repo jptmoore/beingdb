@@ -371,6 +371,8 @@ A line starting with `:` is a REPL command rather than a query:
 |---|---|
 | `:predicates` | List predicates and their arities |
 | `:describe <predicate>` | Show a predicate's argument types, fact count, examples, and any declared roles and description |
+| `:resolve <text>` | Find the stored values a text mentions, as [`GET /resolve`](api.md#resolve-values-mentioned-in-text) |
+| `:about <value>` | Show every fact a value occurs in, as [`GET /about`](api.md#everything-about-a-value), e.g. `:about judith_goddard` |
 | `:environment` | Show predicate count, fingerprint and language version |
 | `:explain` | Enter a query (blank line to finish) and show its plan without executing it; `:explain find ...` also works, with the rest of the query on the following lines |
 | `:validate` | Enter a query (blank line to finish) and validate it without executing |

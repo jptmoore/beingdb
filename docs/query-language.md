@@ -126,6 +126,30 @@ arguments from the facts is reported as a warning and ignored. It never
 fails the compile. Declarations are returned by
 [predicate introspection](#predicate-introspection-get-predicatesdetailedtrue).
 
+### Naming values: `label` and `alias`
+
+Two optional, conventional predicates give values human-readable names:
+
+```prolog
+%! label(Thing, Name)
+% The display name of a value.
+label(robert_count_of_mortain, "Robert, Count of Mortain").
+
+%! alias(Thing, Name)
+% Another name or spelling of a value.
+alias(exeter, "Execestre").
+```
+
+`Name` is a string (optionally language-tagged) or an atom; a value may
+have several of each. They are ordinary facts, so queries can use them
+(`label(P, Name), Name contains "mortain"`). In addition, the
+[`GET /resolve`](api.md#resolve-values-mentioned-in-text) lookup matches
+text against labels and aliases as well as a value's own text, and
+[`GET /about`](api.md#everything-about-a-value) reports them as the
+value's `label` and `aliases`. Clients can show a label instead of an
+atom's underscored text. Only a two-argument `label` or `alias` predicate
+is treated this way.
+
 ### Literal types
 
 | Type          | Syntax                                   | Example                            |
@@ -636,7 +660,8 @@ configurable per-server without recompiling (see
 - **Query length:** 20,000 bytes by default; longer raw query strings
   are rejected (`query_too_long`, HTTP 413) before parsing.
 - **Concurrency:** 20 simultaneously in-flight requests by default
-  (queries and the `GET /predicates`/`GET /query/:predicate` reads);
+  (queries and the `GET /predicates`, `GET /query/:predicate`, `GET /resolve`
+  and `GET /about` reads);
   further requests get `server_busy` (HTTP 429) until one finishes.
 - **Connectivity:** a query's predicate patterns must form a single
   connected component -- every pattern must be reachable from every

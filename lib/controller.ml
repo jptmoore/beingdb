@@ -345,3 +345,52 @@ let run_query ~max_results ?(language = "dsl") ?(action = "execute") store query
       Lwt.return
         (Failure
            { code = "unknown_language"; message = Printf.sprintf "Unknown language '%s'; BeingDB queries use the find/where language (omit 'language' or set it to \"dsl\")" language })
+
+(** {2 Value lookup}
+
+    [resolve] and [about] ({!Value_lookup}). The name index reads every
+    fact, so it is built once and cached for the store. The environment
+    fingerprint covers predicate signatures but not fact contents, so the
+    cache key adds each predicate's fact count, and callers that write to
+    the store (the REPL's [:load]) also call {!invalidate_lookup_index}. *)
+
+let lookup_cache : (Db.t * string * Db.Lookup.index) option ref = ref None
+let invalidate_lookup_index () = lookup_cache := None
+
+let lookup_key (env : Query_environment.t) =
+  env.Query_environment.fingerprint ^ "|"
+  ^ String.concat "," (List.map (fun (p : Query_environment.predicate_signature) -> Printf.sprintf "%s:%d" p.name p.count) env.predicates)
+
+let lookup_index store env =
+  let key = lookup_key env in
+  match !lookup_cache with
+  | Some (s, k, index) when s == store && k = key -> Lwt.return index
+  | _ ->
+      Db.Lookup.build_index store env >>= fun index ->
+      lookup_cache := Some (store, key, index);
+      Lwt.return index
+
+let lookup_fields (env : Query_environment.t) =
+  [ ("languageVersion", `String env.Query_environment.language_version); ("environmentFingerprint", `String env.Query_environment.fingerprint) ]
+
+let with_lookup_fields env = function `Assoc fields -> `Assoc (fields @ lookup_fields env) | json -> json
+
+let internal_failure exn = Lwt.return (Failure { code = "internal_error"; message = Printf.sprintf "Lookup error: %s" (Printexc.to_string exn) })
+
+let resolve ?max_candidates store text =
+  Lwt.catch
+    (fun () ->
+      Db.Environment.load_or_build store >>= fun env ->
+      lookup_index store env >>= fun index ->
+      match Db.Lookup.resolve ?max_candidates env index text with
+      | Ok json -> Lwt.return (Success (with_lookup_fields env json))
+      | Error (code, message) -> Lwt.return (Failure { code; message }))
+    internal_failure
+
+let about ?limit store literal =
+  match Value_lookup.parse_value literal with
+  | Error message -> Lwt.return (Failure { code = "invalid_value"; message = Printf.sprintf "Invalid value %S: %s" literal message })
+  | Ok value ->
+      with_query_timeout (fun () ->
+          Db.Environment.load_or_build store >>= fun env ->
+          Db.Lookup.about ?limit store env value >>= fun json -> Lwt.return (Success (with_lookup_fields env json)))

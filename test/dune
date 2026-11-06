@@ -68,3 +68,8 @@
  (name test_export)
  (libraries beingdb alcotest lwt lwt.unix yojson unix)
  (modes native))
+
+(test
+ (name test_value_lookup)
+ (libraries beingdb_runtime alcotest lwt yojson)
+ (modes native))

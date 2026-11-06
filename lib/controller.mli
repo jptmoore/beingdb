@@ -63,3 +63,22 @@ val run_query :
   Db.t ->
   string ->
   query_outcome Lwt.t
+
+(** {2 Value lookup} *)
+
+(** [resolve store text]: the stored values [text] mentions
+    ({!Value_lookup}), plus [environmentFingerprint] and
+    [languageVersion]. The name index is built from the facts on first
+    use and cached for the store until its predicates or their fact counts
+    change. [Failure] with [text_too_long] for oversized text. *)
+val resolve : ?max_candidates:int -> Db.t -> string -> query_outcome Lwt.t
+
+(** [about store literal]: every fact the value written as [literal]
+    (query syntax, e.g. [judith_goddard]) occurs in, grouped by predicate
+    and position, at most [limit] facts per group ({!Value_lookup}).
+    [Failure] with [invalid_value] if [literal] is not a single literal. *)
+val about : ?limit:int -> Db.t -> string -> query_outcome Lwt.t
+
+(** Drop the cached name index, e.g. after facts were loaded into the
+    store. *)
+val invalidate_lookup_index : unit -> unit

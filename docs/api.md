@@ -466,6 +466,145 @@ repaired query. Run it (or `diagnose` it again) like any other query.
 
 ---
 
+### Resolve values mentioned in text
+
+```http
+GET /resolve?text=<text>&candidates=<n>
+```
+
+Finds the stored values a piece of text mentions, for example the names
+in a user's question, so a client can write a query with the right
+constants (or ask which one was meant). Not part of the query language.
+
+**Parameters:**
+- `text` (required): up to 2,000 bytes.
+- `candidates` (optional, 1-50, default 10): candidates returned per mention.
+
+Text is split into words, ignoring case, punctuation and a possessive
+`'s`, and word sequences (longest first) are matched against the names of
+every atom, string and language-tagged string in the facts:
+
+| `match` | Meaning |
+|---|---|
+| `exact` | The value's own text: `judith_goddard` for "Judith Goddard", `"Hey Bud"` for "hey bud" |
+| `label` | A [`label`](query-language.md#naming-values-label-and-alias) of the value |
+| `alias` | An [`alias`](query-language.md#naming-values-label-and-alias) of the value |
+| `fuzzy` | The same number of words, each within a small edit distance (words under 5 characters must match exactly), and the same first three letters: "david critchly" |
+| `partial` | A contiguous run of a longer name's words, e.g. a surname. Needs a name cue (a capitalised word that does not start a sentence, or a text that is only the name) and at most 50 matching values |
+
+Single-word matches need at least 3 characters and are never numbers.
+
+**Example:**
+```bash
+curl -G http://localhost:8080/resolve --data-urlencode 'text=What did david critchly make with Hall?'
+```
+
+**Response:**
+```json
+{
+  "text": "What did david critchly make with Hall?",
+  "mentions": [
+    {
+      "text": "david critchly", "start": 9, "end": 23, "match": "fuzzy", "candidateCount": 1,
+      "candidates": [
+        {
+          "value": { "type": "atom", "value": "david_critchley" },
+          "literal": "david_critchley",
+          "matchedName": "david_critchley",
+          "match": "fuzzy",
+          "facts": 64,
+          "occurs": [
+            { "predicate": "affiliated_with", "position": 0, "role": "Person" },
+            { "predicate": "created_by", "position": 1, "role": "Artist" },
+            "..."
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Hall", "start": 34, "end": 38, "match": "partial", "candidateCount": 2,
+      "candidates": [ { "literal": "david_hall", "...": "..." }, { "literal": "rewind_david_hall_interview", "...": "..." } ]
+    }
+  ],
+  "languageVersion": "...",
+  "environmentFingerprint": "sha256:..."
+}
+```
+
+- `start`/`end` are byte offsets of the mention in `text`.
+- Candidates are ordered by match quality, then by `facts` (how many facts
+  mention the value, not counting `label`/`alias` facts). More than one
+  candidate means the text is ambiguous; `candidateCount` counts them all.
+- `literal` is the value in query syntax, ready to use in a query.
+- `label` is present when the value has one; `occurs` lists every
+  predicate and argument position holding the value, with any declared
+  role and semantic type.
+
+The first request builds a name index by reading every fact once; later
+requests reuse it until the store's predicates or fact counts change.
+
+**Errors:** `400 malformed_request` (no `text`), `400 invalid_parameter`
+(bad `candidates`), `413 text_too_long`.
+
+### Everything about a value
+
+```http
+GET /about?value=<literal>&limit=<n>
+```
+
+Every fact a value occurs in, grouped by predicate and argument position:
+the data behind a page about a person, place or work.
+
+**Parameters:**
+- `value` (required): one literal in query syntax: `judith_goddard`,
+  `"Hey Bud"` (URL-encoded), `@1979`, `42`.
+- `limit` (optional, 1-100, default 20): facts returned per group.
+
+**Example:**
+```bash
+curl 'http://localhost:8080/about?value=judith_goddard&limit=2'
+```
+
+**Response:**
+```json
+{
+  "value": { "type": "atom", "value": "judith_goddard" },
+  "literal": "judith_goddard",
+  "aliases": [],
+  "facts": 45,
+  "predicates": [
+    {
+      "predicate": "created_by",
+      "position": 1,
+      "description": "Relates a work to the artist or artist group who made it.",
+      "roles": ["Work", "Artist"],
+      "count": 10,
+      "facts": [
+        [ { "type": "atom", "value": "american_landscapes" }, { "type": "atom", "value": "judith_goddard" } ],
+        [ { "type": "atom", "value": "descry" }, { "type": "atom", "value": "judith_goddard" } ]
+      ],
+      "hasMore": true
+    }
+  ],
+  "languageVersion": "...",
+  "environmentFingerprint": "sha256:..."
+}
+```
+
+- `facts` (top level) counts distinct facts; `label` and `aliases` come
+  from [`label`/`alias`](query-language.md#naming-values-label-and-alias)
+  facts, which are not listed as groups.
+- `roles` is `null` unless every argument has a declared role.
+- Groups follow the predicate order of `GET /predicates?detailed=true`; facts
+  within a group are in a stable order. A value that occurs nowhere gives
+  `"facts": 0` and no groups.
+- Uses indexed lookups only.
+
+**Errors:** `400 malformed_request` (no `value`), `400 invalid_value`
+(not a single literal), `400 invalid_parameter` (bad `limit`).
+
+---
+
 ## Error response shapes
 
 BeingDB distinguishes two error families, never mixing a string and an
@@ -595,7 +734,7 @@ malicious queries, overridable via an optional `--config <file.json>`
 | `query_timeout` | 5.0 | Seconds before an executing or diagnosing query is aborted (`timeout`) |
 | `max_intermediate_results` | 10000 | Cap on the rows a query may match; a query matching more fails with `result_too_large` rather than returning a partial result |
 | `max_query_length` | 20000 | Cap, in bytes, on a raw query string, rejected before parsing (`query_too_long`, HTTP 413) |
-| `max_concurrent_queries` | 20 | Cap on simultaneously in-flight `POST /query`, `GET /predicates` and `GET /query/:predicate` requests; further requests get `server_busy` (HTTP 429) until one finishes |
+| `max_concurrent_queries` | 20 | Cap on simultaneously in-flight `POST /query`, `GET /predicates`, `GET /query/:predicate`, `GET /resolve` and `GET /about` requests; further requests get `server_busy` (HTTP 429) until one finishes |
 | `max_scanned_facts` | 1000000 | Facts one query may read (every candidate fact its patterns fetch, summed across joins). A query that reads more fails with `scan_limit_exceeded`, however few rows it matches; this bounds filters such as `!=` and `contains` that cannot use an index |
 | `max_diagnostic_facts` | 50000 | Facts one data-aware diagnostic check may read. The join and misspelling-suggestion checks (and the observed-range evidence) read every fact of a predicate; above this size they are skipped and reported as an info-level `check_skipped` diagnostic |
 

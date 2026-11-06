@@ -17,7 +17,7 @@ The source is split into three Dune libraries along those lines:
 
 | Library | Directory | Contents | Dependencies |
 |---|---|---|---|
-| `beingdb_runtime` | `lib/runtime/` | `Value`, `Decimal`, `Calendar`, `Fact`, `Manifest`, lexer, the `find`/`where` parser and the internal core parser, AST, validation, connectivity, planner, `Query_engine`, `Query_environment`, DSL lowering, `Core_query`, explain, `Runtime_store`, `Pack_layout`, `Memory_store` | `lwt`, `yojson`, `digestif` only |
+| `beingdb_runtime` | `lib/runtime/` | `Value`, `Decimal`, `Calendar`, `Fact`, `Manifest`, lexer, the `find`/`where` parser and the internal core parser, AST, validation, connectivity, planner, `Query_engine`, `Query_environment`, DSL lowering, `Core_query`, explain, diagnostics, `Value_lookup` (resolve and about), `Runtime_store`, `Pack_layout`, `Memory_store` | `lwt`, `yojson`, `digestif` only |
 | `beingdb_pack_unix` | `lib/pack_unix/` | `Pack_backend`: the Irmin Pack Unix store, open/close, and the pack writer | runtime + `irmin-pack.unix`, `irmin.unix` |
 | `beingdb` | `lib/` | Git backend, source-fact parsing (`Parse_predicate`), compile/import/clone/pull, `Db`/`Model`/`Controller`, Dream API, REPL, CLI | everything |
 

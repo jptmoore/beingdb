@@ -4,6 +4,8 @@
     - GET /predicates - List all predicates
     - GET /query/:predicate - Get all facts for a predicate
     - POST /query - Execute queries with pattern matching and joins
+    - GET /resolve - Find the stored values a text mentions
+    - GET /about - Every fact a value occurs in
     
     All reads go to Pack (fast).
     Updates are done via recompile + redeploy workflow.
@@ -26,7 +28,7 @@ let error_response ?(status = `Bad_Request) ?(code = "invalid_request") message 
 (** [Controller.Failure] codes that map to a more specific HTTP status
     than the generic [400]; anything else stays [400 Bad Request]. *)
 let status_for_failure_code = function
-  | "query_too_long" -> `Payload_Too_Large
+  | "query_too_long" | "text_too_long" -> `Payload_Too_Large
   | _ -> `Bad_Request
 
 (** Health check endpoint *)
@@ -76,7 +78,8 @@ let handle_query max_results pack_store predicate _req =
   | Error msg -> error_response msg
 
 (** Count of currently in-flight store-reading requests ([POST /query],
-    [GET /predicates], [GET /query/:predicate]), checked against
+    [GET /predicates], [GET /query/:predicate], [GET /resolve],
+    [GET /about]), checked against
     [config.max_concurrent_queries]. Safe as plain mutable state: Lwt is
     cooperative, and the check-then-increment in {!with_query_slot}
     never yields, so there is no race between requests. *)
@@ -128,6 +131,36 @@ let handle_query_language (config : Server_config.t) pack_store req =
           | _ -> error_response ~code:"malformed_request" "Missing 'query' field")
       | _ -> error_response ~code:"malformed_request" "Expected a JSON object")
 
+(** A bounded integer query parameter: [Ok default] when absent, an
+    [invalid_parameter] error outside [1..max]. *)
+let int_param req name ~default ~max =
+  match Dream.query req name with
+  | None -> Ok default
+  | Some s -> (
+      match int_of_string_opt s with
+      | Some n when n >= 1 && n <= max -> Ok n
+      | _ -> Error (Printf.sprintf "'%s' must be an integer from 1 to %d." name max))
+
+let lookup_response = function
+  | Controller.Success json | Controller.Invalid json -> json_response json
+  | Controller.Failure { code; message } -> error_response ~status:(status_for_failure_code code) ~code message
+
+(** [GET /resolve?text=...&candidates=N]: the stored values a text
+    mentions ({!Controller.resolve}). *)
+let handle_resolve pack_store req =
+  match (Dream.query req "text", int_param req "candidates" ~default:10 ~max:50) with
+  | None, _ -> error_response ~code:"malformed_request" "Missing 'text' parameter."
+  | _, Error message -> error_response ~code:"invalid_parameter" message
+  | Some text, Ok max_candidates -> Lwt.bind (Controller.resolve ~max_candidates pack_store text) lookup_response
+
+(** [GET /about?value=...&limit=N]: every fact a value occurs in
+    ({!Controller.about}). *)
+let handle_about pack_store req =
+  match (Dream.query req "value", int_param req "limit" ~default:20 ~max:100) with
+  | None, _ -> error_response ~code:"malformed_request" "Missing 'value' parameter."
+  | _, Error message -> error_response ~code:"invalid_parameter" message
+  | Some value, Ok limit -> Lwt.bind (Controller.about ~limit pack_store value) lookup_response
+
 (** The HTTP routes, shared by {!serve} and the tests. *)
 let router (config : Server_config.t) pack_store =
   Dream.router [
@@ -138,6 +171,8 @@ let router (config : Server_config.t) pack_store =
       let predicate = Dream.param req "predicate" in
       with_query_slot config (fun () -> handle_query config.Server_config.max_results pack_store predicate req));
     Dream.post "/query" (handle_query_language config pack_store);
+    Dream.get "/resolve" (fun req -> with_query_slot config (fun () -> handle_resolve pack_store req));
+    Dream.get "/about" (fun req -> with_query_slot config (fun () -> handle_about pack_store req));
   ]
 
 (** Start the API server. [?stop], if given, is a promise that triggers

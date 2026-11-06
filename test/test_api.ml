@@ -535,6 +535,57 @@ let test_post_query_concurrency_limit () =
       let status = Dream.status response in
       Alcotest.(check int) "status 429 when at concurrency limit" 429 (Dream.status_to_int status))
 
+(** GET a target and return (status, JSON body). *)
+let get_json app target =
+  let response = Dream.test app (Dream.request ~target "") in
+  let body = Lwt_main.run (Dream.body response) in
+  (Dream.status_to_int (Dream.status response), Yojson.Safe.from_string body)
+
+let error_code json = Yojson.Safe.Util.(json |> member "error" |> member "code" |> to_string)
+
+(** Test: GET /resolve finds the values a text mentions. *)
+let test_resolve_endpoint () =
+  let pack, test_dir = create_test_pack "resolve" in
+  let app = create_app pack 1000 in
+  let open Yojson.Safe.Util in
+  let status, json = get_json app "/resolve?text=What%20did%20Tina%20Keane%20create%3F" in
+  Alcotest.(check int) "status 200" 200 status;
+  let mentions = json |> member "mentions" |> to_list in
+  Alcotest.(check (list string)) "mention" [ "Tina Keane" ] (List.map (fun m -> m |> member "text" |> to_string) mentions);
+  let candidate = List.hd (List.hd mentions |> member "candidates" |> to_list) in
+  Alcotest.(check string) "literal" "tina_keane" (candidate |> member "literal" |> to_string);
+  Alcotest.(check bool) "fingerprint" true (json |> member "environmentFingerprint" <> `Null);
+  let status, json = get_json app "/resolve" in
+  Alcotest.(check int) "missing text" 400 status;
+  Alcotest.(check string) "missing text code" "malformed_request" (error_code json);
+  let status, json = get_json app "/resolve?text=x&candidates=0" in
+  Alcotest.(check int) "bad candidates" 400 status;
+  Alcotest.(check string) "bad candidates code" "invalid_parameter" (error_code json);
+  let status, json = get_json app ("/resolve?text=" ^ String.make (Value_lookup.max_text_length + 1) 'a') in
+  Alcotest.(check int) "too long" 413 status;
+  Alcotest.(check string) "too long code" "text_too_long" (error_code json);
+  ignore (Unix.system (Printf.sprintf "rm -rf %s" (Filename.quote test_dir)))
+
+(** Test: GET /about lists every fact a value occurs in. *)
+let test_about_endpoint () =
+  let pack, test_dir = create_test_pack "about" in
+  let app = create_app pack 1000 in
+  let open Yojson.Safe.Util in
+  let status, json = get_json app "/about?value=tina_keane" in
+  Alcotest.(check int) "status 200" 200 status;
+  Alcotest.(check int) "facts" 2 (json |> member "facts" |> to_int);
+  Alcotest.(check (list string)) "groups" [ "artist"; "created" ]
+    (json |> member "predicates" |> to_list |> List.map (fun g -> g |> member "predicate" |> to_string) |> List.sort compare);
+  let status, json = get_json app "/about?value=%22Smith%2C%20Jones%20and%20Brown%22" in
+  Alcotest.(check int) "string value" 200 status;
+  Alcotest.(check int) "string facts" 1 (json |> member "facts" |> to_int);
+  let status, json = get_json app "/about?value=two%20values" in
+  Alcotest.(check int) "invalid value" 400 status;
+  Alcotest.(check string) "invalid value code" "invalid_value" (error_code json);
+  let status, _ = get_json app "/about?value=she&limit=101" in
+  Alcotest.(check int) "bad limit" 400 status;
+  ignore (Unix.system (Printf.sprintf "rm -rf %s" (Filename.quote test_dir)))
+
 (** Test: the GET endpoints share the same concurrency limit. *)
 let test_get_concurrency_limit () =
   let (pack, test_dir) = create_test_pack "get_concurrency" in
@@ -690,6 +741,10 @@ let () =
     "Expressive Query Language", [
       Alcotest.test_case "POST /query language=dsl execute" `Quick test_post_query_dsl_execute;
       Alcotest.test_case "POST /query language=dsl validate invalid" `Quick test_post_query_dsl_validate_invalid;
+    ];
+    "Value Lookup", [
+      Alcotest.test_case "GET /resolve" `Quick test_resolve_endpoint;
+      Alcotest.test_case "GET /about" `Quick test_about_endpoint;
     ];
     "Error Handling", [
       Alcotest.test_case "invalid JSON" `Quick test_post_query_invalid_json;
