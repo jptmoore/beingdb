@@ -44,7 +44,10 @@
     - [Swap_arguments]: a positive pattern with an ungrounded literal for
       which exactly one swap of two positions grounds every literal.
     - [Replace_variable]: a positive singleton variable whose snake_case
-      name is an atom occurring at exactly that position. *)
+      name is an atom occurring at exactly that position.
+    - [Replace_constant]: an atom that occurs in no fact (in any scope),
+      when exactly one atom at that position extends it at an underscore
+      ([arts_council] -> [arts_council_of_great_britain]). *)
 
 type severity = Error | Warning | Info
 type scope = Positive | Optional_scope | Alternative_scope | Negated_scope
@@ -52,6 +55,7 @@ type scope = Positive | Optional_scope | Alternative_scope | Negated_scope
 type repair =
   | Swap_arguments of { predicate : string; line : int; positions : int * int }
   | Replace_variable of { predicate : string; line : int; argument_position : int; variable : string; value : Value.t }
+  | Replace_constant of { predicate : string; line : int; argument_position : int; constant : Value.t; value : Value.t }
 
 type t = {
   code : string;
