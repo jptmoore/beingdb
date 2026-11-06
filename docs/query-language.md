@@ -192,7 +192,7 @@ intervals.
 ## Query syntax
 
 ```
-find [distinct] Var | count(Var), ...
+find [distinct] Var | count(Var) | sum(Var) | avg(Var) | min(Var) | max(Var), ...
 where
   <clause>
   <clause>
@@ -204,14 +204,16 @@ where
     <clause>*
   not
     <clause>*
-order by Var | count(Var) [ascending|descending], ...
+order by Var | <aggregate>(Var) [ascending|descending], ...
 limit N
 offset N
 ```
 
 - `find` lists the variables to return, in order. `find distinct`
-  removes duplicate rows from the result. A `find` item may also be
-  `count(Var)`; see [Counting](#counting).
+  removes duplicate rows from the result. A `find` item may also be an
+  aggregate, `count(Var)`, `sum(Var)`, `avg(Var)`, `min(Var)` or
+  `max(Var)`; see [Counting](#counting) and
+  [Sum, average, minimum and maximum](#sum-average-minimum-and-maximum).
 - `where` starts the clause list. Each line holds one clause: a
   [predicate pattern](#query-patterns), a
   [comparison](#comparisons), or a `between ... and ...` range.
@@ -770,11 +772,78 @@ limit 5
 For a plain "how many rows", the `total` field of any result also
 gives the number of rows the query matches.
 
+## Sum, average, minimum and maximum
+
+`sum(Var)`, `avg(Var)`, `min(Var)` and `max(Var)` work like
+[`count`](#counting): the plain `find` variables are the groups, the
+column is named after the call (`sum(Minutes)`), it can be used in
+`order by`, and several may appear in one `find`, together with counts.
+
+```
+find Artist, count(Work), min(Year), max(Year)
+where
+  created_by(Work, Artist)
+  year_created(Work, Year)
+order by count(Work) descending, Artist
+limit 3
+```
+
+| Artist | count(Work) | min(Year) | max(Year) |
+|---|---|---|---|
+| madelon_hooykaas | 10 | 1975 | 1990 |
+| elsa | 6 | 1979 | 1990 |
+| david_critchley | 4 | 1973 | 1977 |
+
+```
+find sum(Minutes), avg(Minutes)
+where
+  duration_minutes(Work, Minutes)
+```
+
+- `sum` and `avg` add `integer` and `decimal` values. A sum of integers
+  is an `integer`; a sum involving a decimal is a `decimal`. `avg` is
+  always a `decimal`, rounded (half away from zero) to at most 6 more
+  fractional digits than its inputs: the average of 10, 10 and 4.5 is
+  `8.1666667`.
+- `min` and `max` take the least or greatest value of an ordered type
+  (`integer`, `decimal`, `year`, `year_month`, `date`, `instant`) and keep
+  its type: `min(Year)` is a `year`. Integers and decimals compare with
+  each other; values that cannot be compared with the current minimum or
+  maximum (a `year` and a `date`) are skipped.
+- **What is added up.** `count(Var)` counts distinct values. The other
+  aggregates read each **distinct solution** of the group once: each
+  distinct combination of the query's named variables. Two manors worth
+  10 each therefore sum to 20 (they are different `Manor`s), and a `_`
+  never multiplies a solution:
+
+  ```
+  find Holder, sum(Value)
+  where
+    held_by(Manor, Holder)
+    value(Manor, Value)
+    tenant(Manor, _)
+  ```
+
+  counts each manor once however many tenants it has. Naming that
+  variable (`tenant(Manor, Tenant)`) makes each tenant a separate
+  solution, so a manor with two tenants is added twice. Keep only the
+  clauses the question needs, and use `_` for arguments you do not need.
+- Values of other types are ignored (with an `aggregate_ignores_values`
+  warning when the variable's argument also holds other types). A group
+  with no usable value, or a query with no matches and no plain `find`
+  variables, gives `null`; `count` gives `0`.
+- Aggregating a variable that holds no suitable type at all (`sum` of
+  atoms, `min` of strings), aggregating a variable that is also a plain
+  `find` column, or ordering by a non-column is rejected with
+  `invalid_aggregate`.
+- Sums are exact. A sum whose digits do not fit in a 64-bit number fails
+  with `aggregate_overflow` rather than returning a wrong total.
+
 ## What the query language does NOT support
 
-- **Aggregation beyond counting:** no `sum`, `avg`, `min`, `max`, or
-  explicit `group by` (grouping comes from the plain `find` variables of
-  a [count](#counting)).
+- **Grouping beyond `find`:** no explicit `group by`, no `having`, and no
+  filtering or arithmetic on an aggregate's result (grouping comes from
+  the plain `find` variables of an [aggregate](#counting)).
 - **Arithmetic:** no `Y = X + 1`.
 - **Recursion:** no transitive closure or path queries.
 - **Functions:** no computed values or transformations.
@@ -811,11 +880,15 @@ applicable:
 | `unsafe_negation` | A `not` block uses a variable not bound by any positive clause elsewhere in the query. |
 | `invalid_contains` | A misuse of [`contains`](#text-search-contains): no variable on the left, no quoted text on the right, text that is empty or longer than 200 characters, or a variable that only holds non-text values. |
 | `invalid_count` | A misuse of [`count(Var)`](#counting): counting a variable that is also a plain `find` column, or `order by` on something that is not a `find` column in a query with a count. |
+| `invalid_aggregate` | A misuse of [`sum`/`avg`/`min`/`max`](#sum-average-minimum-and-maximum): a variable that holds no suitable type (numbers for `sum`/`avg`; numbers, years or dates for `min`/`max`), one that is also a plain `find` column, or `order by` on something that is not a `find` column in a query with aggregates. |
 
 A query whose argument position has *more than one* observed type (a
 heterogeneous column) but whose literal matches one of them is not an
 error -- it produces a `heterogeneous_position` **warning** instead,
 since the query is well-formed but only targets part of that column.
+Aggregates warn with `aggregate_ignores_values` (the variable also holds
+values the aggregate ignores) and `aggregate_mixed_types` (`min`/`max`
+over values that cannot all be compared).
 
 The `diagnose` action goes further and checks the query against the
 data itself (constants that occur nowhere, joins that can never match,

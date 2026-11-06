@@ -35,6 +35,9 @@ type t =
   | Invalid_optional_scope of { message : string }
   | Invalid_alternative_scope of { message : string }
   | Invalid_count of { message : string }  (** A misuse of [count(Var)] in [find] or [order by]. *)
+  | Invalid_aggregate of { message : string }
+      (** A misuse of [sum]/[avg]/[min]/[max] in [find] or [order by], or one
+          over a variable that can hold no suitable value. *)
   | Invalid_contains of { message : string; line : int option }  (** A misuse of [Var contains "text"]. *)
   | Disconnected_query of { groups : string list list; message : string }
       (** The query's positive patterns form more than one connected
@@ -56,6 +59,7 @@ let code = function
   | Invalid_optional_scope _ -> "invalid_optional_scope"
   | Invalid_alternative_scope _ -> "invalid_alternative_scope"
   | Invalid_count _ -> "invalid_count"
+  | Invalid_aggregate _ -> "invalid_aggregate"
   | Invalid_contains _ -> "invalid_contains"
   | Disconnected_query _ -> "disconnected_query"
 
@@ -68,7 +72,7 @@ let line = function
   | Invalid_contains { line; _ } ->
       line
   | Unbound_projection _ | Unbound_order_variable _ | Unsafe_negation _ | Invalid_optional_scope _ | Invalid_alternative_scope _
-  | Invalid_count _ | Disconnected_query _ ->
+  | Invalid_count _ | Invalid_aggregate _ | Disconnected_query _ ->
       None
 
 let column = function
@@ -79,7 +83,7 @@ let column = function
   | Comparison_type_mismatch { column; _ } ->
       column
   | Unbound_projection _ | Unbound_order_variable _ | Unsafe_negation _ | Invalid_optional_scope _ | Invalid_alternative_scope _
-  | Invalid_count _ | Invalid_contains _ | Disconnected_query _ ->
+  | Invalid_count _ | Invalid_aggregate _ | Invalid_contains _ | Disconnected_query _ ->
       None
 
 let message = function
@@ -100,6 +104,7 @@ let message = function
   | Invalid_optional_scope { message } -> message
   | Invalid_alternative_scope { message } -> message
   | Invalid_count { message } -> message
+  | Invalid_aggregate { message } -> message
   | Invalid_contains { message; _ } -> message
   | Disconnected_query { message; _ } -> message
 
@@ -127,7 +132,7 @@ let to_json (e : t) : Yojson.Safe.t =
     | Unsafe_negation { variables } -> [ ("variables", `List (List.map (fun s -> `String s) variables)) ]
     | Disconnected_query { groups; _ } ->
         [ ("groups", `List (List.map (fun g -> `List (List.map (fun s -> `String s) g)) groups)) ]
-    | Syntax_error _ | Invalid_optional_scope _ | Invalid_alternative_scope _ | Invalid_count _ | Invalid_contains _ -> []
+    | Syntax_error _ | Invalid_optional_scope _ | Invalid_alternative_scope _ | Invalid_count _ | Invalid_aggregate _ | Invalid_contains _ -> []
   in
   `Assoc (base @ line_field @ column_field @ extra)
 

@@ -222,37 +222,85 @@ let lower (env : Query_environment.t) (surface : Surface_ast.surface_query) : re
   validate_negation_safety top_level_positive_vars surface.where_ errors;
   let query_vars = all_variables surface.where_ |> List.sort_uniq String.compare in
   let columns = surface.projection.variables in
-  let plain_columns = List.filter (fun c -> Core_query.counted_variable c = None) columns in
-  let counted = List.filter_map Core_query.counted_variable columns in
+  let plain_columns = List.filter (fun c -> Core_query.aggregate_of c = None) columns in
+  let aggregates = List.sort_uniq compare (List.filter_map Core_query.aggregate_of columns) in
+  let only_counts = List.for_all (fun (f, _) -> f = Core_query.Count) aggregates in
+  let aggregate_error (f : Core_query.aggregate) message =
+    if f = Count then Validation_error.Invalid_count { message } else Validation_error.Invalid_aggregate { message }
+  in
   List.iter
     (fun c ->
-      let v = Option.value (Core_query.counted_variable c) ~default:c in
+      let v = match Core_query.aggregate_of c with Some (_, v) -> v | None -> c in
       if not (List.mem v query_vars) then errors := Validation_error.Unbound_projection { variable = v } :: !errors)
     columns;
   List.iter
-    (fun v ->
+    (fun ((f : Core_query.aggregate), v) ->
       if List.mem v plain_columns then
         errors :=
-          Validation_error.Invalid_count
-            {
-              message =
-                Printf.sprintf
-                  "count(%s) counts a variable that is also a 'find' column, so every count would be 1; remove %s from 'find' or count another variable"
-                  v v;
-            }
+          aggregate_error f
+            (if f = Count then
+               Printf.sprintf
+                 "count(%s) counts a variable that is also a 'find' column, so every count would be 1; remove %s from 'find' or count another variable"
+                 v v
+             else
+               Printf.sprintf
+                 "%s(%s) aggregates a variable that is also a 'find' column, so each group holds a single %s; remove %s from 'find' or aggregate another variable"
+                 (Core_query.aggregate_name f) v v v)
           :: !errors)
-    (List.sort_uniq String.compare counted);
+    aggregates;
+  (* sum/avg need numbers, min/max ordered values; a variable whose type is
+     unknown here is left to run time. *)
+  let numeric = [ "integer"; "decimal" ] and ordered = [ "integer"; "decimal"; "year"; "year_month"; "date"; "instant" ] in
+  List.iter
+    (fun ((f : Core_query.aggregate), v) ->
+      let name = Core_query.aggregate_column f v in
+      let suitable, wanted =
+        match f with Sum | Avg -> (numeric, "integer or decimal values") | Min | Max | Count -> (ordered, "numbers, years or dates")
+      in
+      match Hashtbl.find_opt var_types v with
+      | _ when f = Count -> ()
+      | None | Some [] -> ()
+      | Some types -> (
+          match List.filter (fun t -> List.mem t suitable) types with
+          | [] ->
+              errors :=
+                Validation_error.Invalid_aggregate
+                  { message = Printf.sprintf "%s needs %s, but %s only holds %s values" name wanted v (String.concat ", " types) }
+                :: !errors
+          | usable ->
+              let ignored = List.filter (fun t -> not (List.mem t usable)) types in
+              if ignored <> [] then
+                warnings :=
+                  {
+                    Validation_error.code = "aggregate_ignores_values";
+                    message = Printf.sprintf "%s ignores %s's %s values" name v (String.concat ", " ignored);
+                    line = None;
+                  }
+                  :: !warnings;
+              let incomparable =
+                (f = Min || f = Max) && List.exists (fun a -> List.exists (fun b -> not (Value.order_compatible_types a b)) usable) usable
+              in
+              if incomparable then
+                warnings :=
+                  {
+                    Validation_error.code = "aggregate_mixed_types";
+                    message =
+                      Printf.sprintf "%s: %s holds values that cannot be compared with each other (%s); those are skipped" name v
+                        (String.concat ", " usable);
+                    line = None;
+                  }
+                  :: !warnings))
+    aggregates;
   List.iter
     (fun (item : Core_query.order_item) ->
-      if counted <> [] then (
+      if aggregates <> [] then (
         if not (List.mem item.variable columns) then
           errors :=
-            Validation_error.Invalid_count
-              {
-                message =
-                  Printf.sprintf "In a query with count(...), 'order by' can only use 'find' columns (%s); %s is not one"
-                    (String.concat ", " columns) item.variable;
-              }
+            aggregate_error
+              (if only_counts then Count else Sum)
+              (Printf.sprintf "In a query with %s, 'order by' can only use 'find' columns (%s); %s is not one"
+                 (if only_counts then "count(...)" else "aggregates (count, sum, avg, min, max)")
+                 (String.concat ", " columns) item.variable)
             :: !errors)
       else if not (List.mem item.variable query_vars) then
         errors := Validation_error.Unbound_order_variable { variable = item.variable } :: !errors)

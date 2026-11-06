@@ -17,7 +17,7 @@ progressively richer questions:
 | [4. Joins](#part-4-joins) | Combining facts, chains, self-joins, multi-hop paths |
 | [5. Filters](#part-5-filtering) | Comparisons, ranges and text search |
 | [6. Advanced](#part-6-optional-alternatives-and-absence) | `optional`, `either`/`or`, `not` |
-| [7. Aggregation](#part-7-counting-ranking-and-paging) | `count`, ranking, `limit`/`offset` |
+| [7. Aggregation](#part-7-counting-ranking-and-paging) | `count`, `sum`, `avg`, `min`, `max`, ranking, `limit`/`offset` |
 | [8. Debugging](#part-8-when-things-go-wrong) | Validation, diagnostics and query plans |
 | [9. Beyond the REPL](#part-9-beyond-the-repl) | Query files, HTTP and updates |
 | [10. Putting it together](#part-10-putting-it-together) | Capstone queries and exercises |
@@ -1106,7 +1106,54 @@ Rules for `count`:
 - In a counting query, `order by` can only use `find` columns, including
   `count(...)`.
 
-### 7.4 Paging
+### 7.4 Earliest, latest and totals
+
+`min`, `max`, `sum` and `avg` work like `count`, with the same grouping.
+Each artist's first and last dated work:
+
+```text
+find Artist, count(Work), min(Year), max(Year)
+where
+  created_by(Work, Artist)
+  year_created(Work, Year)
+order by count(Work) descending, Artist
+limit 5
+```
+
+| Artist | count(Work) | min(Year) | max(Year) |
+|--------|-------------|-----------|-----------|
+| madelon_hooykaas | 10 | 1975 | 1990 |
+| elsa | 6 | 1979 | 1990 |
+| david_critchley | 4 | 1973 | 1977 |
+| elsa_stansfield | 4 | 1975 | 1983 |
+| david_hall | 3 | 1968 | 1976 |
+
+`count(Work)` here counts only works with a recorded year, because the
+join with `year_created` drops the others.
+
+Totals and averages need numbers. The recorded running times:
+
+```text
+find count(Work), sum(Minutes), avg(Minutes), min(Minutes), max(Minutes)
+where
+  duration_minutes(Work, Minutes)
+```
+
+| count(Work) | sum(Minutes) | avg(Minutes) | min(Minutes) | max(Minutes) |
+|-------------|--------------|--------------|--------------|--------------|
+| 2 | 36 | 18 | 6 | 30 |
+
+Rules for `sum`, `avg`, `min` and `max`:
+
+- `sum` and `avg` need integers or decimals; `min` and `max` also take
+  years and dates. `find sum(Artist) ...` is rejected with
+  `invalid_aggregate`.
+- They read each distinct combination of the query's named variables
+  once. Use `_` for arguments you do not need, so an extra join cannot
+  add the same work twice.
+- `avg` is a decimal; `min` and `max` keep the value's type.
+
+### 7.5 Paging
 
 `limit` sets the page size and `offset` skips rows. The second page of
 five:

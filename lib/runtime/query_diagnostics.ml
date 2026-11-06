@@ -388,7 +388,8 @@ module Make (Store : Runtime_store.S) = struct
     let occ = variable_occurrences surface.where_ in
     let count v = List.length (List.filter (( = ) v) occ) in
     let excluded v =
-      List.mem v surface.projection.variables || List.mem (Core_query.count_column v) surface.projection.variables
+      List.mem v surface.projection.variables
+      || List.exists (fun c -> match Core_query.aggregate_of c with Some (_, x) -> x = v | None -> false) surface.projection.variables
       || List.exists (fun (o : Core_query.order_item) -> o.variable = v) surface.order_by in
     Lwt_list.fold_left_s
       (fun acc (s : site) ->

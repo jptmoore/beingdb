@@ -295,7 +295,7 @@ precision loss.
 **Response Fields** (in this order):
 - `variables` - Array of variable names in `find` order
 - `results` - Array of result rows, each an object keyed by variable name
-- `count` - Number of rows in this response (for a [`count(Var)`](query-language.md#counting) query, rows are groups and each count is a `count(Var)` column of type `integer`)
+- `count` - Number of rows in this response (for an [aggregate](query-language.md#counting) query, rows are groups, and each `count(Var)`, `sum(Var)`, `avg(Var)`, `min(Var)` or `max(Var)` is a column)
 - `total` - Number of rows the whole query matches (after `distinct`), independent of the query's `limit`/`offset` and the server's `max_results`
 - `hasMore` - `true` if more matching rows exist after this page, whether the query's own `limit` or the server's `max_results` stopped it
 - `truncated` - `true` if the server's `max_results` cap, not the query's own `limit`, cut the result; a `results_truncated` entry is then added to `warnings`. Page on with `limit`/`offset` in the query text, or narrow the query.
@@ -644,8 +644,12 @@ Unrelated to whether the query text is valid. Always:
 endpoints that don't yet carry a specific code), `timeout`,
 `internal_error`, `execution_error`, `result_too_large`, `scan_limit_exceeded`,
 `unsupported_language`, `unknown_language`, `unknown_action`,
-`unsupported_parameter`, `query_too_long` (HTTP 413), `server_busy`
-(HTTP 429). See [Safety limits](#safety-limits) for the last three.
+`unsupported_parameter`, `aggregate_overflow` (a
+[`sum`](query-language.md#sum-average-minimum-and-maximum) too large for a
+64-bit number), `invalid_parameter`, `invalid_value` and `text_too_long`
+(HTTP 413) from the [lookup endpoints](#resolve-values-mentioned-in-text),
+`query_too_long` (HTTP 413), `server_busy` (HTTP 429). See
+[Safety limits](#safety-limits) for the last two.
 
 `scan_limit_exceeded` means the query reads more facts than
 `max_scanned_facts`, for example a `contains` or `!=` filter over a very

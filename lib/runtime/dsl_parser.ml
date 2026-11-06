@@ -3,7 +3,7 @@
 
     Surface syntax:
     {v
-      find [distinct] Var | count(Var), ...
+      find [distinct] Var | count(Var) | sum(Var) | avg(Var) | min(Var) | max(Var), ...
       where
         predicate(Args...)
         Term (= | != | < | <= | > | >=) Term
@@ -16,7 +16,7 @@
           <clause>*
         not
           <clause>*
-      order by Var | count(Var) [ascending|descending], ...
+      order by Var | <aggregate>(Var) [ascending|descending], ...
       limit N
       offset N
     v}
@@ -118,35 +118,45 @@ let rec parse_clauses lines =
 
 let is_variable n = n <> "" && Char.uppercase_ascii n.[0] = n.[0]
 
-(* Rewrite every [count ( Var )] (any case, any spacing) to [count(Var)]. *)
-let normalize_counts text =
+let aggregate_names = [ "count"; "sum"; "avg"; "min"; "max" ]
+
+(* Rewrite every aggregate call ([count ( Var )], [SUM(Var)], ...: any case,
+   any spacing) to its canonical column name, e.g. [count(Var)]. *)
+let normalize_aggregates text =
   let lower = String.lowercase_ascii text in
   let n = String.length text in
   let b = Buffer.create n in
   let rec skip_spaces i = if i < n && (text.[i] = ' ' || text.[i] = '\t') then skip_spaces (i + 1) else i in
+  let is_name_char c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_' in
+  let name_at i =
+    if i > 0 && is_name_char lower.[i - 1] then None
+    else List.find_opt (fun name -> let l = String.length name in i + l <= n && String.sub lower i l = name) aggregate_names
+  in
   let rec go i =
     if i >= n then ()
-    else if i + 5 <= n && String.sub lower i 5 = "count" && (i = 0 || not (Char.lowercase_ascii text.[i - 1] >= 'a' && Char.lowercase_ascii text.[i - 1] <= 'z')) then (
-      let j = skip_spaces (i + 5) in
-      if j < n && text.[j] = '(' then
-        match String.index_from_opt text j ')' with
-        | Some k ->
-            Buffer.add_string b ("count(" ^ String.trim (String.sub text (j + 1) (k - j - 1)) ^ ")");
-            go (k + 1)
-        | None ->
-            Buffer.add_string b (String.sub text i (n - i))
-      else (
-        Buffer.add_string b (String.sub text i 5);
-        go (i + 5)))
-    else (
-      Buffer.add_char b text.[i];
-      go (i + 1))
+    else
+      match name_at i with
+      | Some name -> (
+          let l = String.length name in
+          let j = skip_spaces (i + l) in
+          if j < n && text.[j] = '(' then
+            match String.index_from_opt text j ')' with
+            | Some k ->
+                Buffer.add_string b (name ^ "(" ^ String.trim (String.sub text (j + 1) (k - j - 1)) ^ ")");
+                go (k + 1)
+            | None -> Buffer.add_string b (String.sub text i (n - i))
+          else (
+            Buffer.add_string b (String.sub text i l);
+            go (i + l)))
+      | None ->
+          Buffer.add_char b text.[i];
+          go (i + 1)
   in
   go 0;
   Buffer.contents b
 
 let parse_find text =
-  let text = normalize_counts (String.trim text) in
+  let text = normalize_aggregates (String.trim text) in
   let distinct, rest =
     if starts_with ~prefix:"distinct" text && (String.length text = 8 || text.[8] = ' ') then
       (true, String.trim (String.sub text 8 (String.length text - 8)))
@@ -159,16 +169,18 @@ let parse_find text =
     else
       match
         List.find_opt
-          (fun n -> match Core_query.counted_variable n with Some v -> not (is_variable v) | None -> not (is_variable n))
+          (fun n -> match Core_query.aggregate_of n with Some (_, v) -> not (is_variable v) | None -> not (is_variable n))
           names
       with
-      | Some bad when Core_query.counted_variable bad <> None ->
-          Error (Printf.sprintf "'find' item %s: count takes one variable, e.g. count(Work)" bad)
-      | Some _ -> Error "'find' items must be variables (starting with an uppercase letter) or count(Var)"
+      | Some bad when Core_query.aggregate_of bad <> None ->
+          let f = match Core_query.aggregate_of bad with Some (f, _) -> Core_query.aggregate_name f | None -> "count" in
+          Error (Printf.sprintf "'find' item %s: %s takes one variable, e.g. %s(Work)" bad f f)
+      | Some _ ->
+          Error "'find' items must be variables (starting with an uppercase letter) or count(Var), sum(Var), avg(Var), min(Var) or max(Var)"
       | None -> Ok { Surface_ast.variables = names; distinct }
 
 let parse_order_item line_no text =
-  match String.split_on_char ' ' (normalize_counts (String.trim text)) |> List.filter (( <> ) "") with
+  match String.split_on_char ' ' (normalize_aggregates (String.trim text)) |> List.filter (( <> ) "") with
   | [ var ] -> Ok { Core_query.variable = var; direction = Core_query.Ascending }
   | [ var; dir ] -> (
       match String.lowercase_ascii dir with
