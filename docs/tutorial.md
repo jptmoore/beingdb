@@ -31,7 +31,7 @@ SPARQL is assumed.
 > verified catalogue metadata. A result means "this relationship is
 > recorded in the dataset", not "this is historically complete or
 > correct". The examples in this tutorial were checked against archive
-> commit `419336f` (168 predicates, 1,842 facts); the archive may have
+> commit `a561d79` (114 predicates, 1,778 facts); the archive may have
 > grown since, so your counts can differ.
 
 ---
@@ -92,14 +92,14 @@ BeingDB Compile
 Source: Irmin Git (./rewind_git)
 Target: Pack (./rewind_pack)
 
-Found 168 predicates
+Found 114 predicates
 
-✓ acquired_by (1 facts)
-✓ active_in (2 facts)
+✓ acquired_by (2 facts)
+✓ affiliated_with (26 facts)
 ...
 Compilation complete!
-Predicates: 168
-Total facts: 1842
+Predicates: 114
+Total facts: 1778
 ```
 
 Compilation parses every fact, checks that each predicate has a
@@ -113,7 +113,7 @@ beingdb repl --pack ./rewind_pack
 ```
 
 ```
-BeingDB REPL. 168 predicates, fingerprint sha256:..., beingdb-dsl/1. Enter a find/where query (blank line to run), :help for commands, :quit to exit.
+BeingDB REPL. 114 predicates, fingerprint sha256:..., beingdb-dsl/1. Enter a find/where query (blank line to run), :help for commands, :quit to exit.
 beingdb>
 ```
 
@@ -156,7 +156,7 @@ asking BeingDB what it contains.
 ```
 
 ```
-created_by/2  (137 facts)
+created_by/2  (133 facts)
   Relates a work to the artist or artist group who made it.
   arg 0 Work: atom
   arg 1 Artist: atom
@@ -275,15 +275,15 @@ limit 5
 
 | Work |
 |------|
-| about_time_at_the_ica_1980 |
+| about_time |
 | absence_of_satan |
 | all_the_pieces_i_never_did |
 | american_landscapes |
 | an_audience_s_new_clothes |
 
 `order by` sorts ascending by default; add `descending` (or `desc`) to
-reverse. `limit` caps the number of rows returned. Here `total` is 176:
-the query matched 176 works but returned 5.
+reverse. `limit` caps the number of rows returned. Here `total` is 175:
+the query matched 175 works but returned 5.
 
 ### 3.3 Constants: fixing an argument
 
@@ -322,7 +322,7 @@ where
 
 | Artist |
 |--------|
-| elsa |
+| elsa_stansfield |
 | madelon_hooykaas |
 
 There is no "direction" in a query: any argument can be a variable or a
@@ -344,7 +344,7 @@ order by Artist
 
 Without `distinct`, an artist appears once per work. `distinct`
 removes duplicate *rows from the output*: it keeps one row per distinct
-combination of the `find` columns. This returns 20 creators.
+combination of the `find` columns. This returns 19 creators.
 
 Each `_` is independent and never appears in results.
 
@@ -384,7 +384,6 @@ order by Work
 |------|
 | move_towards_the_verticality_of_the_horizon |
 | tape_tape |
-| video_show_at_the_serpentine_gallery_1975 |
 | videokalos |
 | whats_it_to_you |
 | zero_reaches_zeno |
@@ -544,12 +543,12 @@ limit 6
 
 | Work | Artist | OtherArtist |
 |------|--------|-------------|
-| compass | elsa | madelon_hooykaas |
-| compass | madelon_hooykaas | elsa |
-| day_for_night | elsa | madelon_hooykaas |
-| day_for_night | madelon_hooykaas | elsa |
-| deep_looking | elsa | madelon_hooykaas |
-| deep_looking | madelon_hooykaas | elsa |
+| compass | elsa_stansfield | madelon_hooykaas |
+| compass | madelon_hooykaas | elsa_stansfield |
+| day_for_night | elsa_stansfield | madelon_hooykaas |
+| day_for_night | madelon_hooykaas | elsa_stansfield |
+| deep_looking | elsa_stansfield | madelon_hooykaas |
+| deep_looking | madelon_hooykaas | elsa_stansfield |
 
 `Artist != OtherArtist` removes rows where both variables matched the
 same fact. Each pair appears twice, once in each order. You cannot
@@ -569,18 +568,19 @@ order by Place, Artist, Classmate
 
 | Place | Artist | Classmate |
 |-------|--------|-----------|
-| royal_college | david_critchley | david_hall |
-| royal_college | david_critchley | judith_goddard |
-| royal_college | david_hall | david_critchley |
+| ealing_school_of_art | elsa_stansfield | madelon_hooykaas |
+| ealing_school_of_art | madelon_hooykaas | elsa_stansfield |
+| royal_college_of_art | david_critchley | david_hall |
 | ... | ... | ... |
-| royal_college_of_art | mike_stubbs | peter_donebauer |
-| saint_martins | david_dye | tony_hill |
-| ... | ... | ... |
+| slade_school_of_fine_art | elsa_stansfield | george_barber |
+| slade_school_of_fine_art | george_barber | elsa_stansfield |
 
-Note that `royal_college` and `royal_college_of_art` are stored as
-different atoms, although they very likely refer to the same
-institution. BeingDB matches values exactly; it does not reconcile
-names. Section 5.3 shows a workaround.
+The 26 rows pair up five people at the Royal College of Art, and
+connect Elsa Stansfield and George Barber through the Slade. This works
+because the archive uses one atom per institution: BeingDB matches
+values exactly and does not reconcile names, so `royal_college` and
+`royal_college_of_art` would be two different places. Section 5.3 shows
+how to match name variants in data that has them.
 
 ### 4.5 Reciprocal relationships
 
@@ -714,7 +714,7 @@ where
 order by Year, Work
 ```
 
-Both return the same 20 rows, starting:
+Both return the same 17 rows, starting:
 
 | Year | Work | Artist |
 |------|------|--------|
@@ -801,9 +801,9 @@ order by Artist
 
 | Artist | Place |
 |--------|-------|
-| david_critchley | royal_college |
-| david_hall | royal_college |
-| judith_goddard | royal_college |
+| david_critchley | royal_college_of_art |
+| david_hall | royal_college_of_art |
+| judith_goddard | royal_college_of_art |
 | mike_stubbs | royal_college_of_art |
 | peter_donebauer | royal_college_of_art |
 
@@ -916,8 +916,10 @@ order by Artist, Work
 
 | Artist | Work |
 |--------|------|
+| elsa_stansfield | sea_of_light |
 | kevin_atherton | gallery_guide |
 | kevin_atherton | tape_tape |
+| madelon_hooykaas | sea_of_light |
 | rose_garrard | incidents_in_a_garden |
 
 `tape_tape` is recorded with `videotape` rather than `video`, so the
@@ -941,7 +943,7 @@ order by Thing
 | Thing | Organisation |
 |-------|--------------|
 | homing | bbc |
-| london_video_arts_lva | channel_4 |
+| london_video_arts | channel_4 |
 | luminous_portrait | bbc |
 | mike_stubbs | channel_4 |
 | taxi_driver_ii | channel_4 |
@@ -968,7 +970,6 @@ order by Artist
 | Artist |
 |--------|
 | anna_ridley |
-| madelon_hooykaas |
 
 Which of Kevin Atherton's works have no recorded year?
 
@@ -1025,17 +1026,17 @@ limit 5
 
 | Artist | count(Work) |
 |--------|-------------|
-| madelon_hooykaas | 24 |
+| elsa_stansfield | 24 |
+| madelon_hooykaas | 23 |
 | george_barber | 18 |
-| elsa | 13 |
-| elsa_stansfield | 13 |
 | kevin_atherton | 12 |
+| david_critchley | 10 |
 
 The second sort key, `Artist`, makes ties appear in a stable order.
 
-`elsa` and `elsa_stansfield` are almost certainly the same person,
-recorded under two identifiers. Counts are only as clean as the data:
-use `contains` (section 5.3) to look for variants before trusting a
+Counts are only as clean as the data: if one artist were recorded under
+two identifiers, their works would be split across two rows. Use
+`contains` (section 5.3) to look for variants before trusting a
 ranking.
 
 The most frequent funders:
@@ -1050,7 +1051,7 @@ limit 5
 
 | Funder | count(Thing) |
 |--------|--------------|
-| arts_council | 11 |
+| arts_council_of_great_britain | 11 |
 | channel_4 | 4 |
 | bbc | 2 |
 | buddhist_broadcasting_foundation | 2 |
@@ -1072,7 +1073,7 @@ order by Year
 | 1971 | 1 |
 | 1973 | 2 |
 | 1975 | 5 |
-| 1976 | 3 |
+| 1976 | 2 |
 | ... | ... |
 
 ### 7.3 Counting zero
@@ -1093,8 +1094,8 @@ order by count(Org) descending, Artist
 |--------|------------|
 | kevin_atherton | 9 |
 | rose_garrard | 5 |
+| madelon_hooykaas | 4 |
 | david_hall | 3 |
-| madelon_hooykaas | 3 |
 | ... | ... |
 | judith_goddard | 0 |
 
@@ -1122,11 +1123,11 @@ limit 5
 
 | Artist | count(Work) | min(Year) | max(Year) |
 |--------|-------------|-----------|-----------|
-| madelon_hooykaas | 10 | 1975 | 1990 |
-| elsa | 6 | 1979 | 1990 |
+| elsa_stansfield | 9 | 1975 | 1990 |
+| madelon_hooykaas | 9 | 1975 | 1990 |
 | david_critchley | 4 | 1973 | 1977 |
-| elsa_stansfield | 4 | 1975 | 1983 |
-| david_hall | 3 | 1968 | 1976 |
+| david_hall | 2 | 1968 | 1971 |
+| mike_stubbs | 2 | 1983 | 2003 |
 
 `count(Work)` here counts only works with a recorded year, because the
 join with `year_created` drops the others.
@@ -1189,7 +1190,7 @@ where
 ```
 
 ```
-unknown_predicate: Unknown predicate 'creatd_by'; did you mean: created_by, curated_by, rented_by, used_by, edited_by?
+unknown_predicate: Unknown predicate 'creatd_by'; did you mean: created_by, curated_by, edited_by, funded_by, co_edited_by?
 ```
 
 ### 8.2 Empty results are explained
@@ -1372,15 +1373,13 @@ order by Artist, Funder, Work
 
 | Artist | Funder | Work |
 |--------|--------|------|
-| david_critchley | arts_council | *null* |
-| david_hall | arts_council | lva_london_video_arts |
-| david_hall | arts_council | vertical |
-| david_hall | arts_council | *null* |
+| david_critchley | arts_council_of_great_britain | *null* |
+| david_critchley | northern_arts | *null* |
+| david_hall | arts_council_of_great_britain | vertical |
+| david_hall | arts_council_of_great_britain | *null* |
 | david_hall | british_council | *null* |
+| george_barber | arts_council_of_great_britain | *null* |
 | george_barber | channel_4 | taxi_driver_ii |
-| george_barber | channel_4 | venetian_ghost |
-| ... | ... | ... |
-| madelon_hooykaas | buddhist_broadcasting_foundation | deep_looking |
 | ... | ... | ... |
 
 ### 10.2 Capstone: a research worksheet
@@ -1407,7 +1406,7 @@ order by Year, Artist, Work, Medium, Venue
 
 This one query uses most of the language: an entity-type filter, a
 four-step chain, a range comparison, two independent optional blocks
-and ordering. It returns 39 rows; a work appears once per combination
+and ordering. It returns 34 rows; a work appears once per combination
 of medium and venue.
 
 Remember what the result is: a list of claims extracted from
@@ -1440,7 +1439,7 @@ where
 order by Place
 ```
 
-`slade`, `st_martins`.
+`slade_school_of_fine_art`, `st_martins`.
 
 </details>
 
@@ -1508,8 +1507,8 @@ where
 order by Artist, Org
 ```
 
-Six rows, including `david_hall` at `kingston_college` and
-`maidstone_college`.
+Eight rows, including `david_hall` at `kingston_college` and
+`maidstone_college_of_art`.
 
 </details>
 
