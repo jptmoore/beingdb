@@ -790,8 +790,8 @@ limit 3
 
 | Artist | count(Work) | min(Year) | max(Year) |
 |---|---|---|---|
-| madelon_hooykaas | 10 | 1975 | 1990 |
-| elsa | 6 | 1979 | 1990 |
+| elsa_stansfield | 9 | 1975 | 1990 |
+| madelon_hooykaas | 9 | 1975 | 1990 |
 | david_critchley | 4 | 1973 | 1977 |
 
 ```
