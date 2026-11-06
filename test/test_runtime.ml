@@ -59,7 +59,7 @@ let core text =
   | Error e -> Alcotest.failf "parse error: %s" e
   | Ok q -> ( match run (Engine.execute store q) with Ok r -> r | Error e -> Alcotest.failf "execution error: %s" e)
 
-let dsl text =
+let dsl ?(store = store) text =
   let env = run (Environment.build store) in
   match Dsl_parser.parse text with
   | Error e -> Alcotest.failf "parse error: %s" e
@@ -178,7 +178,7 @@ let test_dsl () =
 let render (vars, rows) =
   List.map (fun row -> String.concat "," (List.map2 (fun v c -> v ^ "=" ^ match c with Some x -> Value.canonical_string x | None -> "-") vars row)) rows
 
-let dsl_errors text =
+let dsl_errors ?(store = store) text =
   let env = run (Environment.build store) in
   match Dsl_parser.parse text with
   | Error e -> [ "parse: " ^ e ]
@@ -245,6 +245,96 @@ let test_count_syntax_and_errors () =
   let ops = List.map (fun op -> Yojson.Safe.Util.(op |> member "operation" |> to_string)) (Explain_plan.build cq) in
   Alcotest.(check bool) "explain shows count, not project" true (List.mem "count" ops && not (List.mem "project" ops))
 
+(* --- sum, avg, min, max --- *)
+
+let int n = Value.Integer (Int64.of_int n)
+
+let holdings =
+  Memory_store.of_facts
+    [
+      Fact.make "held_by" [ Value.Atom "m1"; Value.Atom "william" ];
+      Fact.make "held_by" [ Value.Atom "m2"; Value.Atom "william" ];
+      Fact.make "held_by" [ Value.Atom "m3"; Value.Atom "odo" ];
+      Fact.make "worth" [ Value.Atom "m1"; int 10 ];
+      Fact.make "worth" [ Value.Atom "m2"; int 10 ];
+      Fact.make "worth" [ Value.Atom "m3"; Value.Decimal (Decimal.make 45L 1) ];
+      Fact.make "tenant" [ Value.Atom "m1"; Value.Atom "t1" ];
+      Fact.make "tenant" [ Value.Atom "m1"; Value.Atom "t2" ];
+      Fact.make "tenant" [ Value.Atom "m2"; Value.Atom "t3" ];
+      Fact.make "recorded" [ Value.Atom "m1"; Value.Year 1086 ];
+      Fact.make "recorded" [ Value.Atom "m2"; Value.Year 1066 ];
+      Fact.make "recorded" [ Value.Atom "m3"; Value.Year 1086 ];
+      Fact.make "note" [ Value.Atom "m1"; Value.String "waste" ];
+      Fact.make "mixed" [ Value.Atom "m1"; int 5 ];
+      Fact.make "mixed" [ Value.Atom "m2"; Value.String "five" ];
+    ]
+
+let agg text = render (dsl ~store:holdings text)
+let agg_errors text = dsl_errors ~store:holdings text
+
+let test_sum_and_avg () =
+  Alcotest.(check (list string)) "sum per holder, equal values both counted"
+    [ "H=william,sum(V)=20"; "H=odo,sum(V)=4.5" ]
+    (agg "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\norder by sum(V) descending\n");
+  let _, rows = dsl ~store:holdings "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\norder by H\n" in
+  Alcotest.(check (list string)) "integer sum stays integer, decimal makes decimal" [ "decimal"; "integer" ]
+    (List.map (fun r -> match List.nth r 1 with Some v -> Value.type_name v | None -> "none") rows);
+  Alcotest.(check (list string)) "overall" [ "sum(V)=24.5,avg(V)=8.1666667" ] (agg "find sum(V), avg(V)\nwhere\n  worth(M, V)\n");
+  Alcotest.(check (list string)) "avg of integers" [ "H=william,avg(V)=10" ]
+    (agg "find H, avg(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\n  H = william\n");
+  Alcotest.(check (list string)) "no matches: one row, null" [ "sum(V)=-,avg(V)=-,count(V)=0" ]
+    (agg "find sum(V), avg(V), count(V)\nwhere\n  held_by(M, nobody)\n  worth(M, V)\n")
+
+let test_aggregate_solutions () =
+  (* m1 has two tenants: with _ the solutions (M, H, V) repeat and count once. *)
+  Alcotest.(check (list string)) "wildcard fan-out does not inflate"
+    [ "H=william,sum(V)=20" ]
+    (agg "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\n  tenant(M, _)\n");
+  (* A named variable makes each tenant a distinct solution. *)
+  Alcotest.(check (list string)) "named fan-out counts each solution"
+    [ "H=william,sum(V)=30" ]
+    (agg "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\n  tenant(M, T)\n")
+
+let test_min_max () =
+  Alcotest.(check (list string)) "years" [ "min(Y)=1066,max(Y)=1086" ] (agg "find min(Y), max(Y)\nwhere\n  recorded(M, Y)\n");
+  let _, rows = dsl ~store:holdings "find min(Y)\nwhere\n  recorded(M, Y)\n" in
+  Alcotest.(check string) "keeps the value's type" "year" (match List.hd (List.hd rows) with Some v -> Value.type_name v | None -> "none");
+  Alcotest.(check (list string)) "integer and decimal compare" [ "min(V)=4.5,max(V)=10" ] (agg "find min(V), max(V)\nwhere\n  worth(M, V)\n");
+  Alcotest.(check (list string)) "per group" [ "H=odo,max(Y)=1086"; "H=william,max(Y)=1086" ]
+    (agg "find H, max(Y)\nwhere\n  held_by(M, H)\n  recorded(M, Y)\norder by H\n")
+
+let test_aggregate_errors () =
+  let env = run (Environment.build holdings) in
+  let warnings text =
+    match Dsl_parser.parse text with Ok s -> List.map (fun (w : Validation_error.warning) -> w.code) (Dsl_lower.lower env s).warnings | Error e -> failwith e
+  in
+  Alcotest.(check (list string)) "sum of atoms" [ "invalid_aggregate" ] (agg_errors "find sum(H)\nwhere\n  held_by(M, H)\n");
+  Alcotest.(check (list string)) "min of strings" [ "invalid_aggregate" ] (agg_errors "find min(N)\nwhere\n  note(M, N)\n");
+  Alcotest.(check (list string)) "aggregating a find column" [ "invalid_aggregate" ] (agg_errors "find V, sum(V)\nwhere\n  worth(M, V)\n");
+  Alcotest.(check (list string)) "order by a non-column" [ "invalid_aggregate" ]
+    (agg_errors "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\norder by M\n");
+  Alcotest.(check (list string)) "mixed types: valid, warned" [ "aggregate_ignores_values" ] (warnings "find sum(X)\nwhere\n  mixed(M, X)\n");
+  Alcotest.(check (list string)) "non-numbers ignored" [ "sum(X)=5" ] (agg "find sum(X)\nwhere\n  mixed(M, X)\n");
+  Alcotest.(check (list string)) "case and spacing" [ "H=william,sum(V)=20" ]
+    (agg "find H, SUM ( V )\nwhere\n  held_by(M, H)\n  worth(M, V)\norder by Sum(V) desc\nlimit 1\n");
+  (match agg_errors "find sum(v)\nwhere\n  worth(M, v)\n" with
+  | [ e ] when String.starts_with ~prefix:"parse: " e -> ()
+  | other -> Alcotest.failf "expected a parse error, got %s" (String.concat "; " other));
+  let cq =
+    match Dsl_parser.parse "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\n" with
+    | Ok surface -> Option.get (Dsl_lower.lower env surface).core_query
+    | Error e -> failwith e
+  in
+  let op = List.find (fun op -> Yojson.Safe.Util.(op |> member "operation" |> to_string) = "aggregate") (Explain_plan.build cq) in
+  Alcotest.(check string) "explain names the function" "sum"
+    Yojson.Safe.Util.(op |> member "aggregates" |> index 0 |> member "function" |> to_string)
+
+let test_sum_overflow () =
+  let big = Memory_store.of_facts [ Fact.make "n" [ Value.Atom "a"; Value.Integer Int64.max_int ]; Fact.make "n" [ Value.Atom "b"; int 1 ] ] in
+  match dsl ~store:big "find sum(X)\nwhere\n  n(A, X)\n" with
+  | exception Core_query.Aggregate_overflow m -> Alcotest.(check bool) "names the column" true (String.starts_with ~prefix:"sum(X) overflows" m)
+  | _ -> Alcotest.fail "expected an overflow failure"
+
 (* --- Var contains "text" --- *)
 
 let test_contains_matching () =
@@ -290,6 +380,14 @@ let () =
           Alcotest.test_case "overall" `Quick test_count_overall;
           Alcotest.test_case "order-by keys in order" `Quick test_order_by_keys_in_order;
           Alcotest.test_case "syntax and errors" `Quick test_count_syntax_and_errors;
+        ] );
+      ( "sum, avg, min, max",
+        [
+          Alcotest.test_case "sum and avg" `Quick test_sum_and_avg;
+          Alcotest.test_case "distinct solutions" `Quick test_aggregate_solutions;
+          Alcotest.test_case "min and max" `Quick test_min_max;
+          Alcotest.test_case "validation" `Quick test_aggregate_errors;
+          Alcotest.test_case "overflow" `Quick test_sum_overflow;
         ] );
       ( "contains",
         [

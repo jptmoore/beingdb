@@ -326,6 +326,22 @@ let test_execute_count () =
       Alcotest.(check string) "invalid_count" "invalid_count" (json |> member "errors" |> index 0 |> member "code" |> to_string);
       Lwt.return ())
 
+let test_execute_aggregates () =
+  with_pack "aggregates" (fun store ->
+      let open Lwt.Syntax in
+      let open Yojson.Safe.Util in
+      let* json = query store "find sum(C), avg(C), max(C)\nwhere\n  confidence(A, C)\n" in
+      Alcotest.(check (list string)) "columns" [ "sum(C)"; "avg(C)"; "max(C)" ] (json |> member "variables" |> to_list |> List.map to_string);
+      let row = json |> member "results" |> index 0 in
+      List.iter
+        (fun c ->
+          Alcotest.(check string) (c ^ " type") "decimal" (row |> member c |> member "type" |> to_string);
+          Alcotest.(check string) (c ^ " value") "0.92" (row |> member c |> member "value" |> to_string))
+        [ "sum(C)"; "avg(C)"; "max(C)" ];
+      let* json = query store "find sum(W)\nwhere\n  created(A, W)\n" in
+      Alcotest.(check string) "invalid_aggregate" "invalid_aggregate" (json |> member "errors" |> index 0 |> member "code" |> to_string);
+      Lwt.return ())
+
 (* --- run_query: language/action dispatch --- *)
 
 let test_run_query_default_language_is_dsl () =
@@ -552,6 +568,7 @@ let () =
     ];
     "Run Query dispatch", [
       Alcotest.test_case "execute count" `Quick test_execute_count;
+      Alcotest.test_case "execute sum, avg, max" `Quick test_execute_aggregates;
       Alcotest.test_case "default language is dsl" `Quick test_run_query_default_language_is_dsl;
       Alcotest.test_case "core language rejected" `Quick test_run_query_core_rejected;
       Alcotest.test_case "dsl execute" `Quick test_run_query_dsl_execute;

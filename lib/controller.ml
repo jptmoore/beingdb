@@ -227,6 +227,7 @@ let with_query_timeout f =
                      "Query timeout after %.0f seconds - query too expensive. Try limiting predicates or adding more specific constraints."
                      !Query_validation.Config.query_timeout;
                })
+      | Core_query.Aggregate_overflow message -> Lwt.return (Failure { code = "aggregate_overflow"; message })
       | exn -> Lwt.return (Failure { code = "internal_error"; message = Printf.sprintf "Query error: %s" (Printexc.to_string exn) }))
 
 (** Execute a lowered DSL query: the safety-checked, timed execution
