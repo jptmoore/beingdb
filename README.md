@@ -96,7 +96,7 @@ For example, a system might use:
 - BeingDB for entities, relationships, dates and other structured facts;
 - the LLM for reasoning and natural-language responses.
 
-The API exposes the available predicates so an LLM can discover the vocabulary before constructing queries.
+The API exposes the available predicates so an LLM can discover the vocabulary before constructing queries. It can also resolve the names in a question to the exact values stored (`GET /resolve`, tolerating misspellings and using any `label`/`alias` facts), and list everything known about one value (`GET /about`), so a query uses real constants rather than guessed ones.
 
 For MCP-based integrations, see the [BeingDB MCP server](https://github.com/jptmoore/beingdb-mcp).
 
@@ -146,6 +146,13 @@ curl -X POST http://localhost:8080/query \
 ```
 
 The API can also expose the predicates available in the compiled database, allowing applications and LLMs to discover the vocabulary they can query.
+
+Find the stored values a question mentions, and everything about one of them:
+
+```bash
+curl -G http://localhost:8080/resolve --data-urlencode 'text=What did Tina Keane create?'
+curl 'http://localhost:8080/about?value=tina_keane'
+```
 
 See the [API documentation](docs/api.md) for details.
 

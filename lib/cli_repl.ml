@@ -19,6 +19,8 @@ let print_help () =
          "                       a blank line finishes the query";
          "  :predicates          list predicates and arities";
          "  :describe <name>     show a predicate's argument types, fact count, examples and any declaration";
+         "  :resolve <text>      find the stored values a text mentions (exact, label, alias, fuzzy or partial)";
+         "  :about <value>       show every fact a value occurs in, e.g. :about judith_goddard";
          "  :environment         show predicate count, fingerprint and language version";
          "  :explain             enter a query (blank line to finish) and show its plan without executing";
          "  :validate            enter a query (blank line to finish) and validate it without executing";
@@ -74,6 +76,7 @@ let set_limit limit text =
   | _ -> Printf.printf "Invalid limit: %s\n" text
 
 let load_facts store file =
+  Controller.invalidate_lookup_index ();
   match Lwt_main.run (Repl_support.load_facts_file store file) with
   | Ok summaries -> List.iter (Printf.printf "  %s\n") summaries
   | Error e -> Printf.printf "Error: %s\n" e
@@ -117,6 +120,8 @@ let dispatch ~read_block store limit line =
   | ":explain" -> run_action ~action:"explain" store !limit (read_query "")
   | _ when String.starts_with ~prefix:":explain " line -> run_action ~action:"explain" store !limit (read_query (strip_prefix ":explain " line))
   | _ when String.starts_with ~prefix:":describe " line -> describe_predicate store (String.trim (strip_prefix ":describe " line))
+  | _ when String.starts_with ~prefix:":resolve " line -> print_outcome (Lwt_main.run (Controller.resolve store (strip_prefix ":resolve " line)))
+  | _ when String.starts_with ~prefix:":about " line -> print_outcome (Lwt_main.run (Controller.about store (strip_prefix ":about " line)))
   | _ when String.starts_with ~prefix:":limit " line -> set_limit limit (strip_prefix ":limit " line)
   | _ when String.starts_with ~prefix:":loadfacts " line -> load_facts store (strip_prefix ":loadfacts " line)
   | _ when String.starts_with ~prefix:":loadqueries " line -> load_queries store !limit (strip_prefix ":loadqueries " line)
@@ -188,7 +193,7 @@ let cmd =
         "Opens the given Pack store and reads find/where queries from the terminal (a blank line runs the query), \
          printing typed JSON results.";
       `P
-        "Meta-commands (all start with ':'): :help, :predicates, :describe <name>, :environment, :explain, :validate, \
+        "Meta-commands (all start with ':'): :help, :predicates, :describe <name>, :resolve <text>, :about <value>, :environment, :explain, :validate, \
          :diagnose, :load <file>, :loadfacts <file>, :loadqueries <file>, :limit <n>, :quit.";
       `P "Example:";
       `Pre "  beingdb repl --pack ./pack_store";

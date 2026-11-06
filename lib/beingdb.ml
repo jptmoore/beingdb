@@ -46,6 +46,7 @@ module Core_query = Core_query
 module Validation_error = Validation_error
 module Dsl_lower = Dsl_lower
 module Explain_plan = Explain_plan
+module Value_lookup = Value_lookup
 module Db = Db
 module Model = Model
 module Controller = Controller
