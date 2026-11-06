@@ -112,6 +112,25 @@ let test_no_unproven_repairs () =
   Alcotest.(check bool) "no repair" false (has_repair r);
   Alcotest.(check bool) "not provably empty" false U.(r |> member "provablyEmpty" |> to_bool)
 
+let test_replace_constant () =
+  (* An atom that occurs nowhere, extended at an underscore by exactly one atom there. *)
+  let r = report "find Work\nwhere\n  held_at(Work, whitechapel)\n" in
+  let d = find_code r "unknown_constant" in
+  Alcotest.(check string) "repair kind" "replace_constant" U.(d |> member "repair" |> member "kind" |> to_string);
+  Alcotest.(check string) "repaired" "find Work\nwhere\n  held_at(Work, whitechapel_gallery)\n" (repaired r);
+  Alcotest.(check (list string)) "repaired rows" [ "work_3" ] (rows (repaired r));
+  (* Under not, the clause as written excludes nothing: repaired the same way. *)
+  let r = report "find Work\nwhere\n  created_by(Work, _)\n  not\n    held_at(Work, whitechapel)\n" in
+  Alcotest.(check string) "negated" "find Work\nwhere\n  created_by(Work, _)\n  not\n    held_at(Work, whitechapel_gallery)\n" (repaired r);
+  (* Two atoms extend it: no repair. *)
+  let r = report "find Work\nwhere\n  held_at(Work, tate)\n" in
+  Alcotest.(check bool) "ambiguous" false (has_repair r);
+  (* Extensions only at an underscore, and only of an atom that occurs nowhere. *)
+  let r = report "find Work\nwhere\n  held_at(Work, whitechapel_gall)\n" in
+  Alcotest.(check bool) "not a prefix at a word boundary" false (has_repair r);
+  let r = report "find Work\nwhere\n  held_at(Work, artist)\n" in
+  Alcotest.(check bool) "no extension at that position" false (has_repair r)
+
 let test_singleton_variable () =
   let q = "find Person\nwhere\n  employed_by(Person, BBC)\n" in
   let r = report q in
@@ -316,6 +335,7 @@ let () =
           Alcotest.test_case "argument swap repair" `Quick test_swap_repair;
           Alcotest.test_case "swap re-renders literals" `Quick test_swap_literals_round_trip;
           Alcotest.test_case "no unproven repairs" `Quick test_no_unproven_repairs;
+          Alcotest.test_case "replace constant" `Quick test_replace_constant;
           Alcotest.test_case "singleton variable" `Quick test_singleton_variable;
           Alcotest.test_case "role name mismatch" `Quick test_role_name_mismatch;
           Alcotest.test_case "count is not a singleton" `Quick test_count_is_not_singleton;

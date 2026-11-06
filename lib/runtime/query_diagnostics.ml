@@ -40,6 +40,11 @@
     - [replace_variable]: a positive singleton variable whose name, in
       snake_case, is an atom that occurs at exactly that position
       ([soundtrack_by(CulturalQuarter, P)] -> [cultural_quarter]).
+    - [replace_constant]: an atom that occurs in no fact of any predicate
+      (so its clause can never match, in any scope), when exactly one atom
+      at that argument position extends it at an underscore
+      ([funded_by(W, arts_council)] -> [arts_council_of_great_britain]).
+      Only offered when no swap is.
 
     {!apply_repairs} rewrites only the affected lines of the source text
     and re-parses the result to check it is exactly the intended query;
@@ -51,6 +56,7 @@ type scope = Positive | Optional_scope | Alternative_scope | Negated_scope
 type repair =
   | Swap_arguments of { predicate : string; line : int; positions : int * int }
   | Replace_variable of { predicate : string; line : int; argument_position : int; variable : string; value : Value.t }
+  | Replace_constant of { predicate : string; line : int; argument_position : int; constant : Value.t; value : Value.t }
 
 type t = {
   code : string;
@@ -113,6 +119,16 @@ let repair_to_json = function
           ("line", `Int line);
           ("argumentPosition", `Int argument_position);
           ("variable", `String variable);
+          ("value", Value.to_json value);
+        ]
+  | Replace_constant { predicate; line; argument_position; constant; value } ->
+      `Assoc
+        [
+          ("kind", `String "replace_constant");
+          ("predicate", `String predicate);
+          ("line", `Int line);
+          ("argumentPosition", `Int argument_position);
+          ("constant", Value.to_json constant);
           ("value", Value.to_json value);
         ]
 
@@ -322,6 +338,27 @@ module Make (Store : Runtime_store.S) = struct
     in
     Lwt.return (match ok_pairs with [ pair ] -> Some pair | _ -> None)
 
+  (* For an atom that occurs in no fact: the unique atom at this
+     position that extends it at an underscore ([arts_council] ->
+     [arts_council_of_great_britain]). *)
+  let unique_extension ctx predicate i (v : Value.t) =
+    match v with
+    | Atom a when a <> "" ->
+        let* values = position_values ~check:"suggestions" ctx predicate i in
+        let prefix = a ^ "_" in
+        let n = String.length prefix in
+        let extensions =
+          match values with
+          | None -> []
+          | Some t ->
+              Hashtbl.fold
+                (fun _ (x : Value.t) acc ->
+                  match x with Atom b when String.length b > n && String.sub b 0 n = prefix -> x :: acc | _ -> acc)
+                t []
+        in
+        Lwt.return (match extensions with [ x ] -> Some x | _ -> None)
+    | _ -> Lwt.return None
+
   let grounding_diagnostics ctx (s : site) =
     match signature ctx s with
     | None -> Lwt.return []
@@ -347,7 +384,16 @@ module Make (Store : Runtime_store.S) = struct
                 contains_fields ~variable:(Option.value (role p i) ~default:"Value") v containing
               in
               let suggestion_evidence = suggestion_evidence @ contains_evidence and did_you_mean = did_you_mean ^ contains_hint in
-              let repair = if n = 0 then swap_repair else None in
+              let* extension =
+                if swap_repair = None && elsewhere = Some [] then unique_extension ctx p.name i v else Lwt.return None
+              in
+              let repair =
+                match (if n = 0 then swap_repair else None), extension with
+                | Some r, _ -> Some r
+                | None, Some x ->
+                    Some (Replace_constant { predicate = p.name; line = s.line; argument_position = i; constant = v; value = x })
+                | None, None -> None
+              in
               let lit = dsl_literal v in
               match elsewhere with
               | Some [] ->
@@ -644,13 +690,13 @@ end
 
 (* ---- Applying repairs ---- *)
 
-let repair_line = function Swap_arguments { line; _ } | Replace_variable { line; _ } -> line
+let repair_line = function Swap_arguments { line; _ } | Replace_variable { line; _ } | Replace_constant { line; _ } -> line
 
 let apply_to_terms repair arguments =
   match repair with
   | Swap_arguments { positions = i, j; _ } ->
       List.mapi (fun k x -> if k = i then List.nth arguments j else if k = j then List.nth arguments i else x) arguments
-  | Replace_variable { argument_position; value; _ } ->
+  | Replace_variable { argument_position; value; _ } | Replace_constant { argument_position; value; _ } ->
       List.mapi (fun k x -> if k = argument_position then Query_ast.Literal value else x) arguments
 
 let rec repair_clauses repairs clauses =

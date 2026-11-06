@@ -46,7 +46,7 @@ Returns BeingDB version information.
 ```json
 {
   "name": "BeingDB",
-  "version": "0.5.0"
+  "version": "0.5.1"
 }
 ```
 
@@ -459,6 +459,13 @@ A `repair` is offered only when BeingDB can prove it:
 - `replace_variable`: a positive singleton variable whose name in
   snake_case (`OvalHouse` -> `oval_house`) is an atom that occurs at
   exactly that argument.
+- `replace_constant`: an atom that occurs in no fact at all (so its clause
+  can never match, in any scope: positive, `optional`, `either` or `not`),
+  and exactly one atom at that argument extends it at an underscore:
+  `funded_by(W, arts_council)` -> `arts_council_of_great_britain`. Offered
+  only when no argument swap is. If two atoms extend it (`tate` with
+  `tate_modern` and `tate_britain`), there is no repair; the suggestions
+  and `contains` hint still apply.
 
 `repair.query` is the original text with only the repaired clauses'
 lines rewritten; it is returned only if it parses back to exactly the
