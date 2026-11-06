@@ -1149,8 +1149,11 @@ Rules for `sum`, `avg`, `min` and `max`:
   years and dates. `find sum(Artist) ...` is rejected with
   `invalid_aggregate`.
 - They read each distinct combination of the query's named variables
-  once. Use `_` for arguments you do not need, so an extra join cannot
-  add the same work twice.
+  once, so name the thing you are adding up: `duration_minutes(Work,
+  Minutes)`, not `duration_minutes(_, Minutes)`, which would add two
+  18-minute works once (BeingDB warns with `aggregate_wildcard`).
+  Conversely, an extra named variable in another join can add the same
+  work twice.
 - `avg` is a decimal; `min` and `max` keep the value's type.
 
 ### 7.5 Paging

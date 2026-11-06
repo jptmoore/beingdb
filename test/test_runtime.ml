@@ -315,6 +315,12 @@ let test_aggregate_errors () =
     (agg_errors "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\norder by M\n");
   Alcotest.(check (list string)) "mixed types: valid, warned" [ "aggregate_ignores_values" ] (warnings "find sum(X)\nwhere\n  mixed(M, X)\n");
   Alcotest.(check (list string)) "non-numbers ignored" [ "sum(X)=5" ] (agg "find sum(X)\nwhere\n  mixed(M, X)\n");
+  (* Leaving the manor as _ collapses the two equal values: warned. *)
+  Alcotest.(check (list string)) "wildcard beside the summed variable" [ "aggregate_wildcard" ] (warnings "find avg(V)\nwhere\n  worth(_, V)\n");
+  Alcotest.(check (list string)) "equal values collapse under _" [ "avg(V)=7.25" ] (agg "find avg(V)\nwhere\n  worth(_, V)\n");
+  Alcotest.(check (list string)) "fan-out _ elsewhere is not warned" []
+    (warnings "find H, sum(V)\nwhere\n  held_by(M, H)\n  worth(M, V)\n  tenant(M, _)\n");
+  Alcotest.(check (list string)) "min/max are not affected" [] (warnings "find max(V)\nwhere\n  worth(_, V)\n");
   Alcotest.(check (list string)) "case and spacing" [ "H=william,sum(V)=20" ]
     (agg "find H, SUM ( V )\nwhere\n  held_by(M, H)\n  worth(M, V)\norder by Sum(V) desc\nlimit 1\n");
   (match agg_errors "find sum(v)\nwhere\n  worth(M, v)\n" with
