@@ -291,6 +291,37 @@ let lower (env : Query_environment.t) (surface : Surface_ast.surface_query) : re
                   }
                   :: !warnings))
     aggregates;
+  (* sum/avg add each distinct solution of the named variables once, so a
+     pattern that leaves the thing being added up as [_] collapses equal
+     values: duration_minutes(_, M) adds two 18-minute works once. *)
+  let rec patterns (clauses : Surface_ast.surface_clause list) =
+    List.concat_map
+      (fun (c : Surface_ast.surface_clause) ->
+        match c with
+        | Pattern { predicate; arguments; line; _ } -> [ (predicate, arguments, line) ]
+        | Optional inner | Negation inner -> patterns inner
+        | Alternatives branches -> List.concat_map patterns branches
+        | Compare _ | Between _ -> [])
+      clauses
+  in
+  List.iter
+    (fun ((f : Core_query.aggregate), v) ->
+      if f = Sum || f = Avg then
+        List.iter
+          (fun (predicate, arguments, line) ->
+            if List.mem (Query_ast.Variable v) arguments && List.mem Query_ast.Wildcard arguments then
+              warnings :=
+                {
+                  Validation_error.code = "aggregate_wildcard";
+                  message =
+                    Printf.sprintf
+                      "%s adds each distinct combination of the query's named variables once, and %s(...) leaves an argument as _, so equal %s values there are added once; name that argument (e.g. the thing each %s belongs to) to add every value"
+                      (Core_query.aggregate_column f v) predicate v v;
+                  line = Some line;
+                }
+                :: !warnings)
+          (patterns surface.where_))
+    aggregates;
   List.iter
     (fun (item : Core_query.order_item) ->
       if aggregates <> [] then (

@@ -826,8 +826,16 @@ where
 
   counts each manor once however many tenants it has. Naming that
   variable (`tenant(Manor, Tenant)`) makes each tenant a separate
-  solution, so a manor with two tenants is added twice. Keep only the
-  clauses the question needs, and use `_` for arguments you do not need.
+  solution, so a manor with two tenants is added twice.
+
+  The other side of the rule: **name the variable that identifies each
+  thing you add up.** `find sum(Value) where value(_, Value)` names only
+  `Value`, so two manors worth 10 are one solution and add 10, not 20;
+  `value(Manor, Value)` adds both. A `sum`/`avg` whose variable shares a
+  pattern with a `_` gets an `aggregate_wildcard` warning for this
+  reason. In short: name what you are adding up, keep only the clauses
+  the question needs, and use `_` only for arguments that would
+  otherwise repeat a solution.
 - Values of other types are ignored (with an `aggregate_ignores_values`
   warning when the variable's argument also holds other types). A group
   with no usable value, or a query with no matches and no plain `find`
@@ -887,8 +895,10 @@ heterogeneous column) but whose literal matches one of them is not an
 error -- it produces a `heterogeneous_position` **warning** instead,
 since the query is well-formed but only targets part of that column.
 Aggregates warn with `aggregate_ignores_values` (the variable also holds
-values the aggregate ignores) and `aggregate_mixed_types` (`min`/`max`
-over values that cannot all be compared).
+values the aggregate ignores), `aggregate_mixed_types` (`min`/`max`
+over values that cannot all be compared) and `aggregate_wildcard` (a
+`sum`/`avg` variable in a pattern with a `_`, which can collapse equal
+values).
 
 The `diagnose` action goes further and checks the query against the
 data itself (constants that occur nowhere, joins that can never match,
